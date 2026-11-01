@@ -1,0 +1,96 @@
+module mesh.wizard_test
+
+include "../src/mesh/wizard_text.rho"
+
+// Unit tests for the string half of the deployment wizard.
+//
+// The HTTP page is exercised by the smoke suite, which needs a built mesh.
+// These are the pure claims beneath it: a form body is decoded once, a value
+// that came from a form cannot smuggle a second setting into the state file,
+// and a hexadecimal digit means what it says.
+
+// The pure helpers use the runtime's string primitives. A test file includes
+// the helpers rather than the mesh's storage module, so it names them here.
+extern fn rho_strlen(s: string) u64
+extern fn rho_str_slice(s: string, start: u32, length: u32) string
+extern fn rho_str_index_of(s: string, needle: string) i32
+extern fn rho_str_from_byte(b: u8) string
+extern fn rho_int_to_str(value: u32) string
+
+
+extern fn abort()
+
+fn check(condition: bool, what: string) void {
+    if !condition {
+        print("FAIL: " + what + "\n")
+        abort()
+    }
+}
+
+test fn decodes_percent_escapes() void {
+    check(rho_str_eq(url_decode("a%20b%2Fc"), "a b/c"), "percent escapes")
+    print("[PASS] decodes_percent_escapes\n")
+}
+
+test fn decodes_plus_as_space() void {
+    check(rho_str_eq(url_decode("two+words"), "two words"), "plus as space")
+    print("[PASS] decodes_plus_as_space\n")
+}
+
+test fn addresses_are_hex_numbers() void {
+    check(parse_hex("0x77") == 119, "0x77")
+    check(parse_hex("0X20") == 32, "upper prefix")
+    check(parse_hex("2a") == 42, "bare digits")
+    check(rho_str_eq(hex_label(119), "0x77"), "format")
+    check(rho_str_eq(hex_label(32), "0x20"), "format low")
+    print("[PASS] addresses_are_hex_numbers\n")
+}
+
+test fn reads_a_repeated_field_as_a_list() void {
+    check(rho_str_eq(form_values("sensors=a&sensors=b", "sensors"), "a b"), "both values")
+    check(rho_str_eq(form_values("sensors=a", "sensors"), "a"), "one value")
+    check(rho_strlen(form_values("sensors=a", "missing")) == 0, "missing field")
+    check(rho_str_eq(form_values("a=one+two&a=three", "a"), "one two three"), "decoded values")
+    print("[PASS] reads_a_repeated_field_as_a_list\n")
+}
+
+test fn words_are_the_module_names() void {
+    check(rho_str_eq(first_word("ds18b20 dht11"), "ds18b20"), "first word")
+    check(rho_str_eq(first_word("ds18b20"), "ds18b20"), "only word")
+    check(rho_str_eq(first_word(""), ""), "no words")
+    check(words_count("ds18b20 dht11 bmp180") == 3, "three words")
+    check(words_count("") == 0, "no count")
+    print("[PASS] words_are_the_module_names\n")
+}
+
+test fn reads_a_form_value_once() void {
+    check(rho_str_eq(form_value("gateway=uno-q&link=uart", "gateway"), "uno-q"), "first field")
+    check(rho_str_eq(form_value("b=two+words&b=last", "b"), "two words"), "first duplicate")
+    check(rho_strlen(form_value("b=two+words&b=last", "missing")) == 0, "missing field")
+    print("[PASS] reads_a_form_value_once\n")
+}
+
+test fn sanitize_keeps_one_line() void {
+    check(rho_str_eq(sanitize("a\nb\rc"), "a b c"), "newlines become spaces")
+    print("[PASS] sanitize_keeps_one_line\n")
+}
+
+test fn hex_digits_are_values() void {
+    check(hex_value("0") == 0, "zero")
+    check(hex_value("9") == 9, "nine")
+    check(hex_value("A") == 10, "upper a")
+    check(hex_value("f") == 15, "lower f")
+    print("[PASS] hex_digits_are_values\n")
+}
+
+fn main() void {
+    decodes_percent_escapes()
+    decodes_plus_as_space()
+    reads_a_form_value_once()
+    addresses_are_hex_numbers()
+    reads_a_repeated_field_as_a_list()
+    words_are_the_module_names()
+    sanitize_keeps_one_line()
+    hex_digits_are_values()
+    print("wizard text tests ok\n")
+}

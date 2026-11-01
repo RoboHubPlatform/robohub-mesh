@@ -1,0 +1,15 @@
+# Verify the deployment.
+#
+# The action asks the gateway for its devices and its diagnostics. `expect`
+# makes the step successful only when the device listing carries a temperature:
+# a gateway that answers but has heard no node is not a working deployment.
+
+title: "Verify"
+description: "Ask the gateway for its devices and diagnostics. The step succeeds when the gateway answers and at least one node reading has arrived."
+actions:
+  verify:
+    label: "Run verification"
+    handler: "verify"
+    report: "verify"
+    expect: "temperature_c"
+    help: "Checks the REST API at the gateway host saved in the network step."

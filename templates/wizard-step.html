@@ -1,0 +1,153 @@
+<p class="mesh-nav"><a href="/mesh">← Mesh dashboard</a></p>
+{{{ steps }}}
+<div class="mesh-layout">
+  <section class="mesh-tree-panel">
+    <h2>Mesh</h2>
+    {{{ tree }}}
+  </section>
+  <section class="mesh-form-panel">
+    <h1>{{ title }}</h1>
+    <p>{{ description }}</p>
+    {{{ notice }}}
+    {{{ fields }}}
+    {{{ actions }}}
+
+    <div id="progress" class="progress" hidden>
+      <div class="console-head"><strong>Console</strong>
+        <button type="button" id="clear-console" class="quiet">Clear console</button>
+      </div>
+      <div class="bar"><span></span></div>
+      <pre id="log" class="out" tabindex="0"></pre>
+    </div>
+
+    {{{ output }}}
+    {{{ nav }}}
+  </section>
+</div>
+
+<script>
+(function () {
+  var step = "{{ step }}";
+  var panel = document.getElementById("progress");
+  var bar = panel.querySelector(".bar");
+  var log = document.getElementById("log");
+  var clear = document.getElementById("clear-console");
+  var follow = true;
+  var source = null;
+
+  function stamp() {
+    var now = new Date();
+    return now.getFullYear() + "-" +
+      String(now.getMonth() + 1).padStart(2, "0") + "-" +
+      String(now.getDate()).padStart(2, "0") + " " +
+      String(now.getHours()).padStart(2, "0") + ":" +
+      String(now.getMinutes()).padStart(2, "0") + ":" +
+      String(now.getSeconds()).padStart(2, "0");
+  }
+
+  function append(text) {
+    log.textContent += "[" + stamp() + "] " + text + "\n";
+    if (follow) {
+      log.scrollTop = log.scrollHeight;
+    }
+  }
+
+  function closeSource() {
+    if (source) {
+      source.close();
+      source = null;
+      window.wizardSource = null;
+    }
+  }
+
+  async function clearServerLog() {
+    var controller = new AbortController();
+    var timer = window.setTimeout(function () { controller.abort(); }, 2500);
+    try {
+      await fetch("/mesh/console/clear/" + encodeURIComponent(step), {
+        method: "POST",
+        signal: controller.signal
+      });
+    } catch (error) {
+      // A clear that cannot reach the server must not stop the action; the
+      // action resets its own progress file before it writes.
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+
+  log.addEventListener("scroll", function () {
+    follow = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+  });
+
+  clear.addEventListener("click", async function () {
+    log.textContent = "";
+    follow = true;
+    await clearServerLog();
+    log.focus({ preventScroll: true });
+  });
+
+  window.wizardClearConsole = async function () {
+    var final = document.getElementById("final-log");
+    if (final) {
+      final.textContent = "";
+    }
+    log.textContent = "";
+    follow = true;
+    await clearServerLog();
+  };
+
+  async function run(form) {
+    var action = form.querySelector('input[name="action"]').value;
+    closeSource();
+    panel.hidden = false;
+    log.textContent = "";
+    follow = true;
+    bar.className = "bar running";
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    log.focus({ preventScroll: true });
+    var run = "run-" + Date.now() + "-" + Math.floor(Math.random() * 1000000);
+    append("starting " + action);
+
+    // Every action writes its own progress file. The stream is opened on that
+    // run's file, so no previous __DONE__ marker can replay old output or close
+    // the stream before this action has written a line.
+    source = new EventSource("/mesh/progress/" + encodeURIComponent(step) +
+      "/" + encodeURIComponent(run));
+    window.wizardSource = source;
+    source.onmessage = function (event) {
+      append(event.data);
+    };
+    source.addEventListener("done", function () {
+      closeSource();
+      bar.className = "bar done";
+      window.setTimeout(function () { window.location.reload(); }, 700);
+    });
+    source.onerror = function () {
+      closeSource();
+      bar.className = "bar";
+      append("[progress stream closed]");
+    };
+
+    // Serialize the whole form. An action form may carry more than its action
+    // input — the boot-mode acknowledgement is one — and dropping it is a
+    // request the server rightly refuses, leaving the stream waiting.
+    var body = new URLSearchParams();
+    new FormData(form).forEach(function (value, key) {
+      body.append(key, value);
+    });
+    body.append("run", run);
+    fetch(form.getAttribute("action"), { method: "POST", body: body }).catch(function (error) {
+      append(String(error));
+    });
+  }
+
+  window.addEventListener("beforeunload", closeSource);
+  document.querySelectorAll("form.action").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      run(form);
+    });
+  });
+})();
+</script>

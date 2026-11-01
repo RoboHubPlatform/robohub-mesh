@@ -1,0 +1,53 @@
+# Build and program.
+#
+# An action is either a `handler` this keeper implements or a `command` with
+# {placeholders}. Placeholders come from the saved settings and from paths the
+# engine derives: {wizard_dir}, {gateway_project}, {gateway_arm64},
+# {node_source}, {node_dir}, {node_binary}.
+#
+# A command's output is kept under `report`, and `expect` turns the action into
+# a verification: the action fails when the text is not in the report.
+
+title: "Build and program"
+description: "Build the node and the gateway, write the node image to its board, and start the gateway on the host or on the UNO Q."
+actions:
+  build_node:
+    label: "Build node"
+    handler: "build_node"
+    report: "build-node"
+    help: "Copy the selected sensor example into the deployment directory and build it for the selected node's board."
+  flash_node:
+    label: "Flash node"
+    handler: "flash_node"
+    report: "flash-node"
+    help: "Write the selected node's built image to the connected board."
+  build_gateway:
+    label: "Build gateway"
+    handler: "build_gateway"
+    report: "build-gateway"
+    help: "Build the gateway for this host, and for the UNO Q when that is the selected gateway."
+  start_native:
+    label: "Start gateway (native)"
+    handler: "start_native"
+    report: "start-gateway"
+    help: "Run the gateway on the machine running the keeper."
+  start_board:
+    label: "Start gateway (board)"
+    handler: "start_board"
+    report: "start-gateway"
+    help: "Push the built gateway to the selected board, using the method its manifest declares (ADB or SSH), and start it there."
+  start_gateway:
+    label: "Start gateway"
+    handler: "start_gateway"
+    report: "start-gateway"
+    help: "Start the gateway with the selected node's link, on this host or on the selected board."
+  program_gateway:
+    label: "Program gateway"
+    handler: "program_gateway"
+    report: "program-gateway"
+    help: "Build the gateway if it is not built, then deploy or start it for the selected link."
+  build_all:
+    label: "Build node and gateway"
+    handler: "build_all"
+    report: "build-node"
+    help: "Run both builds in the order the deployment needs them."

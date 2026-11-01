@@ -1,0 +1,45 @@
+#
+# mesh — the RoboHub Mesh application.
+#
+# It is a keeper-hosted application: it runs on its own HTTP port, standalone or
+# launched by the keeper. The `application` block is what tells the keeper that
+# this module is a hosted application rather than a service like the docsite or
+# the keeper itself.
+#
+module:
+  name: mesh
+  type: rho
+  version: 0.1.0
+  author: Aurel Miron
+  maintainer: Aurel Miron
+description: >
+  Plans and runs RoboHub gateway deployments: projects, a gateway and its
+  nodes, the network between them, and the firmware on their boards.
+
+main: src/main.rho
+
+build:
+  language: go
+  targets:
+    - go-server
+
+deps:
+  rho-log: ">=0.1.0"
+
+# A hosted application is not a service the keeper is: it has its own listener,
+# its own lifetime and its own command. The keeper reads this block to offer it
+# in its applications registry.
+application:
+  kind: keeper-hosted
+  title: RoboHub Mesh
+  route: /mesh
+  port: 8478
+  command: mesh
+
+docs:
+  title: The RoboHub Mesh application
+  section: applications
+  order: "31"
+  index: docs/index.md
+  sources:
+    - docs/index.md

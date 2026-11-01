@@ -1,0 +1,16 @@
+# The RoboHub Mesh steps.
+#
+# The plan and its tree are the mesh page's own editor; these are the steps a
+# plan unlocks. Each step below is a file of its own, so a deployment can add,
+# remove or reorder a step without touching the keeper's Rho. The step id is the
+# key here and the value is the file, relative to this directory.
+#
+# A step file names its fields and actions. A field of type `board` is filled
+# from the boards the local registry carries that declare the role the field
+# names; a field of type `driver` is filled from the drivers in robohub-drivers.
+
+title: "RoboHub Mesh"
+description: "A gateway and the nodes that report through it. The plan is a tree; accepting it locks the tree and opens the network step."
+steps:
+  build: "steps/build.yml"
+  verify: "steps/verify.yml"

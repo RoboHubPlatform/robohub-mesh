@@ -1,0 +1,19 @@
+module mesh.storage
+
+extern fn rho_arg(index: i32) string
+extern fn rho_path_exists(path: string) bool
+extern fn rho_read_text(path: string) string
+extern fn rho_write_text(path: string, text: string) bool
+extern fn rho_exec(program: string, arguments: string, output_path: string) u32
+extern fn rho_strlen(s: string) u64
+extern fn rho_str_slice(s: string, start: u32, length: u32) string
+extern fn rho_str_index_of(s: string, needle: string) i32
+extern fn rho_str_from_byte(b: u8) string
+extern fn rho_str_starts_with(s: string, prefix: string) bool
+extern fn rho_int_from_str(s: string) u32
+extern fn rho_int_to_str(value: u32) string
+
+// The documentation store, read through the port. The application serves its
+// own guide so the Help menu works whether it was started by the keeper or on
+// its own.
+extern fn docs_render_source(path: string) string

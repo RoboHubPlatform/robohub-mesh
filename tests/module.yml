@@ -1,0 +1,16 @@
+# The Rho unit tests are a small C project of their own.
+#
+# Mesh is a go-server, so building a test file beside its own manifest
+# would ask for Mesh's target and generate the service. A test only needs
+# the C backend, and giving the test directory its own manifest is what says so.
+module:
+  name: mesh-tests
+  type: rho
+  version: 0.1.0
+
+main: wizard_test.rho
+
+build:
+  language: c
+  targets:
+    - c

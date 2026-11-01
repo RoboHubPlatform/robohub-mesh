@@ -1,0 +1,44 @@
+version: 1
+
+output_dir: build/generated
+build_dir: build
+
+targets:
+  - id: go-server
+    emitter: go
+    kind: server
+    description: RoboHub Mesh HTTP service
+    router: serveMux
+    ports:
+      - logemit
+      - docstore
+    api:
+      public_paths: "/, /mesh, /mesh/docs"
+    templates:
+      - name: layout
+        file: templates/layout.html
+      - name: mesh
+        file: templates/mesh.html
+      - name: mesh-dashboard
+        file: templates/mesh-dashboard.html
+      - name: mesh-build
+        file: templates/mesh-build.html
+      - name: mesh-network
+        file: templates/mesh-network.html
+      - name: mesh-project-settings
+        file: templates/mesh-project-settings.html
+      - name: wizard
+        file: templates/wizard.html
+      - name: wizard-step
+        file: templates/wizard-step.html
+    files:
+      - path: app.go
+        role: implementation
+      - path: runtime.go
+        role: runtime
+      - path: server.go
+        role: server
+      - path: main.go
+        role: entrypoint
+      - path: go.mod
+        role: build

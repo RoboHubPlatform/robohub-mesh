@@ -1,0 +1,15 @@
+# The Mesh application's test suites.
+#
+# A suite is declared rather than discovered: the Rho unit tests check the
+# string helpers, and the smoke suite builds Mesh and walks the application
+# over HTTP, including the event stream that reports a long action.
+
+name: mesh
+suites:
+  - name: tests/wizard_test.rho
+    kind: rho
+    tags: [unit, rho]
+  - name: wizard-smoke
+    kind: command
+    tags: [smoke]
+    command: [python3, tests/wizard_smoke.py]

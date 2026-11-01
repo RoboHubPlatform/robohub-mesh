@@ -1,0 +1,78 @@
+module mesh
+
+// The RoboHub Mesh application: projects, plans, connections, build and verify.
+// It is standalone on its own port and can be launched by the keeper.
+
+include "mesh/storage.rho"
+include "mesh/wizard.rho"
+include "mesh/mesh.rho"
+
+import std.web.http
+import std.web.template
+import rho.log
+
+// The orchestrator root. A hosted application is started with the workspace in
+// the environment, and a standalone one from the repository root.
+fn robohub_root() string {
+    let root: string = getenv("ROBOHUB_WORKSPACE")
+    if root == "" {
+        if rho_path_exists("registry/modules") {
+            return "."
+        }
+        warn("mesh", "set ROBOHUB_WORKSPACE to the directory holding the ecosystem")
+        return "."
+    }
+    if rho_path_exists(root + "/robohub/registry/modules") {
+        return root + "/robohub"
+    }
+    if rho_path_exists(root + "/registry/modules") {
+        return root
+    }
+    return root + "/robohub"
+}
+
+fn resolve_path(path: string) string {
+    if rho_str_index_of(path, "/") == 0 {
+        return path
+    }
+    return robohub_root() + "/" + path
+}
+
+route GET "/" => mesh_dashboard
+route GET "/mesh" => mesh_dashboard
+route GET "/mesh/plan" => mesh_page
+route GET "/mesh/project/{id}/settings" => mesh_project_settings_page
+route POST "/mesh/project/{id}/settings" => mesh_project_settings_post
+route GET "/mesh/project/{id}" => mesh_project_open_page
+route POST "/mesh/project/delete" => mesh_project_delete
+route POST "/mesh/project/active" => mesh_project_active
+route POST "/mesh/project/new" => mesh_project_new
+route POST "/mesh/project/restart" => mesh_project_restart
+route POST "/mesh/project/stop" => mesh_project_stop
+route POST "/mesh/gateway/restart" => mesh_gateway_restart
+route POST "/mesh/gateway/stop" => mesh_gateway_stop
+route GET "/mesh/docs" => mesh_docs_page
+route GET "/docs" => mesh_docs_page
+route GET "/mesh/gateway" => mesh_gateway_page
+route POST "/mesh/gateway" => mesh_gateway_post
+route GET "/mesh/node/{index}" => mesh_node_page
+route POST "/mesh/node/{index}" => mesh_node_post
+route POST "/mesh/accept" => mesh_accept
+route POST "/mesh/reopen" => mesh_reopen
+route GET "/mesh/step/network" => mesh_network_page
+route GET "/mesh/network/link/{index}" => mesh_connection_page
+route POST "/mesh/network/link/{index}" => mesh_connection_post
+route GET "/mesh/network/node/{index}" => mesh_network_node_page
+route GET "/mesh/network/gateway" => mesh_network_gateway_page
+route POST "/mesh/network/gateway" => mesh_network_gateway_post
+route POST "/mesh/network/accept" => mesh_network_accept
+route GET "/mesh/step/build" => mesh_build_page
+route GET "/mesh/build/node/{index}" => mesh_build_node_page
+route POST "/mesh/build/node/{index}" => mesh_build_node_post
+route GET "/mesh/build/gateway" => mesh_build_gateway_page
+route POST "/mesh/build/gateway" => mesh_build_gateway_post
+route GET "/mesh/step/{step}" => mesh_step_page
+route POST "/mesh/step/{step}" => wizard_step_post
+route GET "/mesh/progress/{step}/{run}" => wizard_progress_run
+route GET "/mesh/progress/{step}" => wizard_progress
+route POST "/mesh/console/clear/{step}" => mesh_console_clear
