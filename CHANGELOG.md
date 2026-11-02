@@ -2,6 +2,13 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.3.0] - 2026-11-02
+
+Device nodes. A device from `robohub-devices` is a node of its own in the Mesh
+tree, attached to a gateway or a relay; it is not built or programmed. The
+editor discovers device integrations from the checkout; the Shelly Plug M Gen3
+is the first, over HTTP RPC or MQTT. An HTTP device can be polled and switched
+from its node page; an MQTT device is carried by its relay or gateway.
 ## [0.2.0] - 2026-11-02
 
 A node is one computer, and a sensor module is a node of its own (`kind: module`)

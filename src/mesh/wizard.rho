@@ -792,6 +792,97 @@ fn module_rows() string {
     return out
 }
 
+// device_rows is one row per device integration the robohub-devices checkout
+// carries:
+//   name|label|kind|transports|manifest
+fn device_rows() string {
+    let entry: string = registry_entry("robohub-devices")
+    if !rho_path_exists(entry) {
+        return ""
+    }
+    let devices_path: string = resolve_path(yaml.value(entry, "path"))
+    let manifests: string = find_manifests(devices_path + "/devices", "find-devices")
+    var out: string = ""
+    var rest: string = manifests
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let manifest: string = ""
+        if at < 0 {
+            manifest = rest
+            rest = ""
+        } else {
+            manifest = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if manifest == "" {
+            continue
+        }
+        let name: string = yaml.value(manifest, "module.name")
+        if name == "" || yaml.value(manifest, "device.kind") == "" {
+            continue
+        }
+        let manufacturer: string = yaml.value(manifest, "device.manufacturer")
+        let model: string = yaml.value(manifest, "device.model")
+        var label: string = name
+        if manufacturer != "" || model != "" {
+            label = manufacturer + " " + model
+        }
+        let kind: string = yaml.value(manifest, "device.kind")
+        let transports: string = yaml.value(manifest, "device.transports")
+        out = out + name + "|" + label + "|" + kind + "|" + transports + "|" +
+            manifest + "\n"
+    }
+    return out
+}
+
+fn device_manifest(name: string) string {
+    return field(row_by_name(device_rows(), name), 4)
+}
+
+fn device_label(name: string) string {
+    let label: string = field(row_by_name(device_rows(), name), 1)
+    if label == "" {
+        return name
+    }
+    return label
+}
+
+fn device_kind(name: string) string {
+    return field(row_by_name(device_rows(), name), 2)
+}
+
+fn device_transports(name: string) string {
+    return field(row_by_name(device_rows(), name), 3)
+}
+
+fn device_picker(selected: string) string {
+    var out: string = "<select name=\"device\"><option value=\"\">Choose a device</option>"
+    var rest: string = device_rows()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let line: string = ""
+        if at < 0 {
+            line = rest
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let name: string = field(line, 0)
+        var mark: string = ""
+        if name == selected {
+            mark = " selected"
+        }
+        out = out + "<option value=\"" + escape_html(name) + "\"" + mark + ">" +
+            escape_html(field(line, 1)) + "</option>"
+        rest = rho_str_slice(rest, 0, u32(rho_strlen(rest)))
+    }
+    return out + "</select>"
+}
+
 fn module_manifest(name: string) string {
     return field(row_by_name(module_rows(), name), 5)
 }
@@ -866,6 +957,56 @@ fn node_kind(index: u32) string {
 
 fn is_module_node(index: u32) bool {
     return node_kind(index) == "module"
+}
+
+fn is_device_node(index: u32) bool {
+    return node_kind(index) == "device"
+}
+
+fn node_device_name(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".device")
+}
+
+fn node_device_transport(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".transport")
+}
+
+fn node_device_address(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".address")
+}
+
+fn node_device_id(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".device_id")
+}
+
+fn device_parent_options(selected: string) string {
+    var options: string = option("gateway", "Gateway", "", selected)
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if !is_module_node(index) && !is_device_node(index) {
+            options = options + option("node." + rho_int_to_str(index),
+                "Node " + rho_int_to_str(index) + " (" +
+                node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
+        }
+        index = index + 1
+    }
+    return options
+}
+
+fn device_parent_valid(parent: string) bool {
+    if parent == "gateway" {
+        return true
+    }
+    if rho_str_index_of(parent, "node.") != 0 {
+        return false
+    }
+    let index: u32 = rho_int_from_str(
+        rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
+    if index < 1 || index > node_count() {
+        return false
+    }
+    return !is_module_node(index) && !is_device_node(index)
 }
 
 fn node_module_name(index: u32) string {

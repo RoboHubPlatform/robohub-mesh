@@ -96,6 +96,20 @@ A native host has no pins. The gateway can take module nodes only when it is a
 real board; on a native gateway the module controls are absent, and a module
 attached to a gateway is hidden if the gateway is changed back to `native`.
 
+### Device nodes
+
+A network device is a node of its own too. It is an integration from
+`robohub-devices` — the Shelly Plug M Gen3 is the first — attached to a gateway
+or a relay. A device node is never built or programmed; the node it is attached
+to carries it, and the Mesh tree shows it under that parent.
+
+The device editor chooses the integration, the transport (`http` or `mqtt`), an
+HTTP address and the device id. An HTTP device can be polled and switched from
+its node page; an MQTT device is carried by the relay or gateway that owns the
+broker connection. A file from a device can also reach a gateway over
+`POST /api/v1/frames` as an encoded RoboHub frame, so the same device record is
+produced whether it arrived on a serial link or over the network.
+
 Each module says how it reaches a bus in its own manifest:
 
 ```yaml

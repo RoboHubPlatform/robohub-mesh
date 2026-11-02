@@ -98,7 +98,7 @@ fn all_nodes_programmed() bool {
     }
     var index: u32 = 1
     while index <= count {
-        if !is_module_node(index) && node_status(index) != "programmed" {
+        if !is_module_node(index) && !is_device_node(index) && node_status(index) != "programmed" {
             return false
         }
         index = index + 1
@@ -139,6 +139,19 @@ fn node_card_body(index: u32) string {
     let parent: string = node_value(index, "parent", "gateway")
     var name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
     var description: string = node_value(index, "description", "")
+    if is_device_node(index) {
+        let device_name: string = node_device_name(index)
+        if description == "" {
+            description = device_label(device_name)
+        }
+        return "<span class=\"node-role\">device</span>" +
+            "<strong>" + escape_html(name) + "</strong>" +
+            "<small>" + escape_html(description) + "</small>" +
+            "<span class=\"node-meta\">" + escape_html(device_label(device_name)) +
+            " · " + escape_html(node_device_transport(index)) + " · attached to " +
+            escape_html(parent) + "</span>" +
+            "<span class=\"node-status status-attached\">device</span>"
+    }
     if is_module_node(index) {
         let module_name: string = node_module_name(index)
         if description == "" {
@@ -218,6 +231,22 @@ fn build_gateway_card() string {
 }
 
 fn node_attached(index: u32) bool {
+    if is_device_node(index) {
+        let parent: string = node_value(index, "parent", "")
+        if parent == "gateway" {
+            return true
+        }
+        if rho_str_index_of(parent, "node.") != 0 {
+            return false
+        }
+        let parent_index: u32 = rho_int_from_str(
+            rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
+        if parent_index < 1 || parent_index > node_count() || is_module_node(parent_index) ||
+            is_device_node(parent_index) {
+            return false
+        }
+        return node_attached(parent_index)
+    }
     if is_module_node(index) {
         let parent: string = node_value(index, "parent", "")
         if parent == "gateway" {
@@ -273,9 +302,13 @@ fn mesh_children(parent: string, readonly: bool) string {
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
-            if is_module_node(index) {
+            if is_module_node(index) || is_device_node(index) {
+                let badge: string = "module"
+                if is_device_node(index) {
+                    badge = "device"
+                }
                 out = out + "<li class=\"mesh-branch module-branch\">" +
-                    "<span class=\"link-badge module\">module</span>" +
+                    "<span class=\"link-badge module\">" + badge + "</span>" +
                     node_card(index, readonly) + "</li>"
             } else {
                 let link: string = node_value(index, "link", "uart")
@@ -328,9 +361,13 @@ fn mesh_build_children(parent: string) string {
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
-            if is_module_node(index) {
+            if is_module_node(index) || is_device_node(index) {
+                var badge: string = "module"
+                if is_device_node(index) {
+                    badge = "device"
+                }
                 out = out + "<li class=\"mesh-branch module-branch\">" +
-                    "<span class=\"link-badge module\">module</span>" +
+                    "<span class=\"link-badge module\">" + badge + "</span>" +
                     node_card(index, true) + "</li>"
             } else {
                 let link: string = node_value(index, "link", "uart")
@@ -550,7 +587,7 @@ fn network_all_ready() bool {
     }
     var index: u32 = 1
     while index <= count {
-        if !is_module_node(index) && !network_ready(index) {
+        if !is_module_node(index) && !is_device_node(index) && !network_ready(index) {
             return false
         }
         index = index + 1
@@ -616,9 +653,13 @@ fn mesh_network_children(parent: string) string {
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
-            if is_module_node(index) {
+            if is_module_node(index) || is_device_node(index) {
+                var badge: string = "module"
+                if is_device_node(index) {
+                    badge = "device"
+                }
                 out = out + "<li class=\"mesh-branch module-branch\">" +
-                    "<span class=\"link-badge module\">module</span>" +
+                    "<span class=\"link-badge module\">" + badge + "</span>" +
                     node_card(index, true) + "</li>"
             } else {
                 out = out + "<li class=\"mesh-branch\">" + network_link_badge(index) +
@@ -1068,7 +1109,7 @@ fn parent_options(limit: u32, selected: string) string {
     var options: string = option("gateway", "Gateway", "", selected)
     var index: u32 = 1
     while index <= limit {
-        if !is_module_node(index) {
+        if !is_module_node(index) && !is_device_node(index) {
             options = options + option("node." + rho_int_to_str(index),
                 "Node " + rho_int_to_str(index) + " (" +
                 node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
@@ -1146,6 +1187,208 @@ fn mesh_module_node_page(req: Request, index: u32, is_new: bool) Response {
     return page(title, body)
 }
 
+fn mesh_quote(value: string) string {
+    return "\"" + value + "\""
+}
+
+fn mesh_json_bool(text: string, key: string) string {
+    let at: i32 = rho_str_index_of(text, "\"" + key + "\":")
+    if at < 0 {
+        return ""
+    }
+    let rest: string = rho_str_slice(text, u32(at) + u32(rho_strlen(key)) + 3,
+        u32(rho_strlen(text)) - u32(at) - u32(rho_strlen(key)) - 3)
+    let trimmed: string = rest
+    var i: u32 = 0
+    while i < u32(rho_strlen(trimmed)) &&
+        (rho_str_eq(rho_str_slice(trimmed, i, 1), " ") || rho_str_eq(rho_str_slice(trimmed, i, 1), "\t")) {
+        i = i + 1
+    }
+    if rho_str_index_of(rho_str_slice(trimmed, i, u32(rho_strlen(trimmed)) - i), "true") == 0 {
+        return "on"
+    }
+    if rho_str_index_of(rho_str_slice(trimmed, i, u32(rho_strlen(trimmed)) - i), "false") == 0 {
+        return "off"
+    }
+    return ""
+}
+
+fn mesh_json_number(text: string, key: string) string {
+    let at: i32 = rho_str_index_of(text, "\"" + key + "\":")
+    if at < 0 {
+        return ""
+    }
+    var rest: string = rho_str_slice(text, u32(at) + u32(rho_strlen(key)) + 3,
+        u32(rho_strlen(text)) - u32(at) - u32(rho_strlen(key)) - 3)
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(rest)) {
+        let ch: string = rho_str_slice(rest, i, 1)
+        if (ch >= "0" && ch <= "9") || rho_str_eq(ch, ".") || rho_str_eq(ch, "-") {
+            out = out + ch
+            i = i + 1
+        } else if out == "" && (rho_str_eq(ch, " ") || rho_str_eq(ch, "\t")) {
+            i = i + 1
+        } else {
+            break
+        }
+    }
+    return out
+}
+
+fn mesh_device_checked(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".last_checked")
+}
+
+fn mesh_device_last(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".last_value")
+}
+
+fn mesh_device_state(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".state")
+}
+
+fn mesh_device_actions(index: u32) string {
+    if !rho_str_eq(node_device_transport(index), "http") {
+        return "<p><small>This device is reached over MQTT; the relay or gateway that " +
+            "carries it performs the command.</small></p>"
+    }
+    return "<div class=\"device-actions\">" +
+        "<form method=\"post\" action=\"/mesh/device/poll\">" +
+        "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
+        "<button type=\"submit\" class=\"quiet\">Poll device</button></form>" +
+        "<form method=\"post\" action=\"/mesh/device/set\">" +
+        "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
+        "<input type=\"hidden\" name=\"state\" value=\"on\">" +
+        "<button type=\"submit\">Switch on</button></form>" +
+        "<form method=\"post\" action=\"/mesh/device/set\">" +
+        "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
+        "<input type=\"hidden\" name=\"state\" value=\"off\">" +
+        "<button type=\"submit\" class=\"quiet\">Switch off</button></form></div>" +
+        "<p><small>Last: state " + escape_html(mesh_device_state(index)) +
+        ", power " + escape_html(mesh_device_last(index)) + " W at " +
+        escape_html(mesh_device_checked(index)) + "</small></p>"
+}
+
+fn mesh_device_node_page(req: Request, index: u32, is_new: bool) Response {
+    let device_name: string = node_device_name(index)
+    var parent: string = node_value(index, "parent", "gateway")
+    if is_new {
+        let requested: string = request_query_param(req, "parent")
+        if requested != "" {
+            parent = requested
+        }
+    }
+    var name: string = node_value(index, "name", "")
+    if name == "" {
+        if device_name != "" {
+            name = device_label(device_name)
+        } else {
+            name = "Device " + rho_int_to_str(index)
+        }
+    }
+    var description: string = node_value(index, "description", "")
+    let transport: string = node_value(index, "transport", "http")
+    let address: string = node_device_address(index)
+    let device_id: string = node_device_id(index)
+    var title: string = "Edit device " + rho_int_to_str(index)
+    if is_new {
+        title = "Add a device"
+    }
+    let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/node/" +
+        escape_html(param(req, "index")) + "\">" +
+        "<input type=\"hidden\" name=\"action\" value=\"save\">" +
+        "<input type=\"hidden\" name=\"kind\" value=\"device\">" +
+        "<div class=\"grid\">" +
+        mesh_input("name", "Name", name, "What this device is called in the mesh.") +
+        mesh_textarea("description", "Description", description) +
+        mesh_select("parent", "Attached to", device_parent_options(parent),
+            "The gateway or node that carries this device.") +
+        mesh_select("device", "Device", device_picker(device_name),
+            "An integration from robohub-devices.") +
+        mesh_select("transport", "Transport",
+            option("http", "HTTP RPC", "", transport) + option("mqtt", "MQTT", "", transport),
+            "HTTP polls and commands directly; MQTT is bridged by a relay or gateway.") +
+        mesh_input("address", "HTTP address", address, "http://host:port for HTTP RPC.") +
+        mesh_input("device_id", "Device id", device_id, "Shelly id, used as the MQTT topic.") +
+        "</div>" +
+        "<div class=\"form-actions\"><button type=\"submit\">Save device</button></div></form>"
+    var delete_form: string = ""
+    if !is_new {
+        delete_form = "<form method=\"post\" action=\"/mesh/node/" + escape_html(param(req, "index")) +
+            "\"><input type=\"hidden\" name=\"action\" value=\"delete\">" +
+            "<button type=\"submit\" class=\"danger\">Delete device</button></form>"
+    }
+    var actions: string = ""
+    if !is_new {
+        actions = "<h2>Device</h2>" + mesh_device_actions(index)
+    }
+    let body: string = "<h1>" + escape_html(title) + "</h1><p>A device is an integration from " +
+        "robohub-devices attached to a gateway or a relay node. It is not built or programmed; " +
+        "the node it is attached to carries it.</p>" + form + actions + delete_form +
+        "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
+    return page(title, body)
+}
+
+fn mesh_device_poll(req: Request) Response {
+    let body: string = request_body(req)
+    let index: u32 = rho_int_from_str(form_value(body, "id"))
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return mesh_page(req)
+    }
+    let address: string = node_device_address(index)
+    if rho_strlen(address) == 0 {
+        save_setting("mesh_message", "This device has no HTTP address.")
+        return mesh_device_node_page(req, index, false)
+    }
+    let report: string = wizard_report("device-poll-" + rho_int_to_str(index))
+    let url: string = address + "/rpc/Shelly.GetStatus"
+    let code: u32 = rho_exec("curl", "-fsS -m 3 " + mesh_quote(url), report)
+    if code != 0 {
+        save_setting("mesh_message", "The device did not answer at " + address + ".")
+        return mesh_device_node_page(req, index, false)
+    }
+    let text: string = rho_read_text(report)
+    let state: string = mesh_json_bool(text, "output")
+    if state != "" {
+        save_setting("node." + rho_int_to_str(index) + ".state", state)
+    }
+    let power: string = mesh_json_number(text, "apower")
+    if power != "" {
+        save_setting("node." + rho_int_to_str(index) + ".last_value", power)
+    }
+    let date_report: string = wizard_report("device-time")
+    ignore_u32(rho_exec("date", "+%Y-%m-%dT%H:%M:%S", date_report))
+    save_setting("node." + rho_int_to_str(index) + ".last_checked",
+        first_line(rho_read_text(date_report)))
+    save_setting("mesh_message", "Device read.")
+    return mesh_device_node_page(req, index, false)
+}
+
+fn mesh_device_set(req: Request) Response {
+    let body: string = request_body(req)
+    let index: u32 = rho_int_from_str(form_value(body, "id"))
+    let state: string = form_value(body, "state")
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return mesh_page(req)
+    }
+    let address: string = node_device_address(index)
+    let on: string = "false"
+    if rho_str_eq(state, "on") {
+        on = "true"
+    }
+    let report: string = wizard_report("device-set-" + rho_int_to_str(index))
+    let url: string = address + "/rpc/Switch.Set?id=0&on=" + on
+    let code: u32 = rho_exec("curl", "-fsS -m 3 " + mesh_quote(url), report)
+    if code != 0 {
+        save_setting("mesh_message", "The device did not answer at " + address + ".")
+    } else {
+        save_setting("node." + rho_int_to_str(index) + ".state", state)
+        save_setting("mesh_message", "Device switched " + state + ".")
+    }
+    return mesh_device_node_page(req, index, false)
+}
+
 fn mesh_node_page(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
@@ -1171,6 +1414,9 @@ fn mesh_node_page(req: Request) Response {
     }
     if kind == "module" {
         return mesh_module_node_page(req, index, is_new)
+    }
+    if kind == "device" {
+        return mesh_device_node_page(req, index, is_new)
     }
 
     let role: string = node_value(index, "role", "node")
@@ -1207,7 +1453,8 @@ fn mesh_node_page(req: Request) Response {
                 "That module is left out of the image so the node still builds.</p>"
         }
         modules_link = "<p class=\"actions\"><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=node." +
-            rho_int_to_str(index) + "\">+ Add module</a></p>"
+            rho_int_to_str(index) + "\">+ Add module</a><a class=\"button\" href=\"/mesh/node/new?kind=device&parent=node." +
+            rho_int_to_str(index) + "\">+ Add device</a></p>"
     }
     let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/node/" +
         escape_html(raw) + "\">" +
@@ -1252,6 +1499,31 @@ fn mesh_node_post(req: Request) Response {
         let index: u32 = node_count() + 1
         let parent: string = form_value(body, "parent")
         let prefix: string = "node." + rho_int_to_str(index) + "."
+        if kind == "device" {
+            let device_name: string = form_value(body, "device")
+            if device_name == "" || !device_parent_valid(parent) {
+                save_setting("mesh_message", "A device needs an integration and a gateway or node.")
+                return mesh_node_page(req)
+            }
+            save_setting("node.count", rho_int_to_str(index))
+            save_setting(prefix + "kind", "device")
+            save_setting(prefix + "name", form_value(body, "name"))
+            save_setting(prefix + "description", form_value(body, "description"))
+            save_setting(prefix + "device", device_name)
+            save_setting(prefix + "transport", form_value(body, "transport"))
+            save_setting(prefix + "address", form_value(body, "address"))
+            save_setting(prefix + "device_id", form_value(body, "device_id"))
+            save_setting(prefix + "parent", parent)
+            save_setting(prefix + "role", "device")
+            save_setting(prefix + "board", "")
+            save_setting(prefix + "link", "")
+            save_setting(prefix + "sensors", "")
+            save_setting(prefix + "driver", "")
+            save_setting("step_topology", "pending")
+            mesh_reset_after("topology")
+            save_setting("mesh_message", "Device attached to " + parent + ".")
+            return mesh_page(req)
+        }
         if kind == "module" {
             let module_name: string = form_value(body, "module")
             if module_name == "" || !module_parent_valid(parent) {
@@ -1359,6 +1631,32 @@ fn mesh_node_post(req: Request) Response {
     }
 
     let prefix: string = "node." + rho_int_to_str(index) + "."
+    if kind == "device" {
+        let device_name: string = form_value(body, "device")
+        let parent: string = form_value(body, "parent")
+        if device_name == "" || !device_parent_valid(parent) {
+            save_setting("mesh_message", "A device needs an integration and a gateway or node.")
+            return mesh_node_page(req)
+        }
+        save_setting(prefix + "kind", "device")
+        save_setting(prefix + "name", form_value(body, "name"))
+        save_setting(prefix + "description", form_value(body, "description"))
+        save_setting(prefix + "device", device_name)
+        save_setting(prefix + "transport", form_value(body, "transport"))
+        save_setting(prefix + "address", form_value(body, "address"))
+        save_setting(prefix + "device_id", form_value(body, "device_id"))
+        save_setting(prefix + "parent", parent)
+        save_setting(prefix + "role", "device")
+        save_setting(prefix + "board", "")
+        save_setting(prefix + "link", "")
+        save_setting(prefix + "sensors", "")
+        save_setting(prefix + "driver", "")
+        save_setting("step_topology", "pending")
+        mesh_reset_after("topology")
+        save_setting("mesh_message", "Device " + rho_int_to_str(index) + " saved.")
+        return mesh_page(req)
+    }
+
     if kind == "module" {
         let module_name: string = form_value(body, "module")
         let parent: string = form_value(body, "parent")
@@ -1438,7 +1736,8 @@ fn mesh_gateway_page(req: Request) Response {
         "<div class=\"form-actions\"><button type=\"submit\">Save gateway</button></div></form>"
     var modules: string = ""
     if gateway_allows_modules() {
-        modules = "<p><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=gateway\">+ Add module</a></p>" +
+        modules = "<p><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=gateway\">+ Add module</a>" +
+            "<a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">+ Add device</a></p>" +
             "<p><small>A module attached to the gateway is a node of its own in the tree and is " +
             "carried by the gateway's image.</small></p>"
     } else {
@@ -1837,7 +2136,7 @@ fn mesh_network_form() string {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        if !is_module_node(index) {
+        if !is_module_node(index) && !is_device_node(index) {
             rows = rows + node_network_row(index)
         }
         index = index + 1
@@ -2118,7 +2417,7 @@ fn mesh_network_page(req: Request) Response {
         var index: u32 = 1
         let count: u32 = node_count()
         while index <= count {
-            if !is_module_node(index) && network_ready(index) {
+            if !is_module_node(index) && !is_device_node(index) && network_ready(index) {
                 ready = ready + 1
             }
             index = index + 1
@@ -2184,7 +2483,7 @@ fn mesh_network_node_page(req: Request) Response {
     var child: u32 = 1
     let count: u32 = node_count()
     while child <= count {
-        if !is_module_node(child) &&
+        if !is_module_node(child) && !is_device_node(child) &&
             node_value(child, "parent", "gateway") == "node." + rho_int_to_str(index) {
             outgoing = outgoing + connection_summary(child)
         }
@@ -2256,7 +2555,7 @@ fn mesh_network_gateway_page(req: Request) Response {
     var child: u32 = 1
     let count: u32 = node_count()
     while child <= count {
-        if !is_module_node(child) && node_value(child, "parent", "gateway") == "gateway" {
+        if !is_module_node(child) && !is_device_node(child) && node_value(child, "parent", "gateway") == "gateway" {
             outgoing = outgoing + connection_summary(child)
         }
         child = child + 1
@@ -2413,7 +2712,7 @@ fn mesh_build_node_page(req: Request) Response {
     if index < 1 || index > node_count() {
         return mesh_build_page(req)
     }
-    if is_module_node(index) {
+    if is_module_node(index) || is_device_node(index) {
         return mesh_node_page(req)
     }
     let name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
@@ -2616,7 +2915,7 @@ fn mesh_gateway_link_form() string {
     var options: string = ""
     var index: u32 = 1
     while index <= count {
-        if is_module_node(index) {
+        if is_module_node(index) || is_device_node(index) {
             index = index + 1
             continue
         }
@@ -2774,7 +3073,7 @@ fn mesh_node_selector() string {
     var options: string = ""
     var index: u32 = 1
     while index <= count {
-        if is_module_node(index) {
+        if is_module_node(index) || is_device_node(index) {
             index = index + 1
             continue
         }
