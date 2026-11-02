@@ -1309,8 +1309,10 @@ fn mesh_device_node_page(req: Request, index: u32, is_new: bool) Response {
         mesh_select("device", "Device", device_picker(device_name),
             "An integration from robohub-devices.") +
         mesh_select("transport", "Transport",
-            option("http", "HTTP RPC", "", transport) + option("mqtt", "MQTT", "", transport),
-            "HTTP polls and commands directly; MQTT is bridged by a relay or gateway.") +
+            option("http", "HTTP RPC", "", transport) + option("mqtt", "MQTT", "", transport) +
+            option("modbus", "Modbus", "", transport) + option("gpio", "GPIO", "", transport) +
+            option("uart", "UART", "", transport),
+            "HTTP polls and commands directly; other transports are carried by the parent node.") +
         mesh_input("address", "HTTP address", address, "http://host:port for HTTP RPC.") +
         mesh_input("device_id", "Device id", device_id, "Shelly id, used as the MQTT topic.") +
         "</div>" +

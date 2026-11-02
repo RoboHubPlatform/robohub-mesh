@@ -795,26 +795,87 @@ fn module_rows() string {
 // device_rows is one row per device integration the robohub-devices checkout
 // carries:
 //   name|label|kind|transports|manifest
+// device_paths reads robohub-devices' own list. The collection's module.yml is
+// the registry the consumer follows: a new device adds its path there, and the
+// next render sees it without a scan of the tree.
+fn device_trim(text: string) string {
+    var out: string = text
+    while rho_strlen(out) > 0 && rho_str_eq(rho_str_slice(out, 0, 1), " ") {
+        out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
+    }
+    while rho_strlen(out) > 0 &&
+        rho_str_eq(rho_str_slice(out, u32(rho_strlen(out)) - 1, 1), " ") {
+        out = rho_str_slice(out, 0, u32(rho_strlen(out)) - 1)
+    }
+    return out
+}
+
+fn device_paths() string {
+    let entry: string = registry_entry("robohub-devices")
+    if !rho_path_exists(entry) {
+        return ""
+    }
+    let root: string = resolve_path(yaml.value(entry, "path"))
+    let text: string = rho_read_text(root + "/module.yml")
+    let start: i32 = rho_str_index_of(text, "\ndevices:\n")
+    if start < 0 {
+        return ""
+    }
+    var out: string = ""
+    var i: u32 = u32(start) + 11
+    while i < u32(rho_strlen(text)) {
+        let at: i32 = rho_str_index_of(
+            rho_str_slice(text, i, u32(rho_strlen(text)) - i), "\n")
+        let end: u32 = u32(rho_strlen(text))
+        if at >= 0 {
+            end = i + u32(at)
+        }
+        let line: string = rho_str_slice(text, i, end - i)
+        let trimmed: string = device_trim(line)
+        if rho_strlen(trimmed) > 0 && plugin_indent(line) == 0 {
+            break
+        }
+        if rho_str_index_of(trimmed, "- ") == 0 {
+            if rho_strlen(out) > 0 {
+                out = out + "\n"
+            }
+            out = out + rho_str_slice(trimmed, 2, u32(rho_strlen(trimmed)) - 2)
+        }
+        i = end + 1
+    }
+    return out
+}
+
+// device_rows is one row per device integration the robohub-devices checkout
+// lists at this moment:
+//   name|label|kind|transports|manifest
 fn device_rows() string {
     let entry: string = registry_entry("robohub-devices")
     if !rho_path_exists(entry) {
         return ""
     }
     let devices_path: string = resolve_path(yaml.value(entry, "path"))
-    let manifests: string = find_manifests(devices_path + "/devices", "find-devices")
+    var manifests: string = device_paths()
+    if manifests == "" {
+        manifests = find_manifests(devices_path + "/devices", "find-devices")
+    }
     var out: string = ""
     var rest: string = manifests
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let manifest: string = ""
+        let entry_line: string = ""
         if at < 0 {
-            manifest = rest
+            entry_line = rest
             rest = ""
         } else {
-            manifest = rho_str_slice(rest, 0, u32(at))
+            entry_line = rho_str_slice(rest, 0, u32(at))
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        if manifest == "" {
+        var manifest: string = entry_line
+        if rho_str_index_of(manifest, "module.yml") < 0 {
+            manifest = devices_path + "/" + manifest + "/module.yml"
+        }
+        if !rho_path_exists(manifest) {
             continue
         }
         let name: string = yaml.value(manifest, "module.name")

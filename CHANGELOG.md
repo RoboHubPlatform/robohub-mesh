@@ -2,6 +2,13 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.3.2] - 2026-11-02
+
+Device picker reads the `devices:` list in robohub-devices' module.yml, so
+every device the collection carries is offered and a new one appears on the next
+render. The transport list includes Modbus, GPIO and UART alongside HTTP and
+MQTT.
+
 ## [0.3.1] - 2026-11-02
 
 Device nodes are reachable from the tree and from a native gateway too:
