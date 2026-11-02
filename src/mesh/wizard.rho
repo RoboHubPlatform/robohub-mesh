@@ -249,6 +249,10 @@ fn ensure_wizard_dir() void {
             }
         }
     }
+
+    // A module used to be a field on a node. It is a node of its own now, so a
+    // plan written before that change gets one module node per attachment.
+    migrate_module_nodes()
 }
 
 fn state_value_in(path: string, key: string) string {
@@ -293,6 +297,37 @@ fn state_value(key: string) string {
         }
     }
     return ""
+}
+
+// save_setting_raw is save_setting without preparing the directory. The
+// migration that runs while preparing it writes many settings; asking to
+// prepare the directory from inside that would come back here forever.
+fn save_setting_raw(key: string, value: string) void {
+    let file: string = wizard_file()
+    if file == "" {
+        return
+    }
+    let text: string = rho_read_text(file)
+    let prefix: string = key + "="
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let line: string = ""
+        if at < 0 {
+            line = rest
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" || rho_str_index_of(line, prefix) == 0 {
+            continue
+        }
+        out = out + line + "\n"
+    }
+    out = out + key + "=" + sanitize(value) + "\n"
+    ignore_bool(rho_write_text(file, out))
 }
 
 fn save_setting_at(path: string, key: string, value: string) void {
@@ -495,7 +530,8 @@ fn registry_entry(name: string) string {
 }
 
 fn find_manifests(root: string, name: string) string {
-    ensure_wizard_dir()
+    // Discovery is called while the state directory is being prepared. Asking
+    // to prepare it here would re-enter that preparation from inside it.
     let report: string = wizard_report(name)
     let code: u32 = rho_exec("find",
         root + " -maxdepth 4 -type f -name module.yml", report)
@@ -648,6 +684,62 @@ fn driver_rows() string {
 // file, so a board added to robohub-drivers appears in the node form without
 // rebuilding Mesh or the keeper. A board is a physical module: the driver a
 // node runs is whatever the board says carries it.
+
+fn module_picker(selected: string) string {
+    let rows: string = module_rows()
+    if rows == "" {
+        return "<p>No module boards were found under robohub-drivers/boards.</p>"
+    }
+    var out: string = "<div class=\"sensor-groups\">"
+    var rendered: string = ""
+    var rest: string = "environmental temperature light input"
+    var first: bool = true
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var category: string = ""
+        if at < 0 {
+            category = rest
+            rest = ""
+        } else {
+            category = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if category == "" || category_total(rows, category) == 0 {
+            continue
+        }
+        var open: bool = false
+        if first || category_selected(rows, category, selected) > 0 {
+            open = true
+        }
+        out = out + category_section(rows, category, selected, open, "radio", "module")
+        rendered = rendered + category + " "
+        first = false
+    }
+    rest = rows
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let line: string = ""
+        if at < 0 {
+            line = rest
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let category: string = field(line, 3)
+        if category == "" || words_contain(rendered, category) {
+            continue
+        }
+        out = out + category_section(rows, category, selected,
+            category_selected(rows, category, selected) > 0, "radio", "module")
+        rendered = rendered + category + " "
+    }
+    return out + "</div>"
+}
+
 fn module_rows() string {
     let entry: string = registry_entry("robohub-drivers")
     if !rho_path_exists(entry) {
@@ -747,6 +839,223 @@ fn gateway_sensors() string {
     return legacy
 }
 
+fn compute_node_count() u32 {
+    var count: u32 = 0
+    var index: u32 = 1
+    let total: u32 = node_count()
+    while index <= total {
+        if !is_module_node(index) {
+            count = count + 1
+        }
+        index = index + 1
+    }
+    return count
+}
+
+fn has_compute_nodes() bool {
+    return compute_node_count() > 0
+}
+
+fn node_kind(index: u32) string {
+    let kind: string = state_value("node." + rho_int_to_str(index) + ".kind")
+    if kind == "" {
+        return "compute"
+    }
+    return kind
+}
+
+fn is_module_node(index: u32) bool {
+    return node_kind(index) == "module"
+}
+
+fn node_module_name(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".module")
+}
+
+fn gateway_allows_modules() bool {
+    let gateway: string = default_value("gateway", "native")
+    return gateway != "" && gateway != "native"
+}
+
+fn node_module_children(index: u32) string {
+    var out: string = ""
+    var child: u32 = 1
+    let count: u32 = node_count()
+    while child <= count {
+        if is_module_node(child) &&
+            state_value("node." + rho_int_to_str(child) + ".parent") == "node." + rho_int_to_str(index) {
+            if rho_strlen(out) > 0 {
+                out = out + " "
+            }
+            out = out + rho_int_to_str(child)
+        }
+        child = child + 1
+    }
+    return out
+}
+
+fn gateway_module_indices() string {
+    var out: string = ""
+    var child: u32 = 1
+    let count: u32 = node_count()
+    while child <= count {
+        if is_module_node(child) &&
+            state_value("node." + rho_int_to_str(child) + ".parent") == "gateway" {
+            if rho_strlen(out) > 0 {
+                out = out + " "
+            }
+            out = out + rho_int_to_str(child)
+        }
+        child = child + 1
+    }
+    return out
+}
+
+fn module_parent_options(selected: string) string {
+    var options: string = ""
+    if gateway_allows_modules() {
+        options = options + option("gateway", "Gateway", "", selected)
+    }
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if !is_module_node(index) {
+            options = options + option("node." + rho_int_to_str(index),
+                "Node " + rho_int_to_str(index) + " (" +
+                node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
+        }
+        index = index + 1
+    }
+    return options
+}
+
+fn module_parent_valid(parent: string) bool {
+    if parent == "gateway" {
+        return gateway_allows_modules()
+    }
+    if rho_str_index_of(parent, "node.") != 0 {
+        return false
+    }
+    let index: u32 = rho_int_from_str(
+        rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
+    if index < 1 || index > node_count() {
+        return false
+    }
+    return !is_module_node(index)
+}
+
+fn module_names_for(indices: string) string {
+    var out: string = ""
+    var rest: string = indices
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var index_text: string = ""
+        if at < 0 {
+            index_text = rest
+            rest = ""
+        } else {
+            index_text = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if index_text == "" {
+            continue
+        }
+        let name: string = node_module_name(u32(rho_int_from_str(index_text)))
+        if name == "" {
+            continue
+        }
+        if rho_strlen(out) > 0 {
+            out = out + " "
+        }
+        out = out + name
+    }
+    return out
+}
+
+fn append_module_node(module_name: string, parent: string) u32 {
+    let index: u32 = node_count() + 1
+    if index > 64 {
+        return 0
+    }
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    save_setting_raw("node.count", rho_int_to_str(index))
+    save_setting_raw(prefix + "kind", "module")
+    save_setting_raw(prefix + "name", module_label(module_name))
+    save_setting_raw(prefix + "description", module_summary(module_name))
+    save_setting_raw(prefix + "module", module_name)
+    save_setting_raw(prefix + "parent", parent)
+    save_setting_raw(prefix + "role", "module")
+    save_setting_raw(prefix + "board", "")
+    save_setting_raw(prefix + "link", "")
+    save_setting_raw(prefix + "sensors", "")
+    save_setting_raw(prefix + "driver", "")
+    return index
+}
+
+fn migrate_module_nodes() void {
+    if current_project() == "" {
+        return
+    }
+    let initial: u32 = node_count()
+    var index: u32 = 1
+    while index <= initial {
+        if !is_module_node(index) {
+            var rest: string = node_sensors(index)
+            while rest != "" {
+                let at: i32 = rho_str_index_of(rest, " ")
+                var name: string = ""
+                if at < 0 {
+                    name = rest
+                    rest = ""
+                } else {
+                    name = rho_str_slice(rest, 0, u32(at))
+                    rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+                }
+                if name != "" {
+                    ignore_u32(append_module_node(name,
+                        "node." + rho_int_to_str(index)))
+                }
+            }
+            if node_sensors(index) != "" {
+                save_setting_raw("node." + rho_int_to_str(index) + ".sensors", "")
+                save_setting_raw("node." + rho_int_to_str(index) + ".driver", "")
+            }
+        }
+        index = index + 1
+    }
+    if gateway_allows_modules() {
+        var rest: string = gateway_sensors()
+        while rest != "" {
+            let at: i32 = rho_str_index_of(rest, " ")
+            var name: string = ""
+            if at < 0 {
+                name = rest
+                rest = ""
+            } else {
+                name = rho_str_slice(rest, 0, u32(at))
+                rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+            }
+            if name != "" {
+                ignore_u32(append_module_node(name, "gateway"))
+            }
+        }
+    }
+    save_setting_raw("gateway_sensors", "")
+    save_setting_raw("gateway_driver", "")
+    // The old global driver was the first node's fallback. Once it has become a
+    // module node it must not be read again, or every preparation would append
+    // another copy of the same module.
+    save_setting_raw("driver", "")
+}
+
+fn module_summary(module_name: string) string {
+    let summary: string = field(row_by_name(module_rows(), module_name), 2)
+    if summary == "" {
+        return module_name
+    }
+    return summary
+}
+
 fn first_sensor(sensors: string) string {
     return first_word(sensors)
 }
@@ -832,7 +1141,7 @@ fn category_selected(rows: string, category: string, selected: string) u32 {
     return count
 }
 
-fn category_cards(rows: string, category: string, selected: string) string {
+fn category_cards(rows: string, category: string, selected: string, input_type: string, input_name: string) string {
     var out: string = ""
     var rest: string = rows
     while rest != "" {
@@ -853,7 +1162,8 @@ fn category_cards(rows: string, category: string, selected: string) string {
         if words_contain(selected, name) {
             mark = " checked"
         }
-        out = out + "<label class=\"sensor-option\"><input type=\"checkbox\" name=\"sensors\" value=\"" +
+        out = out + "<label class=\"sensor-option\"><input type=\"" + input_type +
+            "\" name=\"" + input_name + "\" value=\"" +
             escape_html(name) + "\"" + mark + "><span><strong>" + escape_html(field(line, 1)) +
             "</strong><small>" + escape_html(field(line, 2)) + " · " +
             escape_html(module_driver(name)) + "</small></span></label>"
@@ -908,7 +1218,7 @@ fn category_class(category: string) string {
     return out
 }
 
-fn category_section(rows: string, category: string, selected: string, open: bool) string {
+fn category_section(rows: string, category: string, selected: string, open: bool, input_type: string, input_name: string) string {
     var opened: string = ""
     if open {
         opened = " open"
@@ -926,7 +1236,7 @@ fn category_section(rows: string, category: string, selected: string, open: bool
         rho_int_to_str(chosen) + " of " + rho_int_to_str(total) +
         " selected</small></span>" + chosen_names +
         "</summary><div class=\"sensor-grid\">" +
-        category_cards(rows, category, selected) + "</div></details>"
+        category_cards(rows, category, selected, input_type, input_name) + "</div></details>"
 }
 
 // The modules are grouped by their board category, which is the same folder
@@ -959,7 +1269,7 @@ fn sensor_checkboxes(selected: string) string {
         if first || category_selected(rows, category, selected) > 0 {
             open = true
         }
-        out = out + category_section(rows, category, selected, open)
+        out = out + category_section(rows, category, selected, open, "checkbox", "sensors")
         rendered = rendered + category + " "
         first = false
     }
@@ -984,7 +1294,7 @@ fn sensor_checkboxes(selected: string) string {
             continue
         }
         out = out + category_section(rows, category, selected,
-            category_selected(rows, category, selected) > 0)
+            category_selected(rows, category, selected) > 0, "checkbox", "sensors")
         rendered = rendered + category + " "
     }
     return out + "</div>"
@@ -1023,7 +1333,7 @@ fn node_assignments_count(assignments: string, prefix: string) u32 {
 fn node_bus_plan(index: u32) string {
     var rows: string = ""
     var assignments: string = ""
-    var rest: string = node_sensors(index)
+    var rest: string = module_names_for(node_module_children(index))
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, " ")
         var name: string = ""
@@ -1577,7 +1887,7 @@ fn driver_has_example(driver: string) bool {
 }
 
 fn node_driver_for(index: u32) string {
-    let sensors: string = node_sensors(index)
+    let sensors: string = module_names_for(node_module_children(index))
     var rest: string = sensors
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, " ")
@@ -1651,6 +1961,30 @@ fn finish_progress(stage: string, code: u32) void {
 // run_shell runs one stage of an action. Its output goes to the step's progress
 // file as it is produced, so the page can follow it with an event stream; the
 // stage label says which command the lines belong to.
+fn mesh_manifest_path() string {
+    if rho_path_exists("module.yml") &&
+        yaml.value("module.yml", "module.name") == "mesh" {
+        return "module.yml"
+    }
+    let path: string = robohub_root() + "/applications/mesh/module.yml"
+    if rho_path_exists(path) {
+        return path
+    }
+    return ""
+}
+
+fn mesh_alert(level: string, message: string, metadata: string) u32 {
+    let manifest: string = mesh_manifest_path()
+    if manifest == "" {
+        return 0
+    }
+    let registry: string = registry_load_app(robohub_root() + "/plugins", manifest, "")
+    if registry == "" {
+        return 0
+    }
+    return registry_alert(robohub_root() + "/plugins", registry, level, message, metadata)
+}
+
 fn run_shell(command: string, label: string) u32 {
     ensure_wizard_dir()
     let stage: string = default_value("current_step", "build")
@@ -2029,12 +2363,14 @@ fn prepare_node() u32 {
     config = append_kconfig(config, board_kconfig)
     config = append_kconfig(config, driver_kconfig)
 
-    // Every module fitted to the node is part of the node's image. The primary
-    // module supplied the example and its own symbols above; the rest add
-    // theirs here. A module with a bus conflict is left out of the build and
-    // reported on the node page, so a clash never stops the parent building.
+    // Every module fitted to the node is part of the node's image. The example
+    // comes from the primary module's driver, so its own board symbol is added
+    // here too; a driver shared by several boards does not name the one fitted.
     let compatible: string = node_build_sensors(selected_node())
     let primary: string = first_sensor(compatible)
+    if primary != "" {
+        config = append_kconfig(config, sensor_kconfig_symbols(primary))
+    }
     var rest_sensors: string = compatible
     while rest_sensors != "" {
         let at: i32 = rho_str_index_of(rest_sensors, " ")
@@ -2068,11 +2404,13 @@ fn save_node_network(body: string) void {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        let prefix: string = "node." + rho_int_to_str(index) + "."
-        save_setting(prefix + "ssid", form_value(body, prefix + "ssid"))
-        save_setting(prefix + "password", form_value(body, prefix + "password"))
-        save_setting(prefix + "gateway_host", form_value(body, prefix + "gateway_host"))
-        save_setting(prefix + "serial_port", form_value(body, prefix + "serial_port"))
+        if !is_module_node(index) {
+            let prefix: string = "node." + rho_int_to_str(index) + "."
+            save_setting(prefix + "ssid", form_value(body, prefix + "ssid"))
+            save_setting(prefix + "password", form_value(body, prefix + "password"))
+            save_setting(prefix + "gateway_host", form_value(body, prefix + "gateway_host"))
+            save_setting(prefix + "serial_port", form_value(body, prefix + "serial_port"))
+        }
         index = index + 1
     }
 }
@@ -2331,8 +2669,8 @@ fn run_handler(name: string) u32 {
 // makes a tree out of it.
 fn node_count() u32 {
     let count: u32 = rho_int_from_str(default_value("node.count", "0"))
-    if count > 16 {
-        return 16
+    if count > 64 {
+        return 64
     }
     return count
 }
@@ -2388,6 +2726,10 @@ fn nodes_editor(stage: string, name: string) string {
     var rows: string = ""
     var index: u32 = 1
     while index <= count {
+        if is_module_node(index) {
+            index = index + 1
+            continue
+        }
         let prefix: string = "node." + rho_int_to_str(index) + "."
         var role_default: string = "node"
         var board_default: string = ""
@@ -2456,6 +2798,10 @@ fn save_nodes(body: string) bool {
     var index: u32 = 1
     var valid: bool = true
     while index <= count {
+        if is_module_node(index) {
+            index = index + 1
+            continue
+        }
         let prefix: string = "node." + rho_int_to_str(index) + "."
         let role: string = form_value(body, prefix + "role")
         let board: string = form_value(body, prefix + "board")
@@ -2854,6 +3200,14 @@ fn run_step_action(stage: string, action: string) u32 {
         if rho_str_index_of(rho_read_text(progress_path(stage)), expect) < 0 {
             code = 2
         }
+    }
+    if code != 0 {
+        var level: string = "ERROR"
+        if code == 2 {
+            level = "WARNING"
+        }
+        ignore_u32(mesh_alert(level, "Mesh " + stage + " " + action + " failed",
+            "stage=" + stage + ";action=" + action))
     }
     finish_progress(stage, code)
     save_setting("last_report." + stage, progress_path(stage))

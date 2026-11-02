@@ -98,7 +98,7 @@ fn all_nodes_programmed() bool {
     }
     var index: u32 = 1
     while index <= count {
-        if node_status(index) != "programmed" {
+        if !is_module_node(index) && node_status(index) != "programmed" {
             return false
         }
         index = index + 1
@@ -136,11 +136,23 @@ fn link_label(link: string) string {
 
 fn node_card_body(index: u32) string {
     let role: string = node_value(index, "role", "node")
-    let board: string = node_value(index, "board", "")
-    let sensors: string = node_sensors(index)
     let parent: string = node_value(index, "parent", "gateway")
     var name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
     var description: string = node_value(index, "description", "")
+    if is_module_node(index) {
+        let module_name: string = node_module_name(index)
+        if description == "" {
+            description = module_summary(module_name)
+        }
+        return "<span class=\"node-role\">module</span>" +
+            "<strong>" + escape_html(name) + "</strong>" +
+            "<small>" + escape_html(description) + "</small>" +
+            "<span class=\"node-meta\">" + escape_html(module_label(module_name)) +
+            " · attached to " + escape_html(parent) + "</span>" +
+            "<span class=\"node-status status-attached\">attached</span>"
+    }
+    let board: string = node_value(index, "board", "")
+    let modules: string = module_names_for(node_module_children(index))
     if description == "" {
         description = board_summary(board)
     }
@@ -148,7 +160,7 @@ fn node_card_body(index: u32) string {
         "<strong>" + escape_html(name) + "</strong>" +
         "<small>" + escape_html(description) + "</small>" +
         "<span class=\"node-meta\">" + escape_html(label_for(board_rows(), board)) +
-        " · " + escape_html(sensor_labels(sensors)) + " · parent " +
+        " · " + escape_html(sensor_labels(modules)) + " · parent " +
         escape_html(parent) + "</span>" + status_badge(node_status(index))
 }
 
@@ -180,10 +192,14 @@ fn gateway_card_body() string {
     if description == "" {
         description = board_summary(gateway)
     }
+    var module_text: string = ""
+    if gateway_allows_modules() {
+        module_text = " · " + escape_html(sensor_labels(module_names_for(gateway_module_indices())))
+    }
     return "<span class=\"node-role\">gateway</span><strong>" +
         escape_html(name) + "</strong><small>" + escape_html(description) +
         "</small><span class=\"node-meta\">" + escape_html(label_for(board_rows(), gateway)) +
-        " · " + escape_html(sensor_labels(gateway_sensors())) + "</span>" + gateway_live_badge()
+        module_text + "</span>" + gateway_live_badge()
 }
 
 fn gateway_card(readonly: bool) string {
@@ -202,9 +218,24 @@ fn build_gateway_card() string {
 }
 
 fn node_attached(index: u32) bool {
+    if is_module_node(index) {
+        let parent: string = node_value(index, "parent", "")
+        if parent == "gateway" {
+            return gateway_allows_modules()
+        }
+        if rho_str_index_of(parent, "node.") != 0 {
+            return false
+        }
+        let parent_index: u32 = rho_int_from_str(
+            rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
+        if parent_index < 1 || parent_index > node_count() || is_module_node(parent_index) {
+            return false
+        }
+        return node_attached(parent_index)
+    }
     var current: u32 = index
     var guard: u32 = 0
-    while guard < 32 {
+    while guard < 64 {
         let parent: string = node_value(current, "parent", "gateway")
         if parent == "gateway" {
             return true
@@ -229,17 +260,35 @@ fn node_attached(index: u32) bool {
 // Every child is drawn under its parent, and the badge on the branch is the
 // link the child reports over. That is what makes the drawing a tree of
 // connections rather than a list of boards.
+fn node_visible(index: u32) bool {
+    if is_module_node(index) && node_value(index, "parent", "") == "gateway" {
+        return gateway_allows_modules()
+    }
+    return true
+}
+
 fn mesh_children(parent: string, readonly: bool) string {
     var out: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
-            let link: string = node_value(index, "link", "uart")
-            out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
-                escape_html(link_label(link)) + "</span>" +
-                node_card(index, readonly) +
-                mesh_children("node." + rho_int_to_str(index), readonly) + "</li>"
+            if is_module_node(index) {
+                out = out + "<li class=\"mesh-branch module-branch\">" +
+                    "<span class=\"link-badge module\">module</span>" +
+                    node_card(index, readonly) + "</li>"
+            } else {
+                let link: string = node_value(index, "link", "uart")
+                var quick: string = ""
+                if !readonly {
+                    quick = " <a class=\"quick-add\" href=\"/mesh/node/new?kind=module&parent=node." +
+                        rho_int_to_str(index) + "\">+ module</a>"
+                }
+                out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
+                    escape_html(link_label(link)) + "</span>" +
+                    node_card(index, readonly) + quick +
+                    mesh_children("node." + rho_int_to_str(index), readonly) + "</li>"
+            }
         }
         index = index + 1
     }
@@ -255,7 +304,7 @@ fn mesh_tree(readonly: bool) string {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        if !node_attached(index) {
+        if !node_attached(index) && node_visible(index) {
             orphans = orphans + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
                 escape_html(link_label(node_value(index, "link", "uart"))) + "</span>" +
                 node_card(index, readonly) + "</li>"
@@ -279,10 +328,16 @@ fn mesh_build_children(parent: string) string {
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
-            let link: string = node_value(index, "link", "uart")
-            out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
-                escape_html(link_label(link)) + "</span>" + build_node_card(index) +
-                mesh_build_children("node." + rho_int_to_str(index)) + "</li>"
+            if is_module_node(index) {
+                out = out + "<li class=\"mesh-branch module-branch\">" +
+                    "<span class=\"link-badge module\">module</span>" +
+                    node_card(index, true) + "</li>"
+            } else {
+                let link: string = node_value(index, "link", "uart")
+                out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
+                    escape_html(link_label(link)) + "</span>" + build_node_card(index) +
+                    mesh_build_children("node." + rho_int_to_str(index)) + "</li>"
+            }
         }
         index = index + 1
     }
@@ -298,7 +353,7 @@ fn mesh_build_tree() string {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        if !node_attached(index) {
+        if !node_attached(index) && node_visible(index) {
             orphans = orphans + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
                 escape_html(link_label(node_value(index, "link", "uart"))) + "</span>" +
                 build_node_card(index) + "</li>"
@@ -495,7 +550,7 @@ fn network_all_ready() bool {
     }
     var index: u32 = 1
     while index <= count {
-        if !network_ready(index) {
+        if !is_module_node(index) && !network_ready(index) {
             return false
         }
         index = index + 1
@@ -524,7 +579,7 @@ fn network_link_badge(index: u32) string {
 fn node_network_body(index: u32) string {
     let role: string = node_value(index, "role", "node")
     let board: string = node_value(index, "board", "")
-    let sensors: string = node_sensors(index)
+    let sensors: string = module_names_for(node_module_children(index))
     let parent: string = node_value(index, "parent", "gateway")
     var name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
     var description: string = node_value(index, "description", "")
@@ -561,11 +616,17 @@ fn mesh_network_children(parent: string) string {
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
-            out = out + "<li class=\"mesh-branch\">" + network_link_badge(index) +
-                "<a class=\"node-card " + node_value(index, "role", "node") +
-                " network-link-card\" href=\"/mesh/network/node/" + rho_int_to_str(index) +
-                "\">" + node_network_body(index) + "</a>" +
-                mesh_network_children("node." + rho_int_to_str(index)) + "</li>"
+            if is_module_node(index) {
+                out = out + "<li class=\"mesh-branch module-branch\">" +
+                    "<span class=\"link-badge module\">module</span>" +
+                    node_card(index, true) + "</li>"
+            } else {
+                out = out + "<li class=\"mesh-branch\">" + network_link_badge(index) +
+                    "<a class=\"node-card " + node_value(index, "role", "node") +
+                    " network-link-card\" href=\"/mesh/network/node/" + rho_int_to_str(index) +
+                    "\">" + node_network_body(index) + "</a>" +
+                    mesh_network_children("node." + rho_int_to_str(index)) + "</li>"
+            }
         }
         index = index + 1
     }
@@ -582,7 +643,7 @@ fn mesh_network_tree() string {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        if !node_attached(index) {
+        if !node_attached(index) && node_visible(index) {
             orphans = orphans + "<li class=\"mesh-branch\">" + network_link_badge(index) +
                 "<a class=\"node-card " + node_value(index, "role", "node") +
                 " network-link-card\" href=\"/mesh/network/node/" + rho_int_to_str(index) +
@@ -1007,12 +1068,82 @@ fn parent_options(limit: u32, selected: string) string {
     var options: string = option("gateway", "Gateway", "", selected)
     var index: u32 = 1
     while index <= limit {
-        options = options + option("node." + rho_int_to_str(index),
-            "Node " + rho_int_to_str(index) + " (" +
-            node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
+        if !is_module_node(index) {
+            options = options + option("node." + rho_int_to_str(index),
+                "Node " + rho_int_to_str(index) + " (" +
+                node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
+        }
         index = index + 1
     }
     return options
+}
+
+fn default_module_parent() string {
+    if gateway_allows_modules() {
+        return "gateway"
+    }
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if !is_module_node(index) {
+            return "node." + rho_int_to_str(index)
+        }
+        index = index + 1
+    }
+    return "gateway"
+}
+
+fn mesh_module_node_page(req: Request, index: u32, is_new: bool) Response {
+    let module_name: string = node_module_name(index)
+    var parent: string = node_value(index, "parent", default_module_parent())
+    if is_new {
+        let requested: string = request_query_param(req, "parent")
+        if requested != "" {
+            parent = requested
+        }
+    }
+    var name: string = node_value(index, "name", "")
+    if name == "" {
+        if module_name != "" {
+            name = module_label(module_name)
+        } else {
+            name = "Module " + rho_int_to_str(index)
+        }
+    }
+    var description: string = node_value(index, "description", "")
+    if description == "" && module_name != "" {
+        description = module_summary(module_name)
+    }
+    var title: string = "Edit module " + rho_int_to_str(index)
+    if is_new {
+        title = "Add a module"
+    }
+    let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/node/" +
+        escape_html(param(req, "index")) + "\">" +
+        "<input type=\"hidden\" name=\"action\" value=\"save\">" +
+        "<input type=\"hidden\" name=\"kind\" value=\"module\">" +
+        "<div class=\"grid\">" +
+        mesh_input("name", "Name", name, "What this module is called on its node.") +
+        mesh_textarea("description", "Description", description) +
+        mesh_select("parent", "Attached to", module_parent_options(parent),
+            "The node this module extends. A native host has no pins, so it cannot take modules.") +
+        "</div>" +
+        "<fieldset class=\"sensor-picker\"><legend>Module board</legend>" +
+        "<p><small>A module is a node of its own in the tree, but it is not built or programmed " +
+        "by itself: it is carried by the image of the node it extends.</small></p>" +
+        module_picker(module_name) + "</fieldset>" +
+        "<div class=\"form-actions\"><button type=\"submit\">Save module</button></div></form>"
+    var delete_form: string = ""
+    if !is_new {
+        delete_form = "<form method=\"post\" action=\"/mesh/node/" + escape_html(param(req, "index")) +
+            "\"><input type=\"hidden\" name=\"action\" value=\"delete\">" +
+            "<button type=\"submit\" class=\"danger\">Delete module</button></form>"
+    }
+    let body: string = "<h1>" + escape_html(title) + "</h1><p>A module extends one node. " +
+        "The boards are read from robohub-drivers when this page is loaded.</p>" +
+        form + delete_form +
+        "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
+    return page(title, body)
 }
 
 fn mesh_node_page(req: Request) Response {
@@ -1029,10 +1160,28 @@ fn mesh_node_page(req: Request) Response {
     if index < 1 || index > node_count() + 1 {
         return mesh_page(req)
     }
+    var kind: string = "compute"
+    if is_new {
+        kind = request_query_param(req, "kind")
+        if kind == "" {
+            kind = "compute"
+        }
+    } else {
+        kind = node_kind(index)
+    }
+    if kind == "module" {
+        return mesh_module_node_page(req, index, is_new)
+    }
+
     let role: string = node_value(index, "role", "node")
-    let sensors: string = node_sensors(index)
     let board: string = node_value(index, "board", first_board(role))
-    let parent: string = node_value(index, "parent", "gateway")
+    var parent: string = node_value(index, "parent", "gateway")
+    if is_new {
+        let requested: string = request_query_param(req, "parent")
+        if requested != "" {
+            parent = requested
+        }
+    }
     let link: string = node_value(index, "link", "wifi")
     var name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
     var description: string = node_value(index, "description", "")
@@ -1050,16 +1199,20 @@ fn mesh_node_page(req: Request) Response {
     let role_options: string = option("node", "node", "", role) +
         option("relay", "relay", "", role) + option("gateway", "gateway", "", role)
     var plan_html: string = ""
+    var modules_link: string = ""
     if !is_new {
         plan_html = "<h2>Bus plan</h2>" + node_bus_html(index)
         if node_bus_conflicts(index) {
             plan_html = plan_html + "<p class=\"notice bad\">A module's bus or address is already in use. " +
                 "That module is left out of the image so the node still builds.</p>"
         }
+        modules_link = "<p class=\"actions\"><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=node." +
+            rho_int_to_str(index) + "\">+ Add module</a></p>"
     }
     let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/node/" +
         escape_html(raw) + "\">" +
         "<input type=\"hidden\" name=\"action\" value=\"save\">" +
+        "<input type=\"hidden\" name=\"kind\" value=\"compute\">" +
         "<div class=\"grid\">" +
         mesh_input("name", "Name", name, "What this node is called in the mesh.") +
         mesh_textarea("description", "Description", description) +
@@ -1068,9 +1221,6 @@ fn mesh_node_page(req: Request) Response {
         mesh_select("parent", "Parent", parent_options(limit, parent), "Where this node reports through.") +
         mesh_select("link", "Link", option("uart", "UART", "", link) + option("wifi", "WiFi", "", link), "") +
         "</div>" +
-        "<fieldset class=\"sensor-picker\"><legend>Attached modules</legend>" +
-        "<p><small>Any number of sensor modules can be fitted to this node. They are carried by the node's image; only the node itself is built and programmed. The first module selects the example the image is built from.</small></p>" +
-        sensor_checkboxes(sensors) + "</fieldset>" +
         "<div class=\"form-actions\"><button type=\"submit\">Save node</button></div></form>"
     var delete_form: string = ""
     if !is_new {
@@ -1078,9 +1228,9 @@ fn mesh_node_page(req: Request) Response {
             "\"><input type=\"hidden\" name=\"action\" value=\"delete\">" +
             "<button type=\"submit\" class=\"danger\">Delete node</button></form>"
     }
-    let body: string = "<h1>" + escape_html(title) + "</h1><p>Choose the role and the board, " +
-        "then attach the modules fitted to it. Modules are read from robohub-drivers at this " +
-        "moment, so a new board appears here without a rebuild.</p>" + form + plan_html + delete_form +
+    let body: string = "<h1>" + escape_html(title) + "</h1><p>Choose the role and the board. " +
+        "Modules are nodes of their own, added to the node they extend.</p>" +
+        modules_link + form + plan_html + delete_form +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
     return page(title, body)
 }
@@ -1093,27 +1243,52 @@ fn mesh_node_post(req: Request) Response {
     let raw: string = param(req, "index")
     let body: string = request_body(req)
     let action: string = form_value(body, "action")
+    let kind: string = form_value(body, "kind")
+
     if raw == "new" {
         if action != "save" {
             return mesh_page(req)
         }
         let index: u32 = node_count() + 1
+        let parent: string = form_value(body, "parent")
+        let prefix: string = "node." + rho_int_to_str(index) + "."
+        if kind == "module" {
+            let module_name: string = form_value(body, "module")
+            if module_name == "" || !module_parent_valid(parent) {
+                save_setting("mesh_message",
+                    "A module needs a board and a node to extend. A native host has no pins.")
+                return mesh_node_page(req)
+            }
+            save_setting("node.count", rho_int_to_str(index))
+            save_setting(prefix + "kind", "module")
+            save_setting(prefix + "name", form_value(body, "name"))
+            save_setting(prefix + "description", form_value(body, "description"))
+            save_setting(prefix + "module", module_name)
+            save_setting(prefix + "parent", parent)
+            save_setting(prefix + "role", "module")
+            save_setting(prefix + "board", "")
+            save_setting(prefix + "link", "")
+            save_setting(prefix + "sensors", "")
+            save_setting(prefix + "driver", "")
+            save_setting("step_topology", "pending")
+            mesh_reset_after("topology")
+            save_setting("mesh_message", "Module attached to " + parent + ".")
+            return mesh_page(req)
+        }
         let role: string = form_value(body, "role")
         let board: string = form_value(body, "board")
-        let sensors: string = form_values(body, "sensors")
-        let parent: string = form_value(body, "parent")
         let link: string = form_value(body, "link")
         if role == "" || board == "" || parent == "" || link == "" {
             save_setting("mesh_message", "A node needs a role, a board, a parent and a link.")
             return mesh_page(req)
         }
-        let prefix: string = "node." + rho_int_to_str(index) + "."
         save_setting("node.count", rho_int_to_str(index))
+        save_setting(prefix + "kind", "compute")
         save_setting(prefix + "name", form_value(body, "name"))
         save_setting(prefix + "description", form_value(body, "description"))
         save_setting(prefix + "role", role)
         save_setting(prefix + "board", board)
-        save_setting(prefix + "sensors", sensors)
+        save_setting(prefix + "sensors", "")
         save_setting(prefix + "driver", "")
         save_setting(prefix + "parent", parent)
         save_setting(prefix + "link", link)
@@ -1133,24 +1308,30 @@ fn mesh_node_post(req: Request) Response {
         return mesh_page(req)
     }
     if action == "delete" {
+        if !is_module_node(index) && node_module_children(index) != "" {
+            save_setting("mesh_message", "Remove this node's modules before deleting it.")
+            return mesh_node_page(req)
+        }
         var j: u32 = index
         while j < count {
             let from: string = "node." + rho_int_to_str(j + 1) + "."
             let to: string = "node." + rho_int_to_str(j) + "."
+            save_setting(to + "kind", state_value(from + "kind"))
             save_setting(to + "name", state_value(from + "name"))
             save_setting(to + "description", state_value(from + "description"))
             save_setting(to + "role", state_value(from + "role"))
             save_setting(to + "board", state_value(from + "board"))
+            save_setting(to + "module", state_value(from + "module"))
             save_setting(to + "sensors", state_value(from + "sensors"))
             save_setting(to + "driver", state_value(from + "driver"))
             save_setting(to + "link", state_value(from + "link"))
             var parent: string = state_value(from + "parent")
-            if parent == "node." + rho_int_to_str(index) {
-                parent = "gateway"
-            } else if rho_str_index_of(parent, "node.") == 0 {
+            if rho_str_index_of(parent, "node.") == 0 {
                 let parent_index: u32 = rho_int_from_str(
                     rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
-                if parent_index > index {
+                if parent_index == index {
+                    parent = "gateway"
+                } else if parent_index > index {
                     parent = "node." + rho_int_to_str(parent_index - 1)
                 }
             }
@@ -1158,10 +1339,12 @@ fn mesh_node_post(req: Request) Response {
             j = j + 1
         }
         let last: string = "node." + rho_int_to_str(count) + "."
+        save_setting(last + "kind", "")
         save_setting(last + "name", "")
         save_setting(last + "description", "")
         save_setting(last + "role", "")
         save_setting(last + "board", "")
+        save_setting(last + "module", "")
         save_setting(last + "sensors", "")
         save_setting(last + "driver", "")
         save_setting(last + "parent", "")
@@ -1175,9 +1358,33 @@ fn mesh_node_post(req: Request) Response {
         return mesh_page(req)
     }
 
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    if kind == "module" {
+        let module_name: string = form_value(body, "module")
+        let parent: string = form_value(body, "parent")
+        if module_name == "" || !module_parent_valid(parent) {
+            save_setting("mesh_message",
+                "A module needs a board and a node to extend. A native host has no pins.")
+            return mesh_node_page(req)
+        }
+        save_setting(prefix + "kind", "module")
+        save_setting(prefix + "name", form_value(body, "name"))
+        save_setting(prefix + "description", form_value(body, "description"))
+        save_setting(prefix + "module", module_name)
+        save_setting(prefix + "parent", parent)
+        save_setting(prefix + "role", "module")
+        save_setting(prefix + "board", "")
+        save_setting(prefix + "link", "")
+        save_setting(prefix + "sensors", "")
+        save_setting(prefix + "driver", "")
+        save_setting("step_topology", "pending")
+        mesh_reset_after("topology")
+        save_setting("mesh_message", "Module " + rho_int_to_str(index) + " saved.")
+        return mesh_page(req)
+    }
+
     let role: string = form_value(body, "role")
     let board: string = form_value(body, "board")
-    let sensors: string = form_values(body, "sensors")
     let parent: string = form_value(body, "parent")
     let link: string = form_value(body, "link")
     if role == "" || board == "" || parent == "" || link == "" {
@@ -1188,12 +1395,12 @@ fn mesh_node_post(req: Request) Response {
     if name == "" {
         name = "Node " + rho_int_to_str(index)
     }
-    let prefix: string = "node." + rho_int_to_str(index) + "."
+    save_setting(prefix + "kind", "compute")
     save_setting(prefix + "name", name)
     save_setting(prefix + "description", form_value(body, "description"))
     save_setting(prefix + "role", role)
     save_setting(prefix + "board", board)
-    save_setting(prefix + "sensors", sensors)
+    save_setting(prefix + "sensors", "")
     save_setting(prefix + "driver", "")
     save_setting(prefix + "parent", parent)
     save_setting(prefix + "link", link)
@@ -1213,7 +1420,6 @@ fn mesh_gateway_page(req: Request) Response {
     }
     ensure_wizard_dir()
     let gateway: string = default_value("gateway", first_board("gateway"))
-    let sensors: string = gateway_sensors()
     var name: string = default_value("gateway_name", "")
     if name == "" {
         name = label_for(board_rows(), gateway)
@@ -1222,16 +1428,24 @@ fn mesh_gateway_page(req: Request) Response {
     if description == "" {
         description = board_summary(gateway)
     }
-    let form: string = "<form class=\"grid\" method=\"post\" action=\"/mesh/gateway\">" +
+    let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/gateway\">" +
+        "<div class=\"grid\">" +
         mesh_input("name", "Name", name, "What the gateway is called in this mesh.") +
         mesh_textarea("description", "Description", description) +
         mesh_select("gateway", "Board", options_from_rows(board_rows(), "board", "gateway", gateway),
             "This host, or a board whose manifest says it can gateway.") +
-        "<fieldset class=\"sensor-picker\"><legend>Attached modules</legend>" +
-        "<p><small>Sensor modules fitted to the gateway itself. They are carried by the gateway, " +
-        "not built as separate nodes.</small></p>" + sensor_checkboxes(sensors) + "</fieldset>" +
+        "</div>" +
         "<div class=\"form-actions\"><button type=\"submit\">Save gateway</button></div></form>"
-    return page("Gateway", "<h1>Gateway</h1><p>The root of the mesh.</p>" + form +
+    var modules: string = ""
+    if gateway_allows_modules() {
+        modules = "<p><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=gateway\">+ Add module</a></p>" +
+            "<p><small>A module attached to the gateway is a node of its own in the tree and is " +
+            "carried by the gateway's image.</small></p>"
+    } else {
+        modules = "<p><small>A native host has no pins, so it cannot take modules. Choose a board " +
+            "gateway to attach one.</small></p>"
+    }
+    return page("Gateway", "<h1>Gateway</h1><p>The root of the mesh.</p>" + form + modules +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>")
 }
 
@@ -1248,7 +1462,7 @@ fn mesh_gateway_post(req: Request) Response {
     save_setting("gateway", gateway)
     save_setting("gateway_name", form_value(body, "name"))
     save_setting("gateway_description", form_value(body, "description"))
-    save_setting("gateway_sensors", form_values(body, "sensors"))
+    save_setting("gateway_sensors", "")
     save_setting("gateway_driver", "")
     save_setting("step_topology", "pending")
     mesh_reset_after("topology")
@@ -1265,7 +1479,7 @@ fn mesh_plan_panel(editing: bool) string {
     var accept: string = ""
     if editing {
         accept = "<p><a class=\"button\" href=\"/mesh/node/new\">+ Add node</a></p>"
-        if count >= 1 {
+        if has_compute_nodes() {
             accept = accept + "<form method=\"post\" action=\"/mesh/accept\">" +
                 "<button type=\"submit\">Accept topology</button></form>" +
                 "<p><small>Accepting locks the tree; the next step is the network.</small></p>"
@@ -1286,7 +1500,7 @@ fn mesh_plan_panel(editing: bool) string {
     }
     return notice + "<h2>Plan</h2>" +
         "<p>The gateway is the root. Add nodes, and give each one a role, a board, " +
-        "a driver, a parent and a link.</p>" + accept
+        "a parent and a link. Modules are nodes of their own, added to the node they extend.</p>" + accept
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1549,8 +1763,9 @@ fn mesh_accept(req: Request) Response {
     }
     var index: u32 = 1
     while index <= count {
-        if node_value(index, "role", "") == "" || node_value(index, "board", "") == "" ||
-            node_value(index, "parent", "") == "" || node_value(index, "link", "") == "" {
+        if !is_module_node(index) &&
+            (node_value(index, "role", "") == "" || node_value(index, "board", "") == "" ||
+            node_value(index, "parent", "") == "" || node_value(index, "link", "") == "") {
             save_setting("mesh_message", "Node " + rho_int_to_str(index) + " is incomplete.")
             return mesh_page(req)
         }
@@ -1622,7 +1837,9 @@ fn mesh_network_form() string {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        rows = rows + node_network_row(index)
+        if !is_module_node(index) {
+            rows = rows + node_network_row(index)
+        }
         index = index + 1
     }
     return "<form class=\"grid\" method=\"post\" action=\"/mesh/step/network\">" +
@@ -1901,7 +2118,7 @@ fn mesh_network_page(req: Request) Response {
         var index: u32 = 1
         let count: u32 = node_count()
         while index <= count {
-            if network_ready(index) {
+            if !is_module_node(index) && network_ready(index) {
                 ready = ready + 1
             }
             index = index + 1
@@ -1967,7 +2184,8 @@ fn mesh_network_node_page(req: Request) Response {
     var child: u32 = 1
     let count: u32 = node_count()
     while child <= count {
-        if node_value(child, "parent", "gateway") == "node." + rho_int_to_str(index) {
+        if !is_module_node(child) &&
+            node_value(child, "parent", "gateway") == "node." + rho_int_to_str(index) {
             outgoing = outgoing + connection_summary(child)
         }
         child = child + 1
@@ -2038,7 +2256,7 @@ fn mesh_network_gateway_page(req: Request) Response {
     var child: u32 = 1
     let count: u32 = node_count()
     while child <= count {
-        if node_value(child, "parent", "gateway") == "gateway" {
+        if !is_module_node(child) && node_value(child, "parent", "gateway") == "gateway" {
             outgoing = outgoing + connection_summary(child)
         }
         child = child + 1
@@ -2068,7 +2286,7 @@ fn mesh_node_summary(index: u32) string {
     let name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
     let role: string = node_value(index, "role", "node")
     let board: string = node_value(index, "board", "")
-    let sensors: string = node_sensors(index)
+    let sensors: string = module_names_for(node_module_children(index))
     let link: string = node_value(index, "link", "uart")
     let parent: string = node_value(index, "parent", "gateway")
     var description: string = node_value(index, "description", "")
@@ -2195,6 +2413,9 @@ fn mesh_build_node_page(req: Request) Response {
     if index < 1 || index > node_count() {
         return mesh_build_page(req)
     }
+    if is_module_node(index) {
+        return mesh_node_page(req)
+    }
     let name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
     let content: string = template_fill(template_get("wizard-step"),
         vars("title", "Build node " + rho_int_to_str(index)) +
@@ -2218,6 +2439,9 @@ fn mesh_build_node_post(req: Request) Response {
     let index: u32 = rho_int_from_str(raw)
     if index < 1 || index > node_count() {
         return mesh_build_page(req)
+    }
+    if is_module_node(index) {
+        return mesh_node_page(req)
     }
     let body: string = request_body(req)
     let action: string = form_value(body, "action")
@@ -2392,6 +2616,10 @@ fn mesh_gateway_link_form() string {
     var options: string = ""
     var index: u32 = 1
     while index <= count {
+        if is_module_node(index) {
+            index = index + 1
+            continue
+        }
         let name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
         let link: string = node_value(index, "link", "uart")
         options = options + option(rho_int_to_str(index),
@@ -2514,7 +2742,7 @@ fn mesh_build_page(req: Request) Response {
         var index: u32 = 1
         let count: u32 = node_count()
         while index <= count {
-            if node_status(index) == "programmed" {
+            if !is_module_node(index) && node_status(index) == "programmed" {
                 programmed = programmed + 1
             }
             index = index + 1
@@ -2546,6 +2774,10 @@ fn mesh_node_selector() string {
     var options: string = ""
     var index: u32 = 1
     while index <= count {
+        if is_module_node(index) {
+            index = index + 1
+            continue
+        }
         let name: string = node_value(index, "name", "Node " + rho_int_to_str(index))
         let role: string = node_value(index, "role", "node")
         options = options + option(rho_int_to_str(index),

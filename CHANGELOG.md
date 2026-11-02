@@ -2,6 +2,27 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.2.0] - 2026-11-02
+
+A node is one computer, and a sensor module is a node of its own (`kind: module`)
+attached to it, rather than a field on the node. Module nodes appear in the plan
+tree under the node they extend, are added with **+ Add module** or **+ module**,
+and are never built or programmed separately: the node's image carries them. A
+native gateway cannot take modules; the controls appear only when the gateway is
+a real board.
+
+The module picker is read from `robohub-drivers/boards` on every load, grouped by
+board category. Each module declares its bus and, where it matters, its I2C
+address, address range or SPI chip select; the node page shows the resulting bus
+plan. 1-Wire and I2C lines are shared, an SPI device gets its own chip select,
+and an address or exclusive instance that is already in use is reported and left
+out of the image so the parent node always builds. The attached modules are
+linked into the node's image.
+
+A failed plan, build or verify action raises an alert through the application's
+configured dispatcher. The local log channel is enabled by default; e-mail,
+Telegram and webhook channels are declared but disabled until configured.
+
 ## [0.1.0] - 2026-11-01
 
 The RoboHub Mesh application, extracted from the keeper. It runs on its own
@@ -19,13 +40,3 @@ activated by opening it, from its card or from its settings, and made inactive
 again from the same places; with no active project the Operations group is
 hidden and the step pages return to the dashboard. The menu also returns to the
 keeper when the keeper started the application.
-
-A node is now one computer with any number of sensor modules attached to it,
-rather than one node per driver. The module list is read from
-`robohub-drivers/boards` at render time, so a board added there appears without
-a rebuild. Each module declares its bus and, where it matters, its I2C address,
-address range or SPI chip select; the node page shows the resulting bus plan.
-1-Wire and I2C lines are shared, an SPI device gets its own chip select, and an
-address or exclusive instance that is already in use is reported and left out of
-the image so the parent node always builds. The attached modules are linked into
-the node's image; only the parent node is built and programmed.

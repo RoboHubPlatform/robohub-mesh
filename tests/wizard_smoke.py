@@ -155,18 +155,20 @@ def main() -> int:
                     'name="name"',
                     'name="role"',
                     'name="board"',
-                    'name="sensors"',
                     'name="parent"',
                     'name="link"',
                     'value="pico2w"',
-                    'value="ds18b20-temperature-module"',
-                    'value="ds18b20-waterproof-probe-module"',
-                    'value="ky-001-temperature-sensor-module"',
-                    'value="bmp180-module"',
                     "form-actions",
                 ],
                 "node editor",
             )
+            if 'name="sensors"' in node_form:
+                raise AssertionError("modules are nodes of their own, not a field on the node")
+
+            native_gateway = get(base, "/mesh/gateway")
+            assert_contains(native_gateway, ["native host has no pins"], "native gateway")
+            if "Add module" in native_gateway:
+                raise AssertionError("a native host cannot take modules")
 
             post(
                 base,
@@ -177,16 +179,19 @@ def main() -> int:
                     "gateway": "arduino-uno-q",
                 },
             )
+            board_gateway = get(base, "/mesh/gateway")
+            assert_contains(board_gateway, ["+ Add module"], "board gateway")
+
             post(
                 base,
                 "/mesh/node/new",
                 {
                     "action": "save",
+                    "kind": "compute",
                     "name": "Relay one",
                     "description": "First node",
                     "role": "relay",
                     "board": "pico2w",
-                    "sensors": "ds18b20-temperature-module dht11-module",
                     "parent": "gateway",
                     "link": "uart",
                 },
@@ -196,22 +201,58 @@ def main() -> int:
                 "/mesh/node/new",
                 {
                     "action": "save",
+                    "kind": "compute",
                     "name": "Leaf two",
                     "description": "Second node",
                     "role": "node",
                     "board": "pico2w",
-                    "sensors": "ky-013-analog-temperature-sensor-module ky-018-photoresistor-module",
                     "parent": "node.1",
                     "link": "wifi",
                 },
             )
+
+            module_form = get(base, "/mesh/node/new?kind=module&parent=node.1")
+            assert_contains(
+                module_form,
+                [
+                    "Add a module",
+                    'name="module"',
+                    'name="parent"',
+                    'value="ds18b20-waterproof-probe-module"',
+                    'value="ky-001-temperature-sensor-module"',
+                    'value="bmp180-module"',
+                    "Module board",
+                ],
+                "module editor",
+            )
+
+            for name, module, parent in [
+                ("Temperature probe", "ds18b20-temperature-module", "node.1"),
+                ("Humidity probe", "dht11-module", "node.1"),
+                ("Gateway pressure", "bmp180-module", "gateway"),
+                ("Leaf thermistor", "ky-013-analog-temperature-sensor-module", "node.2"),
+                ("Leaf light", "ky-018-photoresistor-module", "node.2"),
+            ]:
+                post(
+                    base,
+                    "/mesh/node/new",
+                    {
+                        "action": "save",
+                        "kind": "module",
+                        "name": name,
+                        "module": module,
+                        "parent": parent,
+                    },
+                )
+
             post(base, "/mesh/accept", {"action": "accept"})
 
             accepted = get(base, "/mesh/plan")
             assert_contains(
                 accepted,
                 ["Edit topology", "Next: network", "Relay one", "Leaf two",
-                 "mesh-children", "link-badge", "UART", "WiFi"],
+                 "mesh-children", "link-badge", "UART", "WiFi", "module-branch",
+                 "Temperature probe", "Humidity probe", "Gateway pressure"],
                 "accepted mesh",
             )
 
@@ -219,6 +260,7 @@ def main() -> int:
             assert_contains(
                 relay_page,
                 [
+                    "+ Add module",
                     "DS18B20_MODULE (ds18b20-temperature-module)",
                     "DHT11_MODULE (dht11-module)",
                     "1-Wire onewire0",
@@ -350,12 +392,19 @@ def main() -> int:
                 [
                     "gateway=arduino-uno-q",
                     "gateway_name=Gateway",
-                    "node.count=2",
+                    "node.count=7",
                     "node.1.name=Relay one",
                     "node.1.board=pico2w",
-                    "node.1.sensors=ds18b20-temperature-module dht11-module",
-                    "node.2.sensors=ky-013-analog-temperature-sensor-module ky-018-photoresistor-module",
+                    "node.1.kind=compute",
                     "node.2.parent=node.1",
+                    "node.3.kind=module",
+                    "node.3.module=ds18b20-temperature-module",
+                    "node.3.parent=node.1",
+                    "node.4.module=dht11-module",
+                    "node.5.module=bmp180-module",
+                    "node.5.parent=gateway",
+                    "node.6.module=ky-013-analog-temperature-sensor-module",
+                    "node.7.module=ky-018-photoresistor-module",
                     "step_topology=done",
                     "step_network=done",
                     "node.1.link=uart",

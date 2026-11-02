@@ -73,16 +73,28 @@ parent and a link. Boards are filtered by the role.
 
 ### Nodes and modules
 
-A sensor is not a node. It is a module fitted to a node, and a node can carry
-any number of them. The editor's **Attached modules** list is read from
-`robohub-drivers/boards` on every render, so a board added to that checkout
-appears without rebuilding Mesh or the keeper. Output and transceiver boards are
-left out — they are boards, but not sensors fitted to a node. The list is grouped
-into collapsible sections by board category, each with its own colour and three
-cards to a row; a section with a module selected stays open and shows the
-selected names in its header. The first attached module names
-the example the node's image is built from; the node is the only thing built and
-programmed, and the image carries the modules fitted to it.
+A node is one computer. A sensor module is a **node of its own** — `kind: module`
+— attached to a node, and a node can carry any number of them. The tree shows
+them as module cards under the node they extend, so the plan reads as the tree
+of hardware it describes. **+ Add module** on a node card (or **+ module** in the
+plan) opens the module editor.
+
+A module node is not a build target. It has no role, board or link of its own
+and is never built or programmed separately; it is carried by the image of the
+node it extends. The node itself is the only thing built and programmed, and
+that image carries all of its modules.
+
+Modules are read from `robohub-drivers/boards` on every load of the editor, so a
+board added to that checkout appears without rebuilding Mesh or the keeper.
+Output and transceiver boards are left out — they are boards, but not sensors
+fitted to a node. The list is grouped into collapsible sections by board
+category, each with its own colour and three cards to a row; a section with a
+module selected stays open and shows the selected name in its header. The first
+module attached to a node names the example its image is built from.
+
+A native host has no pins. The gateway can take module nodes only when it is a
+real board; on a native gateway the module controls are absent, and a module
+attached to a gateway is hidden if the gateway is changed back to `native`.
 
 Each module says how it reaches a bus in its own manifest:
 
@@ -260,6 +272,19 @@ The gateway's own page at `http://<gateway>:<rest>/` shows:
 A node's `timestamp_ms` is its own uptime. The gateway records the wall-clock
 `received_at_ms` beside it; the API and CSV keep both, and the page renders
 `received_at_ms` as local date/time in the browser.
+
+## Alerts and plugins
+
+Mesh raises an alert when a step fails: the action, the stage and the level go
+through the alert dispatcher configured in its `module.yml`. The dispatcher fans
+out to the channels named in its targets; each channel has its own threshold.
+The default is the local log, and e-mail, Telegram and webhook channels are
+present but disabled until configured.
+
+The alert rule engine in `plugins/alert/rule.rho` is available to application
+logic that has a sensor reading: a pending window filters a spike, hysteresis
+decides when the condition cleared, a cooldown recharges the rule, and a rolling
+window limits repeated alerts.
 
 ## Logging
 

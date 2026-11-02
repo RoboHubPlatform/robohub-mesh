@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ title }} — RoboHub Mesh</title>
 <style>
-  :root { --page: #f4f4f2; --panel: #ffffff; --sidebar: #fbfbfa; --ink: #171716; --soft: #575753; --faint: #8b8b85; --line: #e3e3de; --line-soft: #eeeee9; --accent: #2f6f4f; --accent-soft: #e7f1eb; --warn: #8a6a17; --warn-soft: #fbf2df; --stop: #a03a30; --stop-soft: #fbeceb; --radius: 10px; --cat-environmental: #2f6f4f; --cat-environmental-soft: #e7f1eb; --cat-temperature: #b45309; --cat-temperature-soft: #fdf0e3; --cat-light: #92700f; --cat-light-soft: #fbf5dc; --cat-input: #355f96; --cat-input-soft: #e8eef8; --mono: ui-monospace, SFMono-Regular, Menlo, monospace; --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  @media (prefers-color-scheme: dark) { :root { --page: #101013; --panel: #1a1a1e; --sidebar: #141417; --ink: #eaeae8; --soft: #a6a6a2; --faint: #74746e; --line: #2a2a31; --line-soft: #222228; --accent: #6dbf95; --accent-soft: #16241d; --warn: #d6b164; --warn-soft: #2a2417; --stop: #e2887f; --stop-soft: #2c1a19; --cat-environmental: #6dbf95; --cat-environmental-soft: #16241d; --cat-temperature: #e0a46a; --cat-temperature-soft: #2a1e13; --cat-light: #d6b164; --cat-light-soft: #2a2417; --cat-input: #8ab4e8; --cat-input-soft: #16202e; } }
+  :root { --page: #f4f4f2; --panel: #ffffff; --sidebar: #fbfbfa; --ink: #171716; --soft: #575753; --faint: #8b8b85; --line: #e3e3de; --line-soft: #eeeee9; --accent: #2f6f4f; --accent-soft: #e7f1eb; --warn: #8a6a17; --warn-soft: #fbf2df; --stop: #a03a30; --stop-soft: #fbeceb; --radius: 10px; --cat-environmental: #2f6f4f; --cat-environmental-soft: #e7f1eb; --cat-temperature: #b45309; --cat-temperature-soft: #fdf0e3; --cat-light: #92700f; --cat-light-soft: #fbf5dc; --cat-input: #355f96; --cat-input-soft: #e8eef8; --module: #6b4fa8; --module-soft: #ece7fa; --mono: ui-monospace, SFMono-Regular, Menlo, monospace; --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --page: #101013; --panel: #1a1a1e; --sidebar: #141417; --ink: #eaeae8; --soft: #a6a6a2; --faint: #74746e; --line: #2a2a31; --line-soft: #222228; --accent: #6dbf95; --accent-soft: #16241d; --warn: #d6b164; --warn-soft: #2a2417; --stop: #e2887f; --stop-soft: #2c1a19; --cat-environmental: #6dbf95; --cat-environmental-soft: #16241d; --cat-temperature: #e0a46a; --cat-temperature-soft: #2a1e13; --cat-light: #d6b164; --cat-light-soft: #2a2417; --cat-input: #8ab4e8; --cat-input-soft: #16202e; --module: #b39ae8; --module-soft: #221a33; } }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
   code, pre { font-family: var(--mono); }
@@ -177,6 +177,13 @@
   .node-card.gateway .node-role { background: var(--accent); color: #fff; }
   .node-card.relay .node-role { background: #f3e5c8; color: #7a5a18; }
   .node-card.node .node-role { background: #e6eef9; color: #355f96; }
+  .node-card.module { border-left-color: var(--module); }
+  .node-card.module .node-role { background: var(--module-soft); color: var(--module); }
+  .node-status.status-attached { background: var(--module-soft); color: var(--module); }
+  .link-badge.module { background: var(--module-soft); color: var(--module); }
+  .module-branch { margin-left: .9rem; }
+  .quick-add { display: inline-block; margin: .1rem 0 .3rem .1rem; padding: .08rem .45rem; border: 1px dashed var(--line); border-radius: 999px; color: var(--module); font-size: .68rem; font-weight: 600; text-decoration: none; }
+  .quick-add:hover { border-color: var(--module); background: var(--module-soft); }
   .node-card strong { font-size: .98rem; letter-spacing: -.01em; }
   .node-card small { line-height: 1.35; }
   .node-meta { font-size: .71rem; }

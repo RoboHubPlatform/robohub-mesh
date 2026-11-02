@@ -1,6 +1,5 @@
 module mesh.wizard_text
 
-extern fn rho_str_eq(a: string, b: string) bool
 
 // String helpers the wizard uses before it knows anything about a page.
 //
