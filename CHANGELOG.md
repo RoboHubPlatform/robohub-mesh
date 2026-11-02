@@ -2,6 +2,13 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.3.1] - 2026-11-02
+
+Device nodes are reachable from the tree and from a native gateway too:
+"+ Add device" is beside "+ Add node", and a compute node offers "+ device"
+beside "+ module". A native host can carry network devices even though it has
+no pins for modules.
+
 ## [0.3.0] - 2026-11-02
 
 Device nodes. A device from `robohub-devices` is a node of its own in the Mesh

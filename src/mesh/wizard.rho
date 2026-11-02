@@ -856,7 +856,9 @@ fn device_transports(name: string) string {
 }
 
 fn device_picker(selected: string) string {
-    var out: string = "<select name=\"device\"><option value=\"\">Choose a device</option>"
+    // Only the options: mesh_select owns the <select> element. Returning a
+    // second select here nested it and left the outer one empty.
+    var out: string = "<option value=\"\">Choose a device</option>"
     var rest: string = device_rows()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -878,9 +880,8 @@ fn device_picker(selected: string) string {
         }
         out = out + "<option value=\"" + escape_html(name) + "\"" + mark + ">" +
             escape_html(field(line, 1)) + "</option>"
-        rest = rho_str_slice(rest, 0, u32(rho_strlen(rest)))
     }
-    return out + "</select>"
+    return out
 }
 
 fn module_manifest(name: string) string {

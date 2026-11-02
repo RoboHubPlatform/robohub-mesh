@@ -315,7 +315,9 @@ fn mesh_children(parent: string, readonly: bool) string {
                 var quick: string = ""
                 if !readonly {
                     quick = " <a class=\"quick-add\" href=\"/mesh/node/new?kind=module&parent=node." +
-                        rho_int_to_str(index) + "\">+ module</a>"
+                        rho_int_to_str(index) + "\">+ module</a>" +
+                        " <a class=\"quick-add\" href=\"/mesh/node/new?kind=device&parent=node." +
+                        rho_int_to_str(index) + "\">+ device</a>"
                 }
                 out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
                     escape_html(link_label(link)) + "</span>" +
@@ -1734,15 +1736,16 @@ fn mesh_gateway_page(req: Request) Response {
             "This host, or a board whose manifest says it can gateway.") +
         "</div>" +
         "<div class=\"form-actions\"><button type=\"submit\">Save gateway</button></div></form>"
-    var modules: string = ""
+    var modules: string = "<p><a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">" +
+        "+ Add device</a></p>"
     if gateway_allows_modules() {
-        modules = "<p><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=gateway\">+ Add module</a>" +
-            "<a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">+ Add device</a></p>" +
+        modules = modules + "<p><a class=\"button\" href=\"/mesh/node/new?kind=module&parent=gateway\">" +
+            "+ Add module</a></p>" +
             "<p><small>A module attached to the gateway is a node of its own in the tree and is " +
             "carried by the gateway's image.</small></p>"
     } else {
-        modules = "<p><small>A native host has no pins, so it cannot take modules. Choose a board " +
-            "gateway to attach one.</small></p>"
+        modules = modules + "<p><small>A native host has no pins, so it cannot take modules. " +
+            "Network devices can still be attached.</small></p>"
     }
     return page("Gateway", "<h1>Gateway</h1><p>The root of the mesh.</p>" + form + modules +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>")
@@ -1777,7 +1780,8 @@ fn mesh_plan_panel(editing: bool) string {
     let count: u32 = node_count()
     var accept: string = ""
     if editing {
-        accept = "<p><a class=\"button\" href=\"/mesh/node/new\">+ Add node</a></p>"
+        accept = "<p><a class=\"button\" href=\"/mesh/node/new\">+ Add node</a>" +
+            "<a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">+ Add device</a></p>"
         if has_compute_nodes() {
             accept = accept + "<form method=\"post\" action=\"/mesh/accept\">" +
                 "<button type=\"submit\">Accept topology</button></form>" +
