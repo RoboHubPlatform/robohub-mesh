@@ -29,6 +29,12 @@ The dashboard now shows the last gateway action. A failed restart is a red
 notice with the tail of the build output and the gateway log, and a restart
 pins the build step so that output is captured in the file the notice reads.
 
+A project publishes its signals for another application: devices, modules and
+sensors each contribute the inputs and outputs their `signals:` contract names,
+with direction, unit and the widget kinds they can feed. The values are served
+by Mesh, which reads the project's gateway, so a dashboard does not need the
+gateway address or a part's type.
+
 ## [0.3.5] - 2026-11-03
 
 The gateway belongs to a project, not to the Mesh application. A project's

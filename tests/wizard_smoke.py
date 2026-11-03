@@ -256,6 +256,20 @@ def main() -> int:
                 "accepted mesh",
             )
 
+            sources = get(base, "/mesh/api/sources")
+            assert_contains(
+                sources,
+                [
+                    "module.3.temperature",
+                    "\"direction\":\"input\"",
+                    "\"unit\":\"°C\"",
+                    "\"kinds\":\"numeric chart table\"",
+                    "value_path",
+                    "action_path",
+                ],
+                "module sources",
+            )
+
             relay_page = get(base, "/mesh/node/1")
             assert_contains(
                 relay_page,
@@ -495,6 +509,18 @@ def main() -> int:
             )
             device_plan = get(base, "/mesh/plan")
             assert_contains(device_plan, ["Test plug", "device"], "device plan")
+            device_sources = get(base, "/mesh/api/sources")
+            assert_contains(
+                device_sources,
+                [
+                    "device.1.switch",
+                    "device.1.power",
+                    "\"direction\":\"output\"",
+                    "\"direction\":\"input\"",
+                    "\"unit\":\"W\"",
+                ],
+                "device sources",
+            )
             accepted_device = post(base, "/mesh/accept", {"action": "accept"})
             assert_contains(accepted_device, ["Topology accepted"], "device topology")
             post(base, "/mesh/project/delete", {"project": "Device-project"})

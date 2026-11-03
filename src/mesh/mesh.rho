@@ -1549,6 +1549,615 @@ fn mesh_gateway_answers(url: string) bool {
     return code == 0
 }
 
+/* -------------------------------------------------------------------------- */
+/*  Sources: what a project offers to an outside application                 */
+/* -------------------------------------------------------------------------- */
+
+// A source is a signal a part presents: a switch a widget may drive, or a
+// reading a number, chart or table may show. The contract is in the part's
+// manifest (`signals:`), so a new device or board is visible here without the
+// Mesh application knowing its type.
+
+fn signal_clean(value: string) string {
+    var out: string = device_trim(value)
+    if rho_strlen(out) >= 2 {
+        let first: string = rho_str_slice(out, 0, 1)
+        let last: string = rho_str_slice(out, u32(rho_strlen(out)) - 1, 1)
+        if (first == "\"" && last == "\"") || (first == "'" && last == "'") {
+            out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 2)
+        }
+    }
+    return out
+}
+
+// signal_block_value reads one key from the lines of one `- id: ...` block.
+fn signal_block_value(block: string, key: string) string {
+    var rest: string = block
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at >= 0 {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        } else {
+            rest = ""
+        }
+        let trimmed: string = device_trim(line)
+        if rho_str_starts_with(trimmed, key + ":") {
+            return signal_clean(rho_str_slice(trimmed, u32(rho_strlen(key)) + 1,
+                u32(rho_strlen(trimmed)) - u32(rho_strlen(key)) - 1))
+        }
+    }
+    return ""
+}
+
+// signal_block_row turns one list item into id|label|direction|unit|field|kinds.
+fn signal_block_row(block: string) string {
+    let id: string = signal_block_value(block, "id")
+    if id == "" {
+        return ""
+    }
+    var label: string = signal_block_value(block, "label")
+    if label == "" {
+        label = id
+    }
+    var direction: string = signal_block_value(block, "direction")
+    if direction == "" {
+        direction = "input"
+    }
+    let unit: string = signal_block_value(block, "unit")
+    let field_name: string = signal_block_value(block, "field")
+    var kinds: string = signal_block_value(block, "kinds")
+    if kinds == "" {
+        if direction == "output" {
+            kinds = "toggle button"
+        } else {
+            kinds = "numeric chart table"
+        }
+    }
+    return id + "|" + label + "|" + direction + "|" + unit + "|" + field_name + "|" + kinds
+}
+
+// signal_rows parses the top-level `signals:` block of a manifest. The list
+// is a list of maps, which the scalar YAML reader does not expose, so it is
+// read by its lines: each `- id:` opens a row and the indented keys fill it.
+fn signal_rows(path: string) string {
+    if path == "" || !rho_path_exists(path) {
+        return ""
+    }
+    let text: string = rho_read_text(path)
+    let start: i32 = rho_str_index_of(text, "\nsignals:")
+    if start < 0 {
+        return ""
+    }
+    var i: u32 = u32(start) + 9
+    let after: i32 = rho_str_index_of(rho_str_slice(text, i,
+        u32(rho_strlen(text)) - i), "\n")
+    if after < 0 {
+        return ""
+    }
+    i = i + u32(after) + 1
+    var out: string = ""
+    var block: string = ""
+    while i < u32(rho_strlen(text)) {
+        let at: i32 = rho_str_index_of(rho_str_slice(text, i,
+            u32(rho_strlen(text)) - i), "\n")
+        var end: u32 = u32(rho_strlen(text))
+        if at >= 0 {
+            end = i + u32(at)
+        }
+        let line: string = rho_str_slice(text, i, end - i)
+        let trimmed: string = device_trim(line)
+        let indent: u32 = u32(rho_strlen(line)) - u32(rho_strlen(trimmed))
+        if rho_strlen(trimmed) > 0 && indent == 0 &&
+            !rho_str_starts_with(trimmed, "- ") {
+            break
+        }
+        if rho_str_starts_with(trimmed, "- ") {
+            if block != "" {
+                let row: string = signal_block_row(block)
+                if row != "" {
+                    out = out + row + "\n"
+                }
+            }
+            block = rho_str_slice(trimmed, 2, u32(rho_strlen(trimmed)) - 2) + "\n"
+        } else if block != "" {
+            block = block + line + "\n"
+        }
+        i = end + 1
+    }
+    if block != "" {
+        let row: string = signal_block_row(block)
+        if row != "" {
+            out = out + row + "\n"
+        }
+    }
+    return out
+}
+
+// manifest_list_items reads a scalar list written either inline
+// (`[a, b]`) or as `- a` lines under `key:`.
+fn manifest_list_items(path: string, key: string) string {
+    let inline: string = yaml.value(path, key)
+    if inline != "" {
+        var body: string = device_trim(inline)
+        if rho_strlen(body) >= 2 && rho_str_starts_with(body, "[") &&
+            rho_str_slice(body, u32(rho_strlen(body)) - 1, 1) == "]" {
+            body = rho_str_slice(body, 1, u32(rho_strlen(body)) - 2)
+        }
+        var out: string = ""
+        while body != "" {
+            let at: i32 = rho_str_index_of(body, ",")
+            var item: string = body
+            if at < 0 {
+                body = ""
+            } else {
+                item = rho_str_slice(body, 0, u32(at))
+                body = rho_str_slice(body, u32(at) + 1, u32(rho_strlen(body)) - u32(at) - 1)
+            }
+            let trimmed: string = device_trim(item)
+            if trimmed != "" {
+                out = out + trimmed + "\n"
+            }
+        }
+        return out
+    }
+    let text: string = rho_read_text(path)
+    let start: i32 = rho_str_index_of(text, "\n" + key + ":")
+    if start < 0 {
+        return ""
+    }
+    var i: u32 = u32(start) + u32(rho_strlen(key)) + 2
+    let after: i32 = rho_str_index_of(rho_str_slice(text, i,
+        u32(rho_strlen(text)) - i), "\n")
+    if after < 0 {
+        return ""
+    }
+    i = i + u32(after) + 1
+    var out: string = ""
+    while i < u32(rho_strlen(text)) {
+        let at: i32 = rho_str_index_of(rho_str_slice(text, i,
+            u32(rho_strlen(text)) - i), "\n")
+        var end: u32 = u32(rho_strlen(text))
+        if at >= 0 {
+            end = i + u32(at)
+        }
+        let line: string = rho_str_slice(text, i, end - i)
+        let trimmed: string = device_trim(line)
+        let indent: u32 = u32(rho_strlen(line)) - u32(rho_strlen(trimmed))
+        if rho_strlen(trimmed) > 0 && indent == 0 {
+            break
+        }
+        if rho_str_starts_with(trimmed, "- ") {
+            out = out + signal_clean(rho_str_slice(trimmed, 2,
+                u32(rho_strlen(trimmed)) - 2)) + "\n"
+        }
+        i = end + 1
+    }
+    return out
+}
+
+fn signal_function_row(name: string) string {
+    let fn_name: string = device_trim(name)
+    if fn_name == "temperature" { return "temperature|Temperature|input|°C|temperature_c|numeric chart table" }
+    if fn_name == "humidity" { return "humidity|Humidity|input|%|humidity|numeric chart table" }
+    if fn_name == "pressure" { return "pressure|Pressure|input|hPa|pressure_hpa|numeric chart table" }
+    if fn_name == "altitude" { return "altitude|Altitude|input|m|altitude_m|numeric chart table" }
+    if fn_name == "light" { return "light|Light|input|%|light|numeric chart table" }
+    if fn_name == "analog" { return "analog|Analog|input||analog|numeric chart table" }
+    if fn_name == "button" { return "button|Button|input||button|numeric chart table" }
+    if fn_name == "pulse" { return "pulse|Pulse|input|bpm|pulse|numeric chart table" }
+    return ""
+}
+
+fn signal_function_rows(path: string) string {
+    let names: string = manifest_list_items(path, "functions")
+    var out: string = ""
+    var rest: string = names
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let row: string = signal_function_row(line)
+        if row != "" {
+            out = out + row + "\n"
+        }
+    }
+    return out
+}
+
+fn signal_device_rows(kind: string) string {
+    if kind == "plug" {
+        return "switch|Switch|output||state|toggle button\n" +
+            "power|Power|input|W|power_w|numeric chart table"
+    }
+    if kind == "actuator" {
+        return "switch|Switch|output||state|toggle button"
+    }
+    if kind == "inverter" {
+        return "power|Power|input|W|power_w|numeric chart table"
+    }
+    return ""
+}
+
+fn manifest_signal_rows(path: string, is_device: bool) string {
+    let explicit: string = signal_rows(path)
+    if explicit != "" {
+        return explicit
+    }
+    if is_device {
+        return signal_device_rows(yaml.value(path, "device.kind"))
+    }
+    return signal_function_rows(path)
+}
+
+fn signal_row_for(path: string, is_device: bool, signal: string) string {
+    var rest: string = manifest_signal_rows(path, is_device)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if field(line, 0) == signal {
+            return line
+        }
+    }
+    return ""
+}
+
+fn project_node_count_at(file: string) u32 {
+    let value: string = state_value_in(file, "node.count")
+    if value == "" {
+        return 0
+    }
+    return rho_int_from_str(value)
+}
+
+fn project_node_value(file: string, index: u32, key: string, fallback: string) string {
+    let value: string = state_value_in(file, "node." + rho_int_to_str(index) + "." + key)
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+fn project_area_id(file: string) string {
+    let value: string = state_value_in(file, "area_id")
+    if value == "" {
+        return WIZARD_DEFAULT_AREA
+    }
+    return value
+}
+
+fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
+    row: string) string {
+    let signal: string = field(row, 0)
+    let id: string = kind + "." + rho_int_to_str(index) + "." + signal
+    let base: string = "/mesh/api/projects/" + project + "/sources/" + id
+    return ",{\"id\":" + json_string(id) +
+        ",\"name\":" + json_string(owner + " · " + field(row, 1)) +
+        ",\"owner\":" + json_string(owner) +
+        ",\"kind\":" + json_string(kind) +
+        ",\"signal\":" + json_string(signal) +
+        ",\"label\":" + json_string(field(row, 1)) +
+        ",\"direction\":" + json_string(field(row, 2)) +
+        ",\"unit\":" + json_string(field(row, 3)) +
+        ",\"field\":" + json_string(field(row, 4)) +
+        ",\"kinds\":" + json_string(field(row, 5)) +
+        ",\"value_path\":" + json_string(base + "/value") +
+        ",\"action_path\":" + json_string(base + "/action") + "}"
+}
+
+fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,
+    rows: string) string {
+    var out: string = ""
+    var rest: string = rows
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" {
+            out = out + mesh_source_entry(project, kind, index, owner, line)
+        }
+    }
+    return out
+}
+
+fn mesh_sources_json(project: string) string {
+    let file: string = project_file(project)
+    if !rho_path_exists(file) {
+        return "[]"
+    }
+    let count: u32 = project_node_count_at(file)
+    var out: string = ""
+    var index: u32 = 1
+    while index <= count {
+        let kind: string = project_node_value(file, index, "kind", "compute")
+        if kind == "device" {
+            let name: string = project_node_value(file, index, "name", "")
+            let device: string = project_node_value(file, index, "device", "")
+            var owner: string = name
+            if owner == "" {
+                owner = device_label(device)
+            }
+            out = out + mesh_source_entries(project, "device", index, owner,
+                manifest_signal_rows(device_manifest(device), true))
+        } else if kind == "module" {
+            let name: string = project_node_value(file, index, "name", "")
+            let module_name: string = project_node_value(file, index, "module", "")
+            var owner: string = name
+            if owner == "" {
+                owner = module_label(module_name)
+            }
+            out = out + mesh_source_entries(project, "module", index, owner,
+                manifest_signal_rows(module_manifest(module_name), false))
+        }
+        index = index + 1
+    }
+    if rho_str_starts_with(out, ",") {
+        out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
+    }
+    return "[" + out + "]"
+}
+
+fn mesh_json_string_field(text: string, key: string) string {
+    let at: i32 = rho_str_index_of(text, "\"" + key + "\":\"")
+    if at < 0 {
+        return ""
+    }
+    let start: u32 = u32(at) + u32(rho_strlen(key)) + 4
+    let rest: string = rho_str_slice(text, start, u32(rho_strlen(text)) - start)
+    let end: i32 = rho_str_index_of(rest, "\"")
+    if end < 0 {
+        return ""
+    }
+    return rho_str_slice(rest, 0, u32(end))
+}
+
+fn mesh_url_get(base: string, path: string) string {
+    if base == "" {
+        return ""
+    }
+    let report: string = wizard_report("mesh-source")
+    if rho_exec("curl", "-fsS -m 4 " + mesh_quote(base + path), report) != 0 {
+        return ""
+    }
+    return rho_read_text(report)
+}
+
+fn gateway_device_object(base: string, name: string, address: string) string {
+    let text: string = mesh_url_get(base, "/api/v1/devices")
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "},{")
+        var object: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            object = rho_str_slice(rest, 0, u32(at) + 1)
+            rest = rho_str_slice(rest, u32(at) + 3, u32(rho_strlen(rest)) - u32(at) - 3)
+        }
+        let found_name: string = mesh_json_string_field(object, "name")
+        let found_address: string = mesh_json_string_field(object, "address")
+        if (name != "" && found_name == name) ||
+            (address != "" && found_address == address) {
+            return object
+        }
+    }
+    return ""
+}
+
+fn gateway_node_object(text: string, area: string, node: string) string {
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "},{")
+        var object: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            object = rho_str_slice(rest, 0, u32(at) + 1)
+            rest = rho_str_slice(rest, u32(at) + 3, u32(rho_strlen(rest)) - u32(at) - 3)
+        }
+        if json_number(object, "area_id") == area && json_number(object, "node_id") == node {
+            return object
+        }
+    }
+    return ""
+}
+
+fn mesh_source_spec(project: string, source: string) string {
+    let file: string = project_file(project)
+    if !rho_path_exists(file) {
+        return ""
+    }
+    let first: i32 = rho_str_index_of(source, ".")
+    if first < 0 {
+        return ""
+    }
+    let kind: string = rho_str_slice(source, 0, u32(first))
+    let rest: string = rho_str_slice(source, u32(first) + 1,
+        u32(rho_strlen(source)) - u32(first) - 1)
+    let second: i32 = rho_str_index_of(rest, ".")
+    if second < 0 {
+        return ""
+    }
+    let index_text: string = rho_str_slice(rest, 0, u32(second))
+    let signal: string = rho_str_slice(rest, u32(second) + 1,
+        u32(rho_strlen(rest)) - u32(second) - 1)
+    let index: u32 = rho_int_from_str(index_text)
+    if project_node_value(file, index, "kind", "compute") != kind {
+        return ""
+    }
+    var manifest: string = ""
+    var is_device: bool = false
+    if kind == "device" {
+        manifest = device_manifest(project_node_value(file, index, "device", ""))
+        is_device = true
+    } else if kind == "module" {
+        manifest = module_manifest(project_node_value(file, index, "module", ""))
+    } else {
+        return ""
+    }
+    let row: string = signal_row_for(manifest, is_device, signal)
+    if row == "" {
+        return ""
+    }
+    var owner: string = project_node_value(file, index, "name", "")
+    if owner == "" {
+        owner = project_node_value(file, index, "device", "")
+    }
+    if owner == "" {
+        owner = project_node_value(file, index, "module", "")
+    }
+    return kind + "|" + index_text + "|" + signal + "|" + field(row, 4) + "|" +
+        field(row, 2) + "|" + owner + "|" + project_node_value(file, index, "name", "") +
+        "|" + project_node_value(file, index, "transport", "") + "|" +
+        project_node_value(file, index, "address", "") + "|" +
+        project_node_value(file, index, "parent", "")
+}
+
+fn mesh_source_value(project: string, source: string) string {
+    let spec: string = mesh_source_spec(project, source)
+    if spec == "" {
+        return ""
+    }
+    let kind: string = field(spec, 0)
+    let field_name: string = field(spec, 3)
+    let transport: string = field(spec, 7)
+    let address: string = field(spec, 8)
+    let base: string = mesh_project_gateway(project)
+    if kind == "device" && address != "" &&
+        (transport == "http" || rho_str_index_of(address, "http") == 0) {
+        // A device the plan reaches directly is read the same way Mesh's own
+        // device page reads it, so a plug works before it is registered on a
+        // gateway.
+        let report: string = wizard_report("mesh-source-device")
+        if rho_exec("curl", "-fsS -m 3 " + mesh_quote(address + "/rpc/Shelly.GetStatus"),
+            report) == 0 {
+            let text: string = rho_read_text(report)
+            if field_name == "state" {
+                return mesh_json_bool(text, "output")
+            }
+            if field_name == "power_w" {
+                return mesh_json_number(text, "apower")
+            }
+            return mesh_json_number(text, field_name)
+        }
+    }
+    if base == "" {
+        return ""
+    }
+    if kind == "device" {
+        let object: string = gateway_device_object(base, field(spec, 6), address)
+        if object == "" {
+            return ""
+        }
+        if field_name == "state" {
+            return mesh_json_string_field(object, field_name)
+        }
+        return json_number(object, field_name)
+    }
+    if kind == "module" {
+        let parent: string = field(spec, 9)
+        if !rho_str_starts_with(parent, "node.") {
+            return ""
+        }
+        let parent_index: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
+        let nodes: string = mesh_url_get(base, "/api/v1/nodes")
+        let object: string = gateway_node_object(nodes,
+            project_area_id(project_file(project)), parent_index)
+        if object == "" {
+            return ""
+        }
+        return json_number(object, field_name)
+    }
+    return ""
+}
+
+fn mesh_source_action(project: string, source: string, state: string) bool {
+    let spec: string = mesh_source_spec(project, source)
+    if spec == "" || field(spec, 4) != "output" {
+        return false
+    }
+    let transport: string = field(spec, 7)
+    let address: string = field(spec, 8)
+    var desired: string = state
+    if desired != "on" && desired != "off" {
+        desired = "on"
+    }
+    if address != "" && (transport == "http" || rho_str_index_of(address, "http") == 0) {
+        // Drive the device the plan names, not only one the gateway already
+        // knows; this is the same RPC Mesh's device page uses.
+        var on: string = "false"
+        if desired == "on" {
+            on = "true"
+        }
+        let direct: string = wizard_report("mesh-source-switch")
+        if rho_exec("curl", "-fsS -m 4 " +
+            mesh_quote(address + "/rpc/Switch.Set?id=0&on=" + on), direct) == 0 {
+            return true
+        }
+    }
+    let base: string = mesh_project_gateway(project)
+    if base == "" {
+        return false
+    }
+    let object: string = gateway_device_object(base, field(spec, 6), address)
+    if object == "" {
+        return false
+    }
+    let id: string = json_number(object, "id")
+    if id == "" {
+        return false
+    }
+    let report: string = wizard_report("mesh-source-switch")
+    return rho_exec("curl", "-fsS -m 4 -X POST " +
+        mesh_quote(base + "/api/v1/devices/" + id + "/switch?state=" + desired),
+        report) == 0
+}
+
+fn mesh_api_sources(req: Request) Response {
+    let project: string = current_project()
+    if project == "" {
+        return json(200, "[]")
+    }
+    return json(200, mesh_sources_json(project))
+}
+
+fn mesh_api_project_sources(req: Request) Response {
+    return json(200, mesh_sources_json(param(req, "project")))
+}
+
+fn mesh_api_source_value(req: Request) Response {
+    let value: string = mesh_source_value(param(req, "project"), param(req, "source"))
+    return Response{ 200, value, "text/plain; charset=utf-8" }
+}
+
+fn mesh_api_source_action(req: Request) Response {
+    var state: string = request_query_param(req, "state")
+    if state == "" {
+        state = form_value(request_body(req), "state")
+    }
+    if mesh_source_action(param(req, "project"), param(req, "source"), state) {
+        return json(200, "{\"ok\":true}")
+    }
+    return json(502, "{\"ok\":false}")
+}
+
 fn mesh_api_projects(req: Request) Response {
     var out: string = "["
     var first: bool = true

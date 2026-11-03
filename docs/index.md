@@ -357,3 +357,13 @@ served at `/mesh/api/projects`; a project's gateway is served at
 `/mesh/api/projects/{project}/gateway`, and its devices at `/mesh/api/devices`.
 Another application can point at Mesh, choose a project, and learn the gateway
 automatically without storing an address of its own.
+
+A project's signals are served at `/mesh/api/projects/{project}/sources`, and
+the active project's at `/mesh/api/sources`. A source names its owner, signal,
+direction (input or output), unit, the field it reads, the widget kinds it can
+feed, and its value and action paths. `/value` returns a plain reading;
+`/action` drives an output switch. The contract is the `signals:` list in a
+device integration's or board's `module.yml`, so a new part is visible to a
+dashboard without the dashboard knowing its type. A signal is listed even when
+the gateway does not carry its field yet; its value is empty until the node or
+device reports it.
