@@ -148,7 +148,7 @@ fn node_card_body(index: u32) string {
             "<strong>" + escape_html(name) + "</strong>" +
             "<small>" + escape_html(description) + "</small>" +
             "<span class=\"node-meta\">" + escape_html(device_label(device_name)) +
-            " · " + escape_html(node_device_transport(index)) + " · attached to " +
+            " · " + escape_html(node_device_transport(index)) + " · " +
             escape_html(parent) + "</span>" +
             "<span class=\"node-status status-attached\">device</span>"
     }
@@ -233,7 +233,7 @@ fn build_gateway_card() string {
 fn node_attached(index: u32) bool {
     if is_device_node(index) {
         let parent: string = node_value(index, "parent", "")
-        if parent == "gateway" {
+        if parent == "gateway" || parent == "mesh" {
             return true
         }
         if rho_str_index_of(parent, "node.") != 0 {
@@ -333,8 +333,28 @@ fn mesh_children(parent: string, readonly: bool) string {
     return "<ul class=\"mesh-children\">" + out + "</ul>"
 }
 
+fn mesh_free_children(readonly: bool) string {
+    var out: string = ""
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if is_device_node(index) && node_value(index, "parent", "") == "mesh" &&
+            node_attached(index) {
+            out = out + "<li class=\"mesh-branch module-branch\">" +
+                "<span class=\"link-badge module\">device</span>" +
+                node_card(index, readonly) + "</li>"
+        }
+        index = index + 1
+    }
+    if out == "" {
+        return ""
+    }
+    return "<ul class=\"mesh-children\">" + out + "</ul>"
+}
+
 fn mesh_tree(readonly: bool) string {
-    var out: string = gateway_card(readonly) + mesh_children("gateway", readonly)
+    var out: string = gateway_card(readonly) + mesh_children("gateway", readonly) +
+        mesh_free_children(readonly)
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -387,7 +407,8 @@ fn mesh_build_children(parent: string) string {
 }
 
 fn mesh_build_tree() string {
-    var out: string = build_gateway_card() + mesh_build_children("gateway")
+    var out: string = build_gateway_card() + mesh_build_children("gateway") +
+        mesh_free_children(true)
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -681,7 +702,8 @@ fn mesh_network_children(parent: string) string {
 
 fn mesh_network_tree() string {
     var out: string = "<a class=\"node-card gateway network-link-card\" href=\"/mesh/network/gateway\">" +
-        gateway_network_body() + "</a>" + mesh_network_children("gateway")
+        gateway_network_body() + "</a>" + mesh_network_children("gateway") +
+        mesh_free_children(true)
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()

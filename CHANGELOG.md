@@ -2,6 +2,12 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.3.3] - 2026-11-03
+
+A device can be **free standing**: its parent is the mesh/network rather than a
+gateway or relay. It appears at the root of the tree, is not carried by a node,
+and is reached directly over its own transport.
+
 ## [0.3.2] - 2026-11-02
 
 Device picker reads the `devices:` list in robohub-devices' module.yml, so

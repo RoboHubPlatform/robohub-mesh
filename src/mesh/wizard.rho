@@ -1042,7 +1042,8 @@ fn node_device_id(index: u32) string {
 }
 
 fn device_parent_options(selected: string) string {
-    var options: string = option("gateway", "Gateway", "", selected)
+    var options: string = option("mesh", "Free standing (network)", "", selected) +
+        option("gateway", "Gateway", "", selected)
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
@@ -1057,7 +1058,7 @@ fn device_parent_options(selected: string) string {
 }
 
 fn device_parent_valid(parent: string) bool {
-    if parent == "gateway" {
+    if parent == "gateway" || parent == "mesh" {
         return true
     }
     if rho_str_index_of(parent, "node.") != 0 {
