@@ -964,6 +964,8 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
         mesh_input("name", "Project name", name, "The name shown on the dashboard.") +
         mesh_input("description", "Short description", description,
             "One line about what this mesh is for.") +
+        mesh_input("gateway_url", "Gateway URL", state_value_in(file, "gateway_url"),
+            "The robohub-gateway this project owns. Aquarium reads it through the Mesh API.") +
         "<button type=\"submit\">Save project</button></form>"
     var active_form: string = ""
     if id == current_project() {
@@ -1028,6 +1030,7 @@ fn mesh_project_settings_post(req: Request) Response {
     }
     save_setting_at(file, "project.name", name)
     save_setting_at(file, "project.description", form_value(body, "description"))
+    save_setting_at(file, "gateway_url", device_trim(form_value(body, "gateway_url")))
     save_setting_at(file, "message.project", "Project settings saved.")
     info("mesh", "project " + id + " settings saved")
     return mesh_project_settings_page(req)
@@ -1421,58 +1424,99 @@ fn mesh_device_set(req: Request) Response {
     return mesh_device_node_page(req, index, false)
 }
 
+fn mesh_project_gateway(id: string) string {
+    let file: string = project_file(id)
+    if !rho_path_exists(file) {
+        return ""
+    }
+    return state_value_in(file, "gateway_url")
+}
+
 fn mesh_gateway_url() string {
-    let configured: string = state_value("gateway_url")
-    if configured != "" {
-        return configured
+    let active: string = current_project()
+    if active != "" {
+        let url: string = mesh_project_gateway(active)
+        if url != "" {
+            return url
+        }
     }
     let from_env: string = getenv("ROBOHUB_GATEWAY_URL")
     if from_env != "" {
         return from_env
     }
-    return "http://127.0.0.1:8080"
+    return ""
 }
 
-fn mesh_gateway_available() bool {
+fn mesh_gateway_answers(url: string) bool {
+    if url == "" {
+        return false
+    }
     let report: string = wizard_report("gateway-health")
     let code: u32 = rho_exec("curl", "-fsS -m 2 -o /dev/null " +
-        mesh_quote(mesh_gateway_url() + "/healthz"), report)
+        mesh_quote(url + "/healthz"), report)
     return code == 0
 }
 
-fn mesh_settings_page(req: Request) Response {
-    let current: string = mesh_gateway_url()
-    let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/settings\">" +
-        "<div class=\"grid\">" +
-        mesh_input("gateway_url", "Gateway URL", current,
-            "The robohub-gateway the devices and nodes belong to.") +
-        "</div><div class=\"form-actions\"><button type=\"submit\">Save settings</button>" +
-        "</div></form>"
-    let status: string = "<p><small>Gateway is not answering at this address.</small></p>"
-    if mesh_gateway_available() {
-        status = "<p class=\"notice\">Gateway is answering.</p>"
+fn mesh_api_projects(req: Request) Response {
+    var out: string = "["
+    var first: bool = true
+    var ids: string = project_ids()
+    while ids != "" {
+        let at: i32 = rho_str_index_of(ids, "\n")
+        var id: string = ""
+        if at < 0 {
+            id = ids
+            ids = ""
+        } else {
+            id = rho_str_slice(ids, 0, u32(at))
+            ids = rho_str_slice(ids, u32(at) + 1, u32(rho_strlen(ids)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        if !first {
+            out = out + ","
+        }
+        first = false
+        let url: string = mesh_project_gateway(id)
+        var active: string = "false"
+        if id == current_project() {
+            active = "true"
+        }
+        out = out + "{\"id\":" + json_string(id) +
+            ",\"name\":" + json_string(project_name(id)) +
+            ",\"active\":" + active +
+            ",\"gateway_url\":" + json_string(url) + "}"
     }
-    let body: string = "<h1>Mesh settings</h1><p>The gateway that owns the devices and nodes " +
-        "in this mesh. Other applications read this address through <code>/mesh/api/gateway</code>.</p>" +
-        form + status + "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
-    return page("Settings", body)
+    return json(status_ok(), out + "]")
 }
 
-fn mesh_settings_save(req: Request) Response {
-    let body: string = request_body(req)
-    let url: string = device_trim(form_value(body, "gateway_url"))
-    if rho_strlen(url) > 0 {
-        save_setting("gateway_url", url)
+fn mesh_api_project_gateway(req: Request) Response {
+    let id: string = param(req, "project")
+    let url: string = mesh_project_gateway(id)
+    if url == "" {
+        return json(503, "{\"available\":false,\"project\":" + json_string(id) + "}")
     }
-    return mesh_settings_page(req)
+    var available: string = "false"
+    if mesh_gateway_answers(url) {
+        available = "true"
+    }
+    return json(status_ok(), "{\"available\":" + available +
+        ",\"project\":" + json_string(id) + ",\"url\":" + json_string(url) + "}")
 }
 
 fn mesh_api_gateway(req: Request) Response {
+    let active: string = current_project()
     let url: string = mesh_gateway_url()
-    if !mesh_gateway_available() {
-        return json(503, "{\"available\":false,\"url\":" + json_string(url) + "}")
+    if url == "" {
+        return json(503, "{\"available\":false,\"project\":" + json_string(active) + "}")
     }
-    return json(status_ok(), "{\"available\":true,\"url\":" + json_string(url) + "}")
+    var available: string = "false"
+    if mesh_gateway_answers(url) {
+        available = "true"
+    }
+    return json(status_ok(), "{\"available\":" + available +
+        ",\"project\":" + json_string(active) + ",\"url\":" + json_string(url) + "}")
 }
 
 fn mesh_api_devices(req: Request) Response {
@@ -1906,7 +1950,7 @@ fn mesh_plan_panel(editing: bool) string {
     if editing {
         accept = "<p><a class=\"button\" href=\"/mesh/node/new\">+ Add node</a>" +
             "<a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">+ Add device</a>" +
-            "<a class=\"button quiet\" href=\"/mesh/settings\">Settings</a></p>"
+            "</p>"
         if has_compute_nodes() {
             accept = accept + "<form method=\"post\" action=\"/mesh/accept\">" +
                 "<button type=\"submit\">Accept topology</button></form>" +

@@ -343,8 +343,8 @@ locked tree, and reads the event stream.
 
 ## Connecting another application
 
-Mesh settings (`/mesh/settings`) name the gateway that owns the mesh. The
-gateway address is served at `/mesh/api/gateway` while it answers; a device
-list is served at `/mesh/api/devices` with each device's id, transport and
-address. Another application can therefore point at Mesh, learn the gateway and
-build its own device UI without knowing the deployment.
+A project's settings name the gateway URL that project owns. The project list is
+served at `/mesh/api/projects`; a project's gateway is served at
+`/mesh/api/projects/{project}/gateway`, and its devices at `/mesh/api/devices`.
+Another application can point at Mesh, choose a project, and learn the gateway
+automatically without storing an address of its own.

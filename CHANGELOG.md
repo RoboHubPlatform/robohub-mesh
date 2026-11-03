@@ -2,6 +2,13 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.3.5] - 2026-11-03
+
+The gateway belongs to a project, not to the Mesh application. A project's
+settings carry its gateway URL; `/mesh/api/projects` lists the projects,
+`/mesh/api/projects/{project}/gateway` serves that project's gateway while it
+answers, and `/mesh/api/devices` serves its device nodes.
+
 ## [0.3.4] - 2026-11-03
 
 Mesh settings name the gateway URL; `/mesh/api/gateway` serves it while the
