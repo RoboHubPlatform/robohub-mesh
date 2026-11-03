@@ -339,3 +339,12 @@ The Rho unit suite checks the wizard's string helpers. The smoke suite builds
 Mesh, walks its pages over HTTP, saves and accepts a two-node
 topology, edits a connection, creates, renames and deletes a project, checks the
 locked tree, and reads the event stream.
+
+
+## Connecting another application
+
+Mesh settings (`/mesh/settings`) name the gateway that owns the mesh. The
+gateway address is served at `/mesh/api/gateway` while it answers; a device
+list is served at `/mesh/api/devices` with each device's id, transport and
+address. Another application can therefore point at Mesh, learn the gateway and
+build its own device UI without knowing the deployment.

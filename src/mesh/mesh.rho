@@ -1391,13 +1391,7 @@ fn mesh_device_poll(req: Request) Response {
     return mesh_device_node_page(req, index, false)
 }
 
-fn mesh_device_set(req: Request) Response {
-    let body: string = request_body(req)
-    let index: u32 = rho_int_from_str(form_value(body, "id"))
-    let state: string = form_value(body, "state")
-    if index < 1 || index > node_count() || !is_device_node(index) {
-        return mesh_page(req)
-    }
+fn mesh_device_switch(index: u32, state: string) bool {
     let address: string = node_device_address(index)
     let on: string = "false"
     if rho_str_eq(state, "on") {
@@ -1406,13 +1400,119 @@ fn mesh_device_set(req: Request) Response {
     let report: string = wizard_report("device-set-" + rho_int_to_str(index))
     let url: string = address + "/rpc/Switch.Set?id=0&on=" + on
     let code: u32 = rho_exec("curl", "-fsS -m 3 " + mesh_quote(url), report)
-    if code != 0 {
-        save_setting("mesh_message", "The device did not answer at " + address + ".")
-    } else {
+    if code == 0 {
         save_setting("node." + rho_int_to_str(index) + ".state", state)
+    }
+    return code == 0
+}
+
+fn mesh_device_set(req: Request) Response {
+    let body: string = request_body(req)
+    let index: u32 = rho_int_from_str(form_value(body, "id"))
+    let state: string = form_value(body, "state")
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return mesh_page(req)
+    }
+    if mesh_device_switch(index, state) {
         save_setting("mesh_message", "Device switched " + state + ".")
+    } else {
+        save_setting("mesh_message", "The device did not answer at " + node_device_address(index) + ".")
     }
     return mesh_device_node_page(req, index, false)
+}
+
+fn mesh_gateway_url() string {
+    let configured: string = state_value("gateway_url")
+    if configured != "" {
+        return configured
+    }
+    let from_env: string = getenv("ROBOHUB_GATEWAY_URL")
+    if from_env != "" {
+        return from_env
+    }
+    return "http://127.0.0.1:8080"
+}
+
+fn mesh_gateway_available() bool {
+    let report: string = wizard_report("gateway-health")
+    let code: u32 = rho_exec("curl", "-fsS -m 2 -o /dev/null " +
+        mesh_quote(mesh_gateway_url() + "/healthz"), report)
+    return code == 0
+}
+
+fn mesh_settings_page(req: Request) Response {
+    let current: string = mesh_gateway_url()
+    let form: string = "<form class=\"node-form\" method=\"post\" action=\"/mesh/settings\">" +
+        "<div class=\"grid\">" +
+        mesh_input("gateway_url", "Gateway URL", current,
+            "The robohub-gateway the devices and nodes belong to.") +
+        "</div><div class=\"form-actions\"><button type=\"submit\">Save settings</button>" +
+        "</div></form>"
+    let status: string = "<p><small>Gateway is not answering at this address.</small></p>"
+    if mesh_gateway_available() {
+        status = "<p class=\"notice\">Gateway is answering.</p>"
+    }
+    let body: string = "<h1>Mesh settings</h1><p>The gateway that owns the devices and nodes " +
+        "in this mesh. Other applications read this address through <code>/mesh/api/gateway</code>.</p>" +
+        form + status + "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
+    return page("Settings", body)
+}
+
+fn mesh_settings_save(req: Request) Response {
+    let body: string = request_body(req)
+    let url: string = device_trim(form_value(body, "gateway_url"))
+    if rho_strlen(url) > 0 {
+        save_setting("gateway_url", url)
+    }
+    return mesh_settings_page(req)
+}
+
+fn mesh_api_gateway(req: Request) Response {
+    let url: string = mesh_gateway_url()
+    if !mesh_gateway_available() {
+        return json(503, "{\"available\":false,\"url\":" + json_string(url) + "}")
+    }
+    return json(status_ok(), "{\"available\":true,\"url\":" + json_string(url) + "}")
+}
+
+fn mesh_api_devices(req: Request) Response {
+    var out: string = "["
+    var first: bool = true
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if is_device_node(index) && node_visible(index) {
+            if !first {
+                out = out + ","
+            }
+            first = false
+            out = out + "{\"id\":" + rho_int_to_str(index) +
+                ",\"name\":" + json_string(node_value(index, "name", "")) +
+                ",\"device\":" + json_string(node_device_name(index)) +
+                ",\"transport\":" + json_string(node_device_transport(index)) +
+                ",\"address\":" + json_string(node_device_address(index)) +
+                ",\"state\":" + json_string(mesh_device_state(index)) +
+                ",\"power_w\":" + json_string(mesh_device_last(index)) + "}"
+        }
+        index = index + 1
+    }
+    return json(status_ok(), out + "]")
+}
+
+fn mesh_api_device_switch(req: Request) Response {
+    let index: u32 = rho_int_from_str(param(req, "id"))
+    let body: string = request_body(req)
+    var state: string = form_value(body, "state")
+    if rho_strlen(state) == 0 {
+        state = request_query_param(req, "state")
+    }
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return json(status_not_found(), "{\"success\":false}")
+    }
+    if !mesh_device_switch(index, state) {
+        return json(502, "{\"success\":false}")
+    }
+    return json(status_ok(), "{\"success\":true,\"state\":" + json_string(state) + "}")
 }
 
 fn mesh_node_page(req: Request) Response {
@@ -1805,7 +1905,8 @@ fn mesh_plan_panel(editing: bool) string {
     var accept: string = ""
     if editing {
         accept = "<p><a class=\"button\" href=\"/mesh/node/new\">+ Add node</a>" +
-            "<a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">+ Add device</a></p>"
+            "<a class=\"button\" href=\"/mesh/node/new?kind=device&parent=gateway\">+ Add device</a>" +
+            "<a class=\"button quiet\" href=\"/mesh/settings\">Settings</a></p>"
         if has_compute_nodes() {
             accept = accept + "<form method=\"post\" action=\"/mesh/accept\">" +
                 "<button type=\"submit\">Accept topology</button></form>" +

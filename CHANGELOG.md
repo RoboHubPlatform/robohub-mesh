@@ -2,6 +2,12 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.3.4] - 2026-11-03
+
+Mesh settings name the gateway URL; `/mesh/api/gateway` serves it while the
+gateway answers, and `/mesh/api/devices` serves the device nodes. Another
+application can connect to Mesh and discover where the devices are.
+
 ## [0.3.3] - 2026-11-03
 
 A device can be **free standing**: its parent is the mesh/network rather than a
