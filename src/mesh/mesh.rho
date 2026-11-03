@@ -296,7 +296,7 @@ fn node_visible(index: u32) bool {
     return true
 }
 
-fn mesh_children(parent: string, readonly: bool) string {
+fn mesh_child_items(parent: string, readonly: bool) string {
     var out: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -327,13 +327,18 @@ fn mesh_children(parent: string, readonly: bool) string {
         }
         index = index + 1
     }
-    if out == "" {
-        return ""
-    }
-    return "<ul class=\"mesh-children\">" + out + "</ul>"
+    return out
 }
 
-fn mesh_free_children(readonly: bool) string {
+fn mesh_children(parent: string, readonly: bool) string {
+    let items: string = mesh_child_items(parent, readonly)
+    if items == "" {
+        return ""
+    }
+    return "<ul class=\"mesh-children\">" + items + "</ul>"
+}
+
+fn mesh_free_child_items(readonly: bool) string {
     var out: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -346,15 +351,16 @@ fn mesh_free_children(readonly: bool) string {
         }
         index = index + 1
     }
-    if out == "" {
-        return ""
-    }
-    return "<ul class=\"mesh-children\">" + out + "</ul>"
+    return out
 }
 
 fn mesh_tree(readonly: bool) string {
-    var out: string = gateway_card(readonly) + mesh_children("gateway", readonly) +
-        mesh_free_children(readonly)
+    let root_items: string = mesh_child_items("gateway", readonly) +
+        mesh_free_child_items(readonly)
+    var out: string = gateway_card(readonly)
+    if root_items != "" {
+        out = out + "<ul class=\"mesh-children\">" + root_items + "</ul>"
+    }
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -377,7 +383,7 @@ fn mesh_tree(readonly: bool) string {
     return "<div class=\"mesh-tree\">" + out + "</div>"
 }
 
-fn mesh_build_children(parent: string) string {
+fn mesh_build_child_items(parent: string) string {
     var out: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -400,15 +406,24 @@ fn mesh_build_children(parent: string) string {
         }
         index = index + 1
     }
-    if out == "" {
+    return out
+}
+
+fn mesh_build_children(parent: string) string {
+    let items: string = mesh_build_child_items(parent)
+    if items == "" {
         return ""
     }
-    return "<ul class=\"mesh-children\">" + out + "</ul>"
+    return "<ul class=\"mesh-children\">" + items + "</ul>"
 }
 
 fn mesh_build_tree() string {
-    var out: string = build_gateway_card() + mesh_build_children("gateway") +
-        mesh_free_children(true)
+    let root_items: string = mesh_build_child_items("gateway") +
+        mesh_free_child_items(true)
+    var out: string = build_gateway_card()
+    if root_items != "" {
+        out = out + "<ul class=\"mesh-children\">" + root_items + "</ul>"
+    }
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -670,7 +685,7 @@ fn gateway_network_body() string {
         "</span>" + network_badge(network_all_ready())
 }
 
-fn mesh_network_children(parent: string) string {
+fn mesh_network_child_items(parent: string) string {
     var out: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -694,16 +709,25 @@ fn mesh_network_children(parent: string) string {
         }
         index = index + 1
     }
-    if out == "" {
+    return out
+}
+
+fn mesh_network_children(parent: string) string {
+    let items: string = mesh_network_child_items(parent)
+    if items == "" {
         return ""
     }
-    return "<ul class=\"mesh-children\">" + out + "</ul>"
+    return "<ul class=\"mesh-children\">" + items + "</ul>"
 }
 
 fn mesh_network_tree() string {
+    let root_items: string = mesh_network_child_items("gateway") +
+        mesh_free_child_items(true)
     var out: string = "<a class=\"node-card gateway network-link-card\" href=\"/mesh/network/gateway\">" +
-        gateway_network_body() + "</a>" + mesh_network_children("gateway") +
-        mesh_free_children(true)
+        gateway_network_body() + "</a>"
+    if root_items != "" {
+        out = out + "<ul class=\"mesh-children\">" + root_items + "</ul>"
+    }
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -904,6 +928,72 @@ fn project_card(id: string) string {
         "<button type=\"submit\" class=\"danger\">Delete</button></form></div></div>"
 }
 
+// message_is_error reports whether a saved message describes a failed action
+// rather than a state change, so the dashboard can mark the notice.
+fn message_is_error(text: string) bool {
+    if text == "" {
+        return false
+    }
+    if rho_str_index_of(text, "failed") >= 0 { return true }
+    if rho_str_index_of(text, "incomplete") >= 0 { return true }
+    if rho_str_index_of(text, "needs ") >= 0 { return true }
+    if rho_str_index_of(text, "Choose ") >= 0 { return true }
+    if rho_str_index_of(text, "Add at least") >= 0 { return true }
+    if rho_str_index_of(text, "Remove ") >= 0 { return true }
+    if rho_str_index_of(text, "did not answer") >= 0 { return true }
+    if rho_str_index_of(text, "no HTTP") >= 0 { return true }
+    return false
+}
+
+// text_tail is the last part of a log, so a failure shows the lines that
+// explain it rather than the whole build.
+fn text_tail(path: string, limit: u32) string {
+    if !rho_path_exists(path) {
+        return ""
+    }
+    let text: string = rho_read_text(path)
+    let length: u32 = rho_strlen(text)
+    if length == 0 {
+        return ""
+    }
+    var start: u32 = 0
+    if length > limit {
+        start = length - limit
+    }
+    return rho_str_slice(text, start, length - start)
+}
+
+// dashboard_notice is the last gateway action on the dashboard. A restart may
+// fail while a node or gateway is being built; the status alone does not say
+// why, so a failure also carries the tail of the build and gateway logs.
+fn dashboard_notice() string {
+    let message: string = state_value("message.build")
+    if message == "" {
+        return ""
+    }
+    let failed: bool = state_value("status.gateway") == "failed" || message_is_error(message)
+    var css: string = "notice"
+    if failed {
+        css = "notice bad"
+    }
+    var out: string = "<p class=\"" + css + "\"><strong>Gateway:</strong> " +
+        escape_html(message) + "</p>"
+    if !failed {
+        return out
+    }
+    let build: string = text_tail(progress_path("build"), 4000)
+    if build != "" {
+        out = out + "<details class=\"notice bad\"><summary>Show the build output</summary>" +
+            "<pre class=\"out\">" + escape_html(build) + "</pre></details>"
+    }
+    let gateway: string = text_tail(wizard_dir() + "/gateway.log", 4000)
+    if gateway != "" {
+        out = out + "<details class=\"notice bad\"><summary>Show the gateway log</summary>" +
+            "<pre class=\"out\">" + escape_html(gateway) + "</pre></details>"
+    }
+    return out
+}
+
 fn mesh_projects() string {
     var cards: string = ""
     var ids: string = project_ids()
@@ -924,7 +1014,8 @@ fn mesh_projects() string {
     if cards == "" {
         cards = "<p>No projects yet.</p>"
     }
-    return "<div class=\"project-grid\">" + cards + "</div>" +
+    return dashboard_notice() +
+        "<div class=\"project-grid\">" + cards + "</div>" +
         "<section class=\"mesh-sessions\" id=\"new-project\"><h2>Create a project</h2>" +
         "<p>A project is a folder in the projects workspace; its plan, network, build and verify settings live there.</p>" +
         "<form class=\"grid\" method=\"post\" action=\"/mesh/project/new\">" +
@@ -993,7 +1084,8 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
             "onsubmit=\"return confirm('Delete this project and its settings?');\">" +
             "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
             "<button type=\"submit\" class=\"danger\">Delete project</button></form>"))
-    return html(status_ok(), mesh_shell("Project settings", content))
+    return html(status_ok(), mesh_shell("Project settings",
+        "<section class=\"mesh-form-panel page-panel\">" + content + "</section>"))
 }
 
 fn mesh_project_active(req: Request) Response {
@@ -1767,6 +1859,24 @@ fn mesh_node_post(req: Request) Response {
             save_setting(to + "sensors", state_value(from + "sensors"))
             save_setting(to + "driver", state_value(from + "driver"))
             save_setting(to + "link", state_value(from + "link"))
+            save_setting(to + "device", state_value(from + "device"))
+            save_setting(to + "transport", state_value(from + "transport"))
+            save_setting(to + "address", state_value(from + "address"))
+            save_setting(to + "device_id", state_value(from + "device_id"))
+            save_setting(to + "bus_address", state_value(from + "bus_address"))
+            save_setting(to + "state", state_value(from + "state"))
+            save_setting(to + "last_value", state_value(from + "last_value"))
+            save_setting(to + "last_checked", state_value(from + "last_checked"))
+            save_setting(to + "ssid", state_value(from + "ssid"))
+            save_setting(to + "password", state_value(from + "password"))
+            save_setting(to + "parent_host", state_value(from + "parent_host"))
+            save_setting(to + "child_host", state_value(from + "child_host"))
+            save_setting(to + "gateway_host", state_value(from + "gateway_host"))
+            save_setting(to + "serial_port", state_value(from + "serial_port"))
+            save_setting(to + "baud", state_value(from + "baud"))
+            save_setting(to + "parent_endpoint", state_value(from + "parent_endpoint"))
+            save_setting(to + "child_endpoint", state_value(from + "child_endpoint"))
+            save_setting(to + "port", state_value(from + "port"))
             var parent: string = state_value(from + "parent")
             if rho_str_index_of(parent, "node.") == 0 {
                 let parent_index: u32 = rho_int_from_str(
@@ -1791,6 +1901,24 @@ fn mesh_node_post(req: Request) Response {
         save_setting(last + "driver", "")
         save_setting(last + "parent", "")
         save_setting(last + "link", "")
+        save_setting(last + "device", "")
+        save_setting(last + "transport", "")
+        save_setting(last + "address", "")
+        save_setting(last + "device_id", "")
+        save_setting(last + "bus_address", "")
+        save_setting(last + "state", "")
+        save_setting(last + "last_value", "")
+        save_setting(last + "last_checked", "")
+        save_setting(last + "ssid", "")
+        save_setting(last + "password", "")
+        save_setting(last + "parent_host", "")
+        save_setting(last + "child_host", "")
+        save_setting(last + "gateway_host", "")
+        save_setting(last + "serial_port", "")
+        save_setting(last + "baud", "")
+        save_setting(last + "parent_endpoint", "")
+        save_setting(last + "child_endpoint", "")
+        save_setting(last + "port", "")
         save_setting("node.count", rho_int_to_str(count - 1))
         save_setting("relay", node_value(1, "board", ""))
         save_setting("link", node_value(1, "link", "uart"))
@@ -2047,8 +2175,8 @@ fn gateway_http(path: string) string {
 // opened this page.
 
 fn mesh_menu_link(label: string, href: string, icon: string) string {
-    return "<li><a href=\"" + href + "\"><span class=\"ico\">" + icon + "</span>" +
-        escape_html(label) + "</a></li>"
+    return "<a class=\"nav-link\" href=\"" + href + "\"><span class=\"ico\" aria-hidden=\"true\">" +
+        icon + "</span>" + escape_html(label) + "</a>"
 }
 
 fn mesh_project_menu() string {
@@ -2067,19 +2195,35 @@ fn mesh_project_menu() string {
         if id == "" {
             continue
         }
-        var current: string = ""
+        var classes: string = "nav-link project-link"
         var badge: string = ""
         if id == current_project() {
-            current = " class=\"current\""
+            classes = classes + " active"
             badge = "<span class=\"nav-badge\">Active</span>"
         }
-        items = items + "<li><a" + current + " href=\"/mesh/project/" + escape_html(id) +
-            "\">" + escape_html(project_name(id)) + badge + "</a></li>"
+        items = items + "<a class=\"" + classes + "\" href=\"/mesh/project/" + escape_html(id) +
+            "\">" + escape_html(project_name(id)) + badge + "</a>"
     }
     if items == "" {
-        items = "<li><span class=\"nav-empty\">No projects yet</span></li>"
+        items = "<span class=\"nav-empty\">No projects yet</span>"
     }
-    return "<li class=\"nav-projects\"><ul class=\"subnav\">" + items + "</ul></li>"
+    return items
+}
+
+fn mesh_context() string {
+    let active: string = current_project()
+    if active == "" {
+        return "<span class=\"foot-label\">No active project</span>"
+    }
+    return "<span class=\"foot-label\">Operations for</span> <strong>" +
+        escape_html(project_name(active)) + "</strong>"
+}
+
+fn mesh_bottom_menu() string {
+    var out: string = "<a class=\"nav-link new-project\" href=\"/mesh#new-project\">" +
+        "<span class=\"ico\" aria-hidden=\"true\">+</span>New project</a>"
+    out = out + mesh_project_menu()
+    return out
 }
 
 fn mesh_menu() string {
@@ -2087,36 +2231,34 @@ fn mesh_menu() string {
     var out: string = ""
     let keeper_port: string = getenv("RHO_KEEPER_PORT")
     if keeper_port != "" {
-        out = out + "<li><a class=\"nav-up keeper-link\" href=\"#\" data-keeper-port=\"" +
-            escape_html(keeper_port) + "\"><span class=\"ico\">↑</span>Go to Keeper</a></li>" +
-            "<li class=\"nav-rule\"></li>"
+        out = out + "<a class=\"nav-link keeper-link\" href=\"#\" data-keeper-port=\"" +
+            escape_html(keeper_port) + "\"><span class=\"ico\" aria-hidden=\"true\">↑</span>Keeper</a>"
+        out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     }
     out = out + mesh_menu_link("Dashboard", "/mesh", "⌁")
     let active: string = current_project()
     if active != "" {
-        let active_name: string = project_name(active)
-        out = out + "<li class=\"nav-title\">Operations</li>"
-        out = out + "<li class=\"nav-context\">for <strong>" + escape_html(active_name) +
-            "</strong></li>"
+        out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
+        out = out + "<span class=\"nav-context\">for <strong>" +
+            escape_html(project_name(active)) + "</strong></span>"
         out = out + mesh_menu_link("Plan", "/mesh/plan", "1")
         out = out + mesh_menu_link("Network", "/mesh/step/network", "2")
         out = out + mesh_menu_link("Build & program", "/mesh/step/build", "3")
         out = out + mesh_menu_link("Verify", "/mesh/step/verify", "4")
         out = out + mesh_menu_link("Gateway", "/mesh/gateway", "⌂")
-        out = out + mesh_menu_link("Project settings",
+        out = out + mesh_menu_link("Settings",
             "/mesh/project/" + active + "/settings", "⚙")
     }
-    out = out + "<li class=\"nav-title\">Projects</li>"
-    out = out + "<li><a class=\"new-project\" href=\"/mesh#new-project\"><span class=\"ico\">+</span>New project</a></li>"
-    out = out + mesh_project_menu()
-    out = out + "<li class=\"nav-title\">Help</li>"
+    out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     out = out + mesh_menu_link("Documentation", "/mesh/docs", "▤")
     return out
 }
 
 fn mesh_shell(title: string, content: string) string {
     return template_fill(template_get("layout"),
-        vars("title", title) + vars("menu", mesh_menu()) + vars("body", content))
+        vars("title", title) + vars("menu", mesh_menu()) +
+        vars("context", mesh_context()) + vars("projects", mesh_bottom_menu()) +
+        vars("body", content))
 }
 
 fn mesh_docs_page(req: Request) Response {
@@ -2134,7 +2276,8 @@ fn mesh_docs_page(req: Request) Response {
     if content == "" {
         content = "<h1>Documentation</h1><p>No documentation was found for this application.</p>"
     }
-    return html(status_ok(), mesh_shell("Documentation", content))
+    return html(status_ok(), mesh_shell("Documentation",
+        "<section class=\"mesh-form-panel page-panel doc-panel\">" + content + "</section>"))
 }
 
 fn mesh_dashboard(req: Request) Response {
@@ -2149,6 +2292,9 @@ fn mesh_gateway_restart(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
     }
+    // A restart builds before it starts. Pin the step so the build output
+    // lands in the file the dashboard reads when the action fails.
+    save_setting("current_step", "build")
     let code: u32 = handler_program_gateway()
     if code == 0 {
         if default_value("gateway", "native") == "native" {
@@ -2161,7 +2307,8 @@ fn mesh_gateway_restart(req: Request) Response {
         info("mesh", "gateway restarted")
     } else {
         save_setting("status.gateway", "failed")
-        save_setting("message.build", "Gateway restart failed with status " + rho_int_to_str(code) + ".")
+        save_setting("message.build", "Gateway restart failed (build or start exited " +
+            rho_int_to_str(code) + "). The output is below.")
         error("mesh", "gateway restart failed with status " + rho_int_to_str(code))
     }
     return mesh_dashboard(req)
@@ -2235,7 +2382,10 @@ fn mesh_accept(req: Request) Response {
     }
     var index: u32 = 1
     while index <= count {
-        if !is_module_node(index) &&
+        // A module is carried by the node it extends and a device is an
+        // integration with its own fields; neither is a compute node, so
+        // neither is asked for a role, board and link.
+        if node_kind(index) == "compute" &&
             (node_value(index, "role", "") == "" || node_value(index, "board", "") == "" ||
             node_value(index, "parent", "") == "" || node_value(index, "link", "") == "") {
             save_setting("mesh_message", "Node " + rho_int_to_str(index) + " is incomplete.")

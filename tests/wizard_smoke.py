@@ -132,18 +132,18 @@ def main() -> int:
                 ["RoboHub Mesh", "Projects", "Create project", "Documentation"],
                 "mesh overview",
             )
-            if 'nav-title">Operations' in mesh:
+            if "Operations for" in mesh:
                 raise AssertionError("Operations must be hidden when no project is active")
 
             docs = get(base, "/mesh/docs")
-            assert_contains(docs, ["RoboHub Mesh", "Projects", "left menu"], "documentation")
+            assert_contains(docs, ["RoboHub Mesh", "Projects", "top bar"], "documentation")
 
             # A new project is active from the start when none was.
             post(base, "/mesh/project/new", {"name": "default"})
             active = get(base, "/mesh")
             assert_contains(
                 active,
-                ["nav-title\">Operations", "for <strong>default", "nav-badge\">Active",
+                ["Operations for", "<strong>default</strong>", "nav-badge\">Active",
                  "Project settings"],
                 "active project menu",
             )
@@ -428,15 +428,16 @@ def main() -> int:
                 {"project": "default", "active": "0", "return": "settings"},
             )
             inactive = get(base, "/mesh")
-            if 'nav-title">Operations' in inactive:
+            if "Operations for" in inactive:
                 raise AssertionError("Operations must be hidden when no project is active")
+            assert_contains(inactive, ["No active project"], "inactive project menu")
             assert_contains(get(base, "/mesh/plan"), ["Create project"], "step without a project")
             post(
                 base,
                 "/mesh/project/active",
                 {"project": "default", "active": "1", "return": "dashboard"},
             )
-            assert_contains(get(base, "/mesh"), ['for <strong>default'], "reactivated project")
+            assert_contains(get(base, "/mesh"), ['<strong>default</strong>'], "reactivated project")
 
             # A project is a folder of its own; creating one starts empty, and
             # an existing project can be opened again.
@@ -473,6 +474,31 @@ def main() -> int:
             current_project = (Path(state) / "current-project.txt").read_text().strip()
             if current_project != "default":
                 raise AssertionError("opening a project must make it current")
+
+            # A device is a node of its own, but it is not a compute node: a
+            # topology that carries a device must accept without asking the
+            # device for a role, board and link.
+            post(base, "/mesh/project/new", {"name": "Device project"})
+            post(
+                base,
+                "/mesh/node/new",
+                {
+                    "action": "save",
+                    "kind": "device",
+                    "name": "Test plug",
+                    "device": "robohub-device-shelly-plug-m-gen3",
+                    "transport": "http",
+                    "address": "http://192.0.2.50",
+                    "device_id": "",
+                    "parent": "gateway",
+                },
+            )
+            device_plan = get(base, "/mesh/plan")
+            assert_contains(device_plan, ["Test plug", "device"], "device plan")
+            accepted_device = post(base, "/mesh/accept", {"action": "accept"})
+            assert_contains(accepted_device, ["Topology accepted"], "device topology")
+            post(base, "/mesh/project/delete", {"project": "Device-project"})
+            get(base, "/mesh/project/default")
 
             # A long action writes its progress to a file and the page follows
             # that file. Seed one so the stream's framing and its closing event

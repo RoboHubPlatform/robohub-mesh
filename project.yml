@@ -42,3 +42,5 @@ targets:
         role: entrypoint
       - path: go.mod
         role: build
+      - path: static
+        kind: dir

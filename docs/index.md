@@ -9,20 +9,22 @@ It is a keeper-hosted application: it runs on its own port, standalone or
 launched from the keeper's `/applications` registry. The page is at `/mesh`; the
 plan wizard for a project is at `/mesh/plan`.
 
-The left menu belongs to the application. It has Dashboard, a Projects group
-with every project in the workspace, and Documentation. When a project is
-active, an Operations group appears, headed by the project it acts on, with
-Plan, Network, Build & program, Verify, Gateway and that project's settings.
-An active project is marked **Active** in the project list; the others are not.
+The application owns its menu. The fixed top bar has Dashboard, Documentation
+and, while a project is active, the operations it acts on — Plan, Network,
+Build & program, Verify, Gateway and Settings — with the project named beside
+them. The fixed bottom bar lists every project in the workspace, with **New
+project** beside them; the active one is marked **Active** and the others are
+not.
 
 A project is made active by opening it, by **Set active** on its card, or from
-its settings page. **Make inactive** clears the selection: the Operations group
-then disappears and the plan, network, build and verify pages return to the
-dashboard, while the projects remain listed. Creating a project when none is
-active makes the new one active.
+its settings page. **Make inactive** clears the selection: the operations
+disappear from the top bar and the bottom bar says **No active project**, while
+the plan, network, build and verify pages return to the dashboard and the
+projects remain listed. Creating a project when none is active makes the new
+one active.
 
-When the keeper started the application, the menu also has **Go to Keeper** at
-the top, which returns to the keeper that launched it.
+When the keeper started the application, the top bar also has **Keeper**, which
+returns to the keeper that launched it.
 
 ## Projects
 
@@ -47,6 +49,8 @@ The dashboard lists every project with:
 - the last time the gateway received a frame,
 - **Restart**, **Stop** and **Delete**, and a link to **Project settings**.
 
+![The Mesh projects dashboard](./images/dashboard.jpg)
+
 **Create project** makes a new empty project and opens its plan. **Open** on a
 project loads it as the current project and opens its plan. The dashboard does
 not show the Plan/Network/Build/Verify steps; those belong to the project being
@@ -60,12 +64,15 @@ Every wizard page carries a **← Mesh dashboard** breadcrumb.
 
 ## Plan and topology
 
-The plan is a tree of cards:
+![The plan wizard](./images/wizzard.jpg)
+
+The plan is a graph of cards:
 
 - the gateway is the root,
-- every child is a node shown under its parent,
+- every child branches from its parent,
+- a device with no parent branches from the gateway beside the relay nodes,
 - the branch badge is the connection and names the transport,
-- each card carries the node's role and status.
+- each card is a frosted panel carrying the node's role and status.
 
 A card opens the node or gateway editor. A node is one computer: a user-chosen
 name, a short description, a role (`node`, `relay` or `gateway`), a board, a
@@ -274,6 +281,8 @@ the next page load discovers it. A transport appears when both ends declare it
 and `robohub-transport` lists it.
 
 ## The gateway page
+
+![The gateway page](./images/gateway.jpg)
 
 The gateway's own page at `http://<gateway>:<rest>/` shows:
 

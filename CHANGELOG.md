@@ -2,6 +2,33 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.4.0] - 2026-11-03
+
+Mesh has the same visual language as the Aquarium: a photographic background,
+a fixed top bar for the operations and documentation, and a fixed bottom bar
+that names the active project and lists the workspace's projects. The left
+menu is gone.
+
+The plan, build and network tree is now the centerpiece: a branching graph of
+frosted cards connected by the transport on each branch, with the gateway at
+the root. Node, module and device cards keep their role, board and status
+information.
+
+Form pages — node, module, device, gateway, project settings and the guide —
+are wrapped in the same frosted panel, so the background never shows through
+their labels and tables.
+
+Accepting a topology no longer treats a module or a device as an incomplete
+compute node: only compute nodes are asked for a role, board and link. A
+free-standing device now branches from the gateway beside the relay nodes
+instead of stacking under the first branch. Deleting a node also carries a
+device's integration, transport, address and network settings to the row that
+takes its place.
+
+The dashboard now shows the last gateway action. A failed restart is a red
+notice with the tail of the build output and the gateway log, and a restart
+pins the build step so that output is captured in the file the notice reads.
+
 ## [0.3.5] - 2026-11-03
 
 The gateway belongs to a project, not to the Mesh application. A project's

@@ -3199,7 +3199,8 @@ fn output_block(stage: string) string {
 /* -------------------------------------------------------------------------- */
 
 fn page(title: string, body: string) Response {
-    return html(status_ok(), mesh_shell(title, body))
+    return html(status_ok(), mesh_shell(title,
+        "<section class=\"mesh-form-panel page-panel\">" + body + "</section>"))
 }
 
 fn step_card(stage: string) string {
