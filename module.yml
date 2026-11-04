@@ -9,7 +9,7 @@
 module:
   name: mesh
   type: rho
-  version: 0.4.0
+  version: 0.4.1
   author: Aurel Miron
   maintainer: Aurel Miron
 description: >
@@ -39,6 +39,12 @@ application:
 # The alert channels this application uses. The dispatcher is the one alert
 # plugin the application calls; it fans out to the channels named in targets.
 plugins:
+  - name: robohub-auth
+    enabled: true
+    config:
+      issuer: keeper
+      mode: direct
+      login_url: "http://127.0.0.1:19090/auth/login"
   - name: alert-dispatcher
     enabled: true
     config:

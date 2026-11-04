@@ -2150,7 +2150,7 @@ fn mesh_api_project_sources(req: Request) Response {
 
 fn mesh_api_source_value(req: Request) Response {
     let value: string = mesh_source_value(param(req, "project"), param(req, "source"))
-    return Response{ 200, value, "text/plain; charset=utf-8" }
+    return Response{ 200, value, "text/plain; charset=utf-8", "" }
 }
 
 fn mesh_api_source_action(req: Request) Response {

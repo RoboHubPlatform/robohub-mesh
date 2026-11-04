@@ -14,6 +14,16 @@ targets:
       - docstore
     api:
       public_paths: "/, /mesh, /mesh/docs"
+    middleware:
+      - name: auth
+        options:
+          issuer: keeper
+          audience: mesh
+          cookie: mesh_session
+          public_key: ${RHO_HOME}/auth/public.pem
+          mode: direct
+          login_url: "/auth/login?audience=mesh"
+          scheme: auto
     templates:
       - name: layout
         file: templates/layout.html

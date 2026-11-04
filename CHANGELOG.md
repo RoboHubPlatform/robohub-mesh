@@ -2,6 +2,10 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.4.1] - 2026-11-04
+
+Mesh signs browser users in through Keeper and accepts signed service JWTs for /mesh/api, so Aquarium server-to-server calls keep working with authentication enforced.
+
 ## [0.4.0] - 2026-11-03
 
 Mesh has the same visual language as the Aquarium: a photographic background,
