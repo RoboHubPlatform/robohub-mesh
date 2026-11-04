@@ -304,7 +304,7 @@ out to the channels named in its targets; each channel has its own threshold.
 The default is the local log, and e-mail, Telegram and webhook channels are
 present but disabled until configured.
 
-The alert rule engine in `plugins/alert/rule.rho` is available to application
+The alert rule engine in `contracts/alert/rule.rho` is available to application
 logic that has a sensor reading: a pending window filters a spike, hysteresis
 decides when the condition cleared, a cooldown recharges the rule, and a rolling
 window limits repeated alerts.

@@ -1839,10 +1839,15 @@ fn project_area_id(file: string) string {
 }
 
 fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
-    row: string) string {
+    row: string, origin: string) string {
     let signal: string = field(row, 0)
     let id: string = kind + "." + rho_int_to_str(index) + "." + signal
     let base: string = "/mesh/api/projects/" + project + "/sources/" + id
+    var urls: string = ""
+    if origin != "" {
+        urls = ",\"value_url\":" + json_string(origin + base + "/value") +
+            ",\"action_url\":" + json_string(origin + base + "/action")
+    }
     return ",{\"id\":" + json_string(id) +
         ",\"name\":" + json_string(owner + " · " + field(row, 1)) +
         ",\"owner\":" + json_string(owner) +
@@ -1854,11 +1859,11 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
         ",\"field\":" + json_string(field(row, 4)) +
         ",\"kinds\":" + json_string(field(row, 5)) +
         ",\"value_path\":" + json_string(base + "/value") +
-        ",\"action_path\":" + json_string(base + "/action") + "}"
+        ",\"action_path\":" + json_string(base + "/action") + urls + "}"
 }
 
 fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,
-    rows: string) string {
+    rows: string, origin: string) string {
     var out: string = ""
     var rest: string = rows
     while rest != "" {
@@ -1871,13 +1876,13 @@ fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if line != "" {
-            out = out + mesh_source_entry(project, kind, index, owner, line)
+            out = out + mesh_source_entry(project, kind, index, owner, line, origin)
         }
     }
     return out
 }
 
-fn mesh_sources_json(project: string) string {
+fn mesh_sources_json(project: string, origin: string) string {
     let file: string = project_file(project)
     if !rho_path_exists(file) {
         return "[]"
@@ -1895,7 +1900,7 @@ fn mesh_sources_json(project: string) string {
                 owner = device_label(device)
             }
             out = out + mesh_source_entries(project, "device", index, owner,
-                manifest_signal_rows(device_manifest(device), true))
+                manifest_signal_rows(device_manifest(device), true), origin)
         } else if kind == "module" {
             let name: string = project_node_value(file, index, "name", "")
             let module_name: string = project_node_value(file, index, "module", "")
@@ -1904,7 +1909,7 @@ fn mesh_sources_json(project: string) string {
                 owner = module_label(module_name)
             }
             out = out + mesh_source_entries(project, "module", index, owner,
-                manifest_signal_rows(module_manifest(module_name), false))
+                manifest_signal_rows(module_manifest(module_name), false), origin)
         }
         index = index + 1
     }
@@ -2135,11 +2140,12 @@ fn mesh_api_sources(req: Request) Response {
     if project == "" {
         return json(200, "[]")
     }
-    return json(200, mesh_sources_json(project))
+    return json(200, mesh_sources_json(project, request_query_param(req, "base")))
 }
 
 fn mesh_api_project_sources(req: Request) Response {
-    return json(200, mesh_sources_json(param(req, "project")))
+    return json(200, mesh_sources_json(param(req, "project"),
+        request_query_param(req, "base")))
 }
 
 fn mesh_api_source_value(req: Request) Response {
