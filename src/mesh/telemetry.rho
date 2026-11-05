@@ -16,9 +16,14 @@ extern fn telemetry_open(path: string) bool
 extern fn telemetry_poll(project: string, gateway_id: string, gateway_url: string, token: string) string
 extern fn telemetry_status(project: string) string
 extern fn telemetry_latest(project: string, area_id: u32, node_id: u32, field_name: string) string
+extern fn telemetry_latest_text(project: string, area_id: u32, node_id: u32, field_name: string) string
 extern fn telemetry_series(project: string, area_id: u32, node_id: u32, field_name: string, from_ms: string, to_ms: string, step_ms: string) string
 extern fn telemetry_sleep(ms: u32) void
 extern fn telemetry_prune(project: string, raw_days: u32, minute_days: u32, hour_days: u32) string
+extern fn telemetry_rollup(project: string) string
+extern fn telemetry_record(project: string, area_id: u32, node_id: u32, field_name: string, value: string, status: u32) u32
+extern fn telemetry_json_number(document: string, path: string, scale: string) string
+extern fn telemetry_json_bool(document: string, path: string) string
 
 // telemetry_path is where the store lives. A deployment names it; a workstation
 // keeps it under the Mesh state directory.
@@ -36,6 +41,17 @@ fn telemetry_path() string {
 
 fn telemetry_start() bool {
     return telemetry_open(telemetry_path())
+}
+
+// telemetry_project_ids lists the projects without running the migration the
+// interactive pages run. The worker is a reader; a background task must not
+// rewrite project state while a person is editing it.
+fn telemetry_project_ids() string {
+    let report: string = wizard_report("telemetry-projects")
+    if rho_exec("ls", projects_dir(), report) != 0 {
+        return ""
+    }
+    return rho_read_text(report)
 }
 
 // mesh_retention_days is how long a project keeps raw readings. The minute and
@@ -57,7 +73,7 @@ fn mesh_retention_days(project: string) u32 {
 }
 
 fn telemetry_prune_once() void {
-    let ids: string = project_ids()
+    let ids: string = telemetry_project_ids()
     var rest: string = ids
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -93,7 +109,7 @@ fn mesh_gateway_token(project: string) string {
 // gateway starts from its new feed rather than from a sequence that belonged to
 // the old one.
 fn telemetry_poll_once() void {
-    let ids: string = project_ids()
+    let ids: string = telemetry_project_ids()
     var rest: string = ids
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -123,6 +139,106 @@ fn telemetry_poll_once() void {
     }
 }
 
+// telemetry_poll_http_device reads one HTTP device and stores the fields its
+// manifest describes. It returns how many readings were written, so a page can
+// say whether the device answered.
+fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
+    let name: string = project_node_value(file, index, "device", "")
+    let transport: string = project_node_value(file, index, "transport", "http")
+    let address: string = project_node_value(file, index, "address", "")
+    if name == "" || transport != "http" || address == "" {
+        return 0
+    }
+    let manifest: string = device_manifest(name)
+    let path: string = yaml.value(manifest, "telemetry.http_path")
+    let fields: string = manifest_list_items(manifest, "telemetry_http_fields")
+    if path == "" || fields == "" {
+        return 0
+    }
+    let body: string = mesh_url_get(address, path)
+    if body == "" {
+        return 0
+    }
+    let area: u32 = u32(rho_int_from_str(project_area_id(file)))
+    var rest: string = fields
+    var recorded: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        line = device_trim(line)
+        if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") &&
+            rho_str_slice(line, u32(rho_strlen(line)) - 1, 1) == "\"" {
+            line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
+        }
+        let field_name: string = field(line, 1)
+        let kind: string = field(line, 3)
+        let json_path: string = field(line, 4)
+        let scale: string = field(line, 5)
+        if field_name == "" || json_path == "" {
+            continue
+        }
+        if kind == "bool" {
+            let value: string = telemetry_json_bool(body, json_path)
+            if value == "true" {
+                ignore_u32(telemetry_record(project, area, index, field_name, "1", 0))
+                recorded = recorded + 1
+            } else if value == "false" {
+                ignore_u32(telemetry_record(project, area, index, field_name, "0", 0))
+                recorded = recorded + 1
+            }
+        } else {
+            let value: string = telemetry_json_number(body, json_path, scale)
+            if value != "" {
+                ignore_u32(telemetry_record(project, area, index, field_name, value, 0))
+                recorded = recorded + 1
+            }
+        }
+    }
+    if recorded > 0 {
+        ignore_string(telemetry_rollup(project))
+    }
+    return recorded
+}
+
+// telemetry_device_poll_once reads the HTTP devices in every project. A device
+// that is not HTTP is carried by its parent node or a robohub-devices device
+// node; its frame arrives through the gateway outbox and is stored by
+// telemetry_poll_once.
+fn telemetry_device_poll_once() void {
+    let ids: string = telemetry_project_ids()
+    var projects: string = ids
+    while projects != "" {
+        let at: i32 = rho_str_index_of(projects, "\n")
+        var project: string = projects
+        if at < 0 {
+            projects = ""
+        } else {
+            project = rho_str_slice(projects, 0, u32(at))
+            projects = rho_str_slice(projects, u32(at) + 1,
+                u32(rho_strlen(projects)) - u32(at) - 1)
+        }
+        if project == "" {
+            continue
+        }
+        let file: string = project_file(project)
+        let count: u32 = u32(rho_int_from_str(state_value_in(file, "node.count")))
+        var index: u32 = 1
+        while index <= count {
+            if project_node_value(file, index, "kind", "") == "device" {
+                ignore_u32(telemetry_poll_http_device(project, file, index))
+            }
+            index = index + 1
+        }
+    }
+}
+
 fn telemetry_worker() void {
     if !telemetry_start() {
         warn("mesh", "telemetry store unavailable")
@@ -131,9 +247,16 @@ fn telemetry_worker() void {
     // A store that was offline longer than its window should not wait an hour
     // for the first pass.
     telemetry_prune_once()
+    telemetry_device_poll_once()
     var ticks: u32 = 0
+    var device_ticks: u32 = 0
     while true {
         telemetry_poll_once()
+        device_ticks = device_ticks + 1
+        if device_ticks >= 3 {
+            device_ticks = 0
+            telemetry_device_poll_once()
+        }
         // Once an hour at the two-second poll cadence. The pass rolls each
         // project up before it prunes, so the old range a chart asks for is
         // still there after the raw rows are gone.
@@ -164,29 +287,23 @@ fn mesh_source_coordinates(project: string, source: string) string {
             return ""
         }
         let node: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
-        return area + "|" + node + "|" + field_name
+        // The firmware prefixes a module's field with its plan index, so two
+        // sensors measuring the same quantity on one node stay two series.
+        // A node flashed before that prefix existed published the bare field;
+        // when only the bare field has readings, serve that series.
+        let prefixed: string = "m" + field(spec, 1) + "." + field_name
+        if telemetry_latest_text(project, u32(rho_int_from_str(area)),
+            u32(rho_int_from_str(node)), prefixed) == "" {
+            return area + "|" + node + "|" + field_name
+        }
+        return area + "|" + node + "|" + prefixed
     }
     if kind == "device" {
-        let index: string = field(spec, 1)
-        // A network device's reading is stored under the id the gateway
-        // assigned it, not the plan's node index. The gateway's listing is
-        // matched by the name the plan gave the device and its address.
-        let object: string = gateway_device_object(mesh_project_gateway(project),
-            field(spec, 6), field(spec, 8))
-        var node: string = json_number(object, "id")
-        if node == "" {
-            let candidate: string = project_node_value(project_file(project),
-                u32(rho_int_from_str(index)), "device_id", "")
-            // A Shelly id is a name, not the gateway's number; reading it as a
-            // number would silently become node zero. The plan's index is the
-            // better fallback until the gateway can be asked again.
-            if candidate != "" && rho_int_from_str(candidate) > 0 {
-                node = candidate
-            } else {
-                node = index
-            }
-        }
-        return area + "|" + node + "|" + field_name
+        // A device is addressed by its node in the plan, which is also the
+        // identity the generated device node publishes under and the one the
+        // Mesh poller stores. The gateway's own device numbering is for its
+        // control endpoint, not for a series.
+        return area + "|" + field(spec, 1) + "|" + field_name
     }
     return ""
 }

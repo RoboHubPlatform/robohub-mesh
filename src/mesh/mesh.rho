@@ -1386,21 +1386,26 @@ fn mesh_device_state(index: u32) string {
 
 fn mesh_device_actions(index: u32) string {
     if !rho_str_eq(node_device_transport(index), "http") {
-        return "<p><small>This device is reached over MQTT; the relay or gateway that " +
-            "carries it performs the command.</small></p>"
+        return "<p><small>This device is carried by the node it is attached to; that " +
+            "node performs the read and publishes it.</small></p>"
+    }
+    var switch_forms: string = ""
+    let kind: string = device_kind(node_device_name(index))
+    if kind == "plug" || kind == "actuator" || kind == "switch" {
+        switch_forms = "<form method=\"post\" action=\"/mesh/device/set\">" +
+            "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
+            "<input type=\"hidden\" name=\"state\" value=\"on\">" +
+            "<button type=\"submit\">Switch on</button></form>" +
+            "<form method=\"post\" action=\"/mesh/device/set\">" +
+            "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
+            "<input type=\"hidden\" name=\"state\" value=\"off\">" +
+            "<button type=\"submit\" class=\"quiet\">Switch off</button></form>"
     }
     return "<div class=\"device-actions\">" +
         "<form method=\"post\" action=\"/mesh/device/poll\">" +
         "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
         "<button type=\"submit\" class=\"quiet\">Poll device</button></form>" +
-        "<form method=\"post\" action=\"/mesh/device/set\">" +
-        "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
-        "<input type=\"hidden\" name=\"state\" value=\"on\">" +
-        "<button type=\"submit\">Switch on</button></form>" +
-        "<form method=\"post\" action=\"/mesh/device/set\">" +
-        "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
-        "<input type=\"hidden\" name=\"state\" value=\"off\">" +
-        "<button type=\"submit\" class=\"quiet\">Switch off</button></form></div>" +
+        switch_forms + "</div>" +
         "<p><small>Last: state " + escape_html(mesh_device_state(index)) +
         ", power " + escape_html(mesh_device_last(index)) + " W at " +
         escape_html(mesh_device_checked(index)) + "</small></p>"
@@ -1461,9 +1466,16 @@ fn mesh_device_node_page(req: Request, index: u32, is_new: bool) Response {
     if !is_new {
         actions = "<h2>Device</h2>" + mesh_device_actions(index)
     }
+    var publish_hint: string = ""
+    if !is_new && transport != "http" {
+        let area: string = project_area_id(project_file(current_project()))
+        publish_hint = "<p><small>A device node that publishes for this plan must use AREA=" +
+            escape_html(area) + " NODE=" + rho_int_to_str(index) + ".</small></p>"
+    }
     let body: string = "<h1>" + escape_html(title) + "</h1><p>A device is an integration from " +
-        "robohub-devices attached to a gateway or a relay node. It is not built or programmed; " +
-        "the node it is attached to carries it.</p>" + form + actions + delete_form +
+        "robohub-devices attached to a gateway or a relay node. HTTP devices are read by Mesh; " +
+        "the others are carried by the node they are attached to.</p>" + form + actions +
+        publish_hint + delete_form +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
     return page(title, body)
 }
@@ -1474,24 +1486,31 @@ fn mesh_device_poll(req: Request) Response {
     if index < 1 || index > node_count() || !is_device_node(index) {
         return mesh_page(req)
     }
+    let project: string = current_project()
+    let file: string = project_file(project)
     let address: string = node_device_address(index)
     if rho_strlen(address) == 0 {
         save_setting("mesh_message", "This device has no HTTP address.")
         return mesh_device_node_page(req, index, false)
     }
-    let report: string = wizard_report("device-poll-" + rho_int_to_str(index))
-    let url: string = address + "/rpc/Shelly.GetStatus"
-    let code: u32 = rho_exec("curl", "-fsS -m 3 " + mesh_quote(url), report)
-    if code != 0 {
-        save_setting("mesh_message", "The device did not answer at " + address + ".")
+    let recorded: u32 = telemetry_poll_http_device(project, file, index)
+    if recorded == 0 {
+        save_setting("mesh_message",
+            "The device did not answer or its manifest names no HTTP telemetry.")
         return mesh_device_node_page(req, index, false)
     }
-    let text: string = rho_read_text(report)
-    let state: string = mesh_json_bool(text, "output")
+    // The page shows the values the store now holds, so it reads the same
+    // series a chart would rather than a second, separate request.
+    let area: u32 = u32(rho_int_from_str(project_area_id(file)))
+    let state: string = telemetry_latest_text(project, area, index, "state")
     if state != "" {
-        save_setting("node." + rho_int_to_str(index) + ".state", state)
+        if state == "1" {
+            save_setting("node." + rho_int_to_str(index) + ".state", "on")
+        } else {
+            save_setting("node." + rho_int_to_str(index) + ".state", "off")
+        }
     }
-    let power: string = mesh_json_number(text, "apower")
+    let power: string = telemetry_latest_text(project, area, index, "power_w")
     if power != "" {
         save_setting("node." + rho_int_to_str(index) + ".last_value", power)
     }
@@ -2053,7 +2072,45 @@ fn mesh_source_spec(project: string, source: string) string {
         field(row, 2) + "|" + owner + "|" + project_node_value(file, index, "name", "") +
         "|" + project_node_value(file, index, "transport", "") + "|" +
         project_node_value(file, index, "address", "") + "|" +
-        project_node_value(file, index, "parent", "")
+        project_node_value(file, index, "parent", "") + "|" + field(row, 5)
+}
+
+fn mesh_stored_text(spec: string, stored: string) string {
+    let kinds: string = field(spec, 10)
+    if rho_str_index_of(kinds, "toggle") >= 0 || rho_str_index_of(kinds, "boolean") >= 0 {
+        if stored == "1" {
+            return "on"
+        }
+        if stored == "0" {
+            return "off"
+        }
+    }
+    return stored
+}
+
+fn mesh_device_stored_value(project: string, spec: string, field_name: string) string {
+    let stored: string = telemetry_latest_text(project,
+        u32(rho_int_from_str(project_area_id(project_file(project)))),
+        u32(rho_int_from_str(field(spec, 1))),
+        field_name)
+    return mesh_stored_text(spec, stored)
+}
+
+fn mesh_module_stored_value(project: string, spec: string, field_name: string) string {
+    let parent: string = field(spec, 9)
+    if !rho_str_starts_with(parent, "node.") {
+        return ""
+    }
+    let parent_index: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
+    let area: u32 = u32(rho_int_from_str(project_area_id(project_file(project))))
+    let node: u32 = u32(rho_int_from_str(parent_index))
+    var stored: string = telemetry_latest_text(project, area, node,
+        "m" + field(spec, 1) + "." + field_name)
+    if stored == "" {
+        // A node flashed before the module prefix published the bare field.
+        stored = telemetry_latest_text(project, area, node, field_name)
+    }
+    return mesh_stored_text(spec, stored)
 }
 
 fn mesh_source_value(project: string, source: string) string {
@@ -2066,6 +2123,12 @@ fn mesh_source_value(project: string, source: string) string {
     let transport: string = field(spec, 7)
     let address: string = field(spec, 8)
     let base: string = mesh_project_gateway(project)
+    if kind == "device" {
+        let stored: string = mesh_device_stored_value(project, spec, field_name)
+        if stored != "" {
+            return stored
+        }
+    }
     if kind == "device" && address != "" &&
         (transport == "http" || rho_str_index_of(address, "http") == 0) {
         // A device the plan reaches directly is read the same way Mesh's own
@@ -2082,6 +2145,12 @@ fn mesh_source_value(project: string, source: string) string {
                 return mesh_json_number(text, "apower")
             }
             return mesh_json_number(text, field_name)
+        }
+    }
+    if kind == "module" {
+        let stored: string = mesh_module_stored_value(project, spec, field_name)
+        if stored != "" {
+            return stored
         }
     }
     if base == "" {

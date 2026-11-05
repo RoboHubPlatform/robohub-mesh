@@ -8,6 +8,7 @@ include "../../../contracts/alert/manager.rho"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/telemetry.rho"
+include "mesh/firmware.rho"
 
 import std.web.http
 import std.web.template

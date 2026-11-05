@@ -406,3 +406,49 @@ reached over ADB still needs its address set in the project. A network device's
 readings are stored under the id the gateway assigned it; a device source is
 matched to that id by the name and address in the plan, so its chart does not
 need to know the gateway's numbering.
+
+## Building a node from modules
+
+A node is built from the modules in the plan, not from one driver's example.
+Mesh copies the telemetry node template, writes `src/sensors.c` from the
+descriptors in `robohub-drivers`, adds every compatible module and its driver
+to the build, writes the Kconfig the board and modules need, and builds the
+image for the node's board.
+
+The descriptors are the contract:
+
+- a driver names its device type and one `signal|field|unit|type|member|read|output`
+  line per readable signal under `telemetry_fields:`;
+- a board module names its BSP header and entry point under `telemetry:` and
+  carries the signals it exposes under `signals:`.
+
+The generated field is `m<node-index>.<field>`. Two modules that both measure
+temperature on one node therefore become two series, and the source ID the
+application already uses (`module.3.temperature`) resolves to the right one.
+
+Every board module in `robohub-drivers/boards` appears in the picker, including
+relays and transceivers. A module with no read path is linked and configured
+but contributes no reading. The dual-axis joystick is the one board whose
+descriptor is not yet expressible, because it presents two analog axes and a
+button through three separate init calls.
+
+## Device telemetry
+
+Devices from `robohub-devices` are described the same way as drivers: each
+manifest names the interface it presents and, for an HTTP device, the path to
+read and one line per signal.
+
+- **HTTP devices** — the Shelly plug and a Hoymiles through an OpenDTU — are
+  polled by Mesh's background worker. The response is read by JSON path, scaled
+  to the unit the signal declares, and written to the telemetry store under the
+  device node's plan identity: project area and node index.
+- **Modbus and GPIO devices** — a Growatt or a relay — are carried by a device
+  node (`robohub-devices/nodes/gateway-node` or a composed application). That
+  node publishes `AREA` and `NODE` from the plan; the device page shows the two
+  values, and the gateway outbox turns the frame into one series per signal.
+
+A device source (`device.3.pv_power`) resolves to the same area, node and field,
+so a chart and the live value read the same series. The device page's Poll
+button uses the same descriptor as the background poller; it is not Shelly-only.
+Switch actions appear only for a plug, switch or actuator, so an inverter does
+not offer a meaningless switch button.

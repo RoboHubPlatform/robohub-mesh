@@ -64,6 +64,18 @@ def post(base: str, path: str, fields: dict) -> str:
         return response.read().decode("utf-8", "replace")
 
 
+def get_until(base: str, path: str, needle: str, timeout: float = 5.0) -> str:
+    """Read a page until an action the previous step started has settled."""
+    deadline = time.time() + timeout
+    body = ""
+    while time.time() < deadline:
+        body = get(base, path)
+        if needle in body:
+            return body
+        time.sleep(0.2)
+    return body
+
+
 def assert_contains(haystack: str, needles: list, label: str) -> None:
     for needle in needles:
         if needle not in haystack:
@@ -348,7 +360,7 @@ def main() -> int:
                 ["Incoming connection", "Connections to children", "Relay one"],
                 "node network page",
             )
-            gateway_network = get(base, "/mesh/network/gateway")
+            gateway_network = get_until(base, "/mesh/network/gateway", "Gateway host")
             assert_contains(
                 gateway_network,
                 ["Gateway host", "Save gateway network", "Connections to nodes"],
@@ -392,7 +404,7 @@ def main() -> int:
             if (Path(state) / "progress-build.log").read_text() != "":
                 raise AssertionError("clear console must empty the progress log")
 
-            gateway_build = get(base, "/mesh/build/gateway")
+            gateway_build = get_until(base, "/mesh/build/gateway", "Program gateway")
             assert_contains(
                 gateway_build,
                 ["Build gateway", "Program gateway", "Change gateway", "Gateway"],

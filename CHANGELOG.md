@@ -2,7 +2,24 @@
 
 All notable changes to this module are recorded here, one section per release.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-05
+
+Device telemetry follows the same descriptor model as sensors. Mesh polls HTTP
+devices from `robohub-devices` using the manifest's `telemetry.http_path` and
+`telemetry_http_fields`, parses the document by JSON path, scales the value, and
+stores it under the device node's plan identity. A Modbus or GPIO device
+publishes through its device node under the same `AREA` and `NODE`, which the
+device page displays. The device source resolves to that series, and the Poll
+button and switch controls are driven by the device descriptor rather than a
+single Shelly model.
+
+A node is built from every compatible module in the plan rather than from one
+driver's example. Mesh copies the telemetry node template, generates
+`sensors.c` from each driver's `telemetry_fields` and each board module's
+`telemetry`/`signals` descriptors, and prefixes a module's field with its plan
+index so two sensors measuring the same quantity on one node stay two series.
+The module picker now includes output and transceiver boards too; a module with
+no read path is linked and configured but contributes no reading.
 
 Mesh keeps a telemetry store for the other RoboHub applications. A background
 worker polls each project's `robohub-gateway` outbox, writes a page in one SQL

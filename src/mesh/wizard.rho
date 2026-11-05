@@ -779,12 +779,9 @@ fn module_rows() string {
             summary = "module"
         }
         let category: string = yaml.value(manifest, "board.category")
-        // A module is something a node carries. Outputs and transceivers are
-        // boards too, but they are not sensors fitted to a node, so the picker
-        // leaves them out. The list itself is still what the checkout holds.
-        if category == "output" || category == "transceiver" {
-            continue
-        }
+        // Every board is a module a node may carry, including relays and
+        // transceivers. A module with no read path contributes no reading, but
+        // it is still part of the node's build and appears in the picker.
         let driver: string = yaml.value(manifest, "board.driver")
         out = out + name + "|" + label + "|" + summary + "|" + category + "|" +
             driver + "|" + manifest + "\n"
@@ -1692,6 +1689,41 @@ fn node_build_sensors(index: u32) string {
     return out
 }
 
+// node_telemetry_sensors pairs each module with the node index it has in the
+// plan, one `index|name` per line. The generated firmware prefixes a field
+// with `m<index>.` so two sensors that measure the same quantity on one node
+// stay two series instead of overwriting each other.
+fn node_telemetry_sensors(index: u32) string {
+    let plan: string = node_bus_plan(index)
+    var children: string = node_module_children(index)
+    var out: string = ""
+    var rest_plan: string = plan
+    while children != "" && rest_plan != "" {
+        let child_at: i32 = rho_str_index_of(children, " ")
+        var child: string = children
+        if child_at < 0 {
+            children = ""
+        } else {
+            child = rho_str_slice(children, 0, u32(child_at))
+            children = rho_str_slice(children, u32(child_at) + 1,
+                u32(rho_strlen(children)) - u32(child_at) - 1)
+        }
+        let line_at: i32 = rho_str_index_of(rest_plan, "\n")
+        var line: string = rest_plan
+        if line_at < 0 {
+            rest_plan = ""
+        } else {
+            line = rho_str_slice(rest_plan, 0, u32(line_at))
+            rest_plan = rho_str_slice(rest_plan, u32(line_at) + 1,
+                u32(rho_strlen(rest_plan)) - u32(line_at) - 1)
+        }
+        if child != "" && field(line, 1) != "conflict" {
+            out = out + child + "|" + field(line, 0) + "\n"
+        }
+    }
+    return out
+}
+
 fn node_bus_html(index: u32) string {
     let plan: string = node_bus_plan(index)
     if plan == "" {
@@ -2003,16 +2035,11 @@ fn drivers_root() string {
     return canonical_path(resolve_path(yaml.value(entry, "path")))
 }
 
+// Every node is built from the same telemetry template. The modules fitted to
+// it are what differ, and Mesh writes sensors.c for them before the build. The
+// template is still a working DS18B20 example on its own.
 fn node_source() string {
-    let manifest: string = driver_manifest(node_driver())
-    if manifest == "" {
-        return ""
-    }
-    let example: string = yaml.value(manifest, "deployment.example")
-    if example == "" {
-        return ""
-    }
-    return drivers_root() + "/" + example
+    return drivers_root() + "/examples/temperature/ds18b20/c/telemetry"
 }
 
 fn path_base(path: string) string {
@@ -2051,27 +2078,15 @@ fn path_parent(path: string) string {
 // the example's own name. That is how `deployment.binary` can name it without
 // the keeper knowing what the example is called.
 fn node_dir() string {
-    let example: string = yaml.value(driver_manifest(node_driver()), "deployment.example")
-    let base: string = path_base(example)
-    if base == "" {
-        base = "node"
-    }
     let index: u32 = selected_node()
     if index <= 1 {
-        return wizard_dir() + "/" + base
+        return wizard_dir() + "/telemetry_node"
     }
-    return wizard_dir() + "/" + base + "_node" + rho_int_to_str(index)
+    return wizard_dir() + "/telemetry_node" + rho_int_to_str(index)
 }
 
 fn node_binary() string {
-    let manifest: string = driver_manifest(node_driver())
-    let binary: string = yaml.value(manifest, "deployment.binary")
-    let name: string = path_base(node_dir())
-    let parent: string = path_parent(binary)
-    if parent == "" {
-        return node_dir() + "/" + name + ".elf"
-    }
-    return node_dir() + "/" + parent + "/" + name + ".elf"
+    return node_dir() + "/build/output/" + path_base(node_dir()) + ".elf"
 }
 
 fn node_board() string {
@@ -2107,7 +2122,7 @@ fn node_driver_for(index: u32) string {
             continue
         }
         let driver: string = module_driver(name)
-        if driver != "" && driver_has_example(driver) {
+        if driver != "" {
             return driver
         }
     }
@@ -2571,6 +2586,9 @@ fn prepare_node() u32 {
     // comes from the primary module's driver, so its own board symbol is added
     // here too; a driver shared by several boards does not name the one fitted.
     let compatible: string = node_build_sensors(selected_node())
+    if firmware_write_sensors(target, node_telemetry_sensors(selected_node())) != 0 {
+        return 1
+    }
     let primary: string = first_sensor(compatible)
     if primary != "" {
         config = append_kconfig(config, sensor_kconfig_symbols(primary))
@@ -2854,7 +2872,9 @@ fn handler_verify() u32 {
     if nodes != 0 || diag != 0 {
         return 1
     }
-    if rho_str_index_of(readings, "temperature_c") < 0 {
+    // A node may carry no temperature at all. What verify needs to know is
+    // that the gateway listed a device with a reading.
+    if rho_str_index_of(readings, "node_id") < 0 {
         return 2
     }
     return 0

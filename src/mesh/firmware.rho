@@ -1,0 +1,269 @@
+module mesh.firmware
+
+// The node firmware generator.
+//
+// A node is a board with a set of modules fitted to it. The modules describe
+// themselves: a board module names the BSP header and the entry point that
+// brings it up, and its driver lists one line per signal the driver can read.
+// This file turns that into sensors.c, the file the node template calls.
+//
+// The generated program does not know any part by name. It declares one device
+// per module, initializes it, reads each interface, and publishes a
+// SensorReading under the field the descriptor named. The gateway stores the
+// reading by that field without decoding the part.
+
+fn firmware_header() string {
+    return "#ifndef RH_NODE_SENSORS_H\n" +
+        "#define RH_NODE_SENSORS_H\n\n" +
+        "#include \"types.h\"\n" +
+        "#include \"error.h\"\n\n" +
+        "void sensors_init(void);\n" +
+        "void sensors_poll(void);\n" +
+        "RoboHubError sensors_last_error(void);\n\n" +
+        "#endif\n"
+}
+
+fn firmware_unquote_fields(fields: string) string {
+    var out: string = ""
+    var rest: string = fields
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        line = device_trim(line)
+        if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") &&
+            rho_str_slice(line, u32(rho_strlen(line)) - 1, 1) == "\"" {
+            line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
+        }
+        if line != "" {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+fn firmware_question() string {
+    return rho_str_from_byte(u8(63))
+}
+
+fn firmware_colon() string {
+    return rho_str_from_byte(u8(58))
+}
+
+fn firmware_c_type(kind: string) string {
+    if kind == "bool" { return "rh_bool" }
+    if kind == "i32" { return "rh_i32" }
+    if kind == "u32" { return "rh_u32" }
+    if kind == "u16" { return "rh_u16" }
+    return "rh_f32"
+}
+
+fn firmware_c_zero(kind: string) string {
+    if kind == "bool" { return "RH_FALSE" }
+    if kind == "f32" { return "0.0f" }
+    return "0"
+}
+
+fn firmware_c_value(kind: string, variable: string) string {
+    if kind == "bool" {
+        return "(" + variable + " " + firmware_question() + " 1.0f " +
+            firmware_colon() + " 0.0f)"
+    }
+    return "(rh_f32)(" + variable + ")"
+}
+
+fn firmware_single_poll(number: u32, fields: string, prefix: string) string {
+    let n: string = rho_int_to_str(number)
+    var out: string = ""
+    var rest: string = fields
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let signal: string = field(line, 0)
+        let field_name: string = field(line, 1)
+        let kind: string = field(line, 3)
+        let member: string = field(line, 4)
+        let read: string = field(line, 5)
+        if signal == "" || field_name == "" || member == "" || read == "" {
+            continue
+        }
+        let variable: string = "node_sensor_" + n + "_" + signal
+        out = out + "    if (!node_sensor_" + n + "_ready) {\n" +
+            "        publish_reading(" + kconfig_string(prefix + field_name) + ", 0.0f, NODE_STATUS_FAULT);\n" +
+            "    } else {\n" +
+            "        " + firmware_c_type(kind) + " " + variable + " = " +
+                firmware_c_zero(kind) + ";\n" +
+            "        node_sensor_" + n + "_error = node_sensor_" + n + "." + member + "." +
+                read + "(&node_sensor_" + n + "." + member + ", &" + variable + ");\n" +
+            "        publish_reading(" + kconfig_string(prefix + field_name) + ", " +
+                firmware_c_value(kind, variable) +
+                ", ROBOHUB_SUCCEEDED(node_sensor_" + n + "_error) " +
+                firmware_question() + " NODE_STATUS_OK " + firmware_colon() +
+                " NODE_STATUS_FAULT);\n" +
+            "    }\n"
+    }
+    return out
+}
+
+fn firmware_two_poll(number: u32, driver: string, prefix: string) string {
+    let n: string = rho_int_to_str(number)
+    var first_type: string = "rh_i32"
+    var first_field: string = "steps"
+    var second_field: string = "clockwise"
+    if driver == "robohub-driver-pulse-adc" {
+        first_type = "rh_u16"
+        first_field = "bpm"
+        second_field = "beat"
+    } else if driver == "robohub-driver-infrared-receiver-gpio" {
+        first_type = "rh_u32"
+        first_field = "code"
+        second_field = "received"
+    }
+    var first_zero: string = "0"
+    if driver == "robohub-driver-encoder-gpio" {
+        first_zero = "0"
+    }
+    return "    if (!node_sensor_" + n + "_ready) {\n" +
+        "        publish_reading(" + kconfig_string(prefix + first_field) + ", 0.0f, NODE_STATUS_FAULT);\n" +
+        "        publish_reading(" + kconfig_string(prefix + second_field) + ", 0.0f, NODE_STATUS_FAULT);\n" +
+        "    } else {\n" +
+        "        " + first_type + " node_sensor_" + n + "_first = " + first_zero + ";\n" +
+        "        rh_bool node_sensor_" + n + "_second = RH_FALSE;\n" +
+        "        node_sensor_" + n + "_error = node_sensor_" + n + ".interface.read(&node_sensor_" +
+            n + ".interface, &node_sensor_" + n + "_first, &node_sensor_" + n + "_second);\n" +
+        "        rh_u16 node_sensor_" + n + "_status = ROBOHUB_SUCCEEDED(node_sensor_" + n +
+            "_error) " + firmware_question() + " NODE_STATUS_OK " + firmware_colon() +
+            " NODE_STATUS_FAULT;\n" +
+        "        publish_reading(" + kconfig_string(prefix + first_field) + ", (rh_f32)node_sensor_" +
+            n + "_first, node_sensor_" + n + "_status);\n" +
+        "        publish_reading(" + kconfig_string(prefix + second_field) + ", node_sensor_" + n +
+            "_second " + firmware_question() + " 1.0f " + firmware_colon() +
+            " 0.0f, node_sensor_" + n + "_status);\n" +
+        "    }\n"
+}
+
+fn firmware_sources(sensors: string) string {
+    var headers: string = ""
+    var declarations: string = ""
+    var init: string = ""
+    var poll: string = ""
+    var errors: string = ""
+    var number: u32 = 0
+    var rest: string = sensors
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var entry: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            entry = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let plan_index: string = field(entry, 0)
+        let name: string = field(entry, 1)
+        if name == "" || plan_index == "" {
+            continue
+        }
+        let prefix: string = "m" + plan_index + "."
+        let board: string = module_manifest(name)
+        let driver: string = module_driver(name)
+        let driver_file: string = driver_manifest(driver)
+        if board == "" || driver_file == "" {
+            continue
+        }
+        let header: string = yaml.value(board, "telemetry.header")
+        let init_fn: string = yaml.value(board, "telemetry.init")
+        let config: string = yaml.value(board, "telemetry.config")
+        let device: string = yaml.value(driver_file, "telemetry.device")
+        var fields: string = firmware_unquote_fields(manifest_list_items(driver_file, "telemetry_fields"))
+        if header == "" || init_fn == "" || device == "" || fields == "" {
+            // A module with no read path is still linked for its Kconfig; it
+            // simply contributes no reading.
+            continue
+        }
+        let n: string = rho_int_to_str(number)
+        headers = headers + "#include \"" + header + "\"\n"
+        declarations = declarations +
+            "static " + device + " node_sensor_" + n + ";\n" +
+            "static rh_bool node_sensor_" + n + "_ready;\n" +
+            "static RoboHubError node_sensor_" + n + "_error = ROBOHUB_ERR_NOT_FOUND;\n\n"
+        var call: string = "&node_sensor_" + n
+        if config != "" {
+            call = call + ", " + config
+        }
+        init = init + "    node_sensor_" + n + "_error = " + init_fn + "(" + call + ");\n" +
+            "    node_sensor_" + n + "_ready = ROBOHUB_SUCCEEDED(node_sensor_" + n + "_error);\n"
+        if driver == "robohub-driver-encoder-gpio" ||
+            driver == "robohub-driver-pulse-adc" ||
+            driver == "robohub-driver-infrared-receiver-gpio" {
+            poll = poll + firmware_two_poll(number, driver, prefix)
+        } else {
+            poll = poll + firmware_single_poll(number, fields, prefix)
+        }
+        errors = errors + "    if (ROBOHUB_FAILED(node_sensor_" + n +
+            "_error)) { return node_sensor_" + n + "_error; }\n"
+        number = number + 1
+    }
+    return "/**\n" +
+        " * @file sensors.c\n" +
+        " * @brief Generated for this node from the modules in robohub-drivers.\n" +
+        " */\n\n" +
+        "#include \"pico/stdlib.h\"\n\n" +
+        "#include <string.h>\n\n" +
+        "#include \"types.h\"\n" +
+        "#include \"error.h\"\n" +
+        "#include \"robohub/core/core.h\"\n" +
+        "#include \"robohub/core/event.h\"\n" +
+        "#include \"robohub/core/events.h\"\n" +
+        "#include \"protocol.h\"\n" +
+        headers + "\n" +
+        "#if defined(CONFIG_RH_AREA_ID)\n" +
+        "#define RH_AREA_ID ((rh_u16)CONFIG_RH_AREA_ID)\n" +
+        "#else\n#define RH_AREA_ID ((rh_u16)1u)\n#endif\n" +
+        "#if defined(CONFIG_RH_NODE_ID)\n" +
+        "#define RH_NODE_ID ((rh_u16)CONFIG_RH_NODE_ID)\n" +
+        "#else\n#define RH_NODE_ID ((rh_u16)1u)\n#endif\n\n" +
+        "static void publish_reading(const char* field, rh_f32 value, rh_u16 status)\n" +
+        "{\n" +
+        "    SensorReading reading = {\n" +
+        "        .device = { .area_id = RH_AREA_ID, .node_id = RH_NODE_ID },\n" +
+        "        .timestamp_ms = to_ms_since_boot(get_absolute_time()),\n" +
+        "        .status = status,\n" +
+        "        .value = value,\n" +
+        "    };\n" +
+        "    strncpy(reading.field, field, sizeof(reading.field) - 1);\n" +
+        "    rh_u8 payload[SENSOR_READING_WIRE_SIZE];\n" +
+        "    if (SensorReading_serialize(&reading, payload, sizeof(payload)) == 0u) {\n" +
+        "        return;\n" +
+        "    }\n" +
+        "    (void)robohub_core_event_publish(MESSAGE_ID_SENSOR_READING, payload,\n" +
+        "                                     (rh_size)SENSOR_READING_WIRE_SIZE);\n" +
+        "}\n\n" +
+        declarations +
+        "void sensors_init(void)\n{\n" + init + "}\n\n" +
+        "void sensors_poll(void)\n{\n" + poll + "}\n\n" +
+        "RoboHubError sensors_last_error(void)\n{\n" +
+        errors +
+        "    return ROBOHUB_OK;\n}\n"
+}
+
+fn firmware_write_sensors(target: string, sensors: string) u32 {
+    if !rho_write_text(target + "/src/sensors.h", firmware_header()) {
+        return 1
+    }
+    if !rho_write_text(target + "/src/sensors.c", firmware_sources(sensors)) {
+        return 1
+    }
+    return 0
+}
