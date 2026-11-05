@@ -1,0 +1,229 @@
+module mesh.telemetry
+
+// The telemetry store Mesh offers other applications.
+//
+// The gateway is the edge recorder; Mesh is where a series lives. The worker
+// polls every project's gateway for the readings after the sequence it last
+// committed, writes the page in one transaction, and acks the gateway. A
+// restart resumes from the stored sequence, and a repeated page is ignored by
+// the reading's unique key.
+//
+// The host half is a port: fetching a page, writing a batch and reading a
+// series are things Rho has no heap or file I/O for. The schema is still the
+// project's; the port writes the tables the schema declares.
+
+extern fn telemetry_open(path: string) bool
+extern fn telemetry_poll(project: string, gateway_id: string, gateway_url: string, token: string) string
+extern fn telemetry_status(project: string) string
+extern fn telemetry_latest(project: string, area_id: u32, node_id: u32, field_name: string) string
+extern fn telemetry_series(project: string, area_id: u32, node_id: u32, field_name: string, from_ms: string, to_ms: string, step_ms: string) string
+extern fn telemetry_sleep(ms: u32) void
+extern fn telemetry_prune(project: string, raw_days: u32, minute_days: u32, hour_days: u32) string
+
+// telemetry_path is where the store lives. A deployment names it; a workstation
+// keeps it under the Mesh state directory.
+fn telemetry_path() string {
+    let override: string = getenv("ROBOHUB_MESH_TELEMETRY_DB")
+    if override != "" {
+        return override
+    }
+    let home: string = getenv("HOME")
+    if home == "" {
+        return "telemetry.db"
+    }
+    return home + "/.rho/mesh/telemetry.db"
+}
+
+fn telemetry_start() bool {
+    return telemetry_open(telemetry_path())
+}
+
+// mesh_retention_days is how long a project keeps raw readings. The minute and
+// hour rollups have their own, longer windows; a project setting changes the
+// raw window without making a chart of an older season disappear.
+fn mesh_retention_days(project: string) u32 {
+    var value: string = state_value_in(project_file(project), "telemetry_retention_days")
+    if value == "" {
+        value = getenv("ROBOHUB_MESH_TELEMETRY_RETENTION_DAYS")
+    }
+    if value == "" {
+        return 30
+    }
+    let days: u32 = u32(rho_int_from_str(value))
+    if days == 0 {
+        return 30
+    }
+    return days
+}
+
+fn telemetry_prune_once() void {
+    let ids: string = project_ids()
+    var rest: string = ids
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        let pruned: string = telemetry_prune(id, mesh_retention_days(id), 180, 1825)
+        if rho_str_index_of(pruned, "\"ok\":true") < 0 {
+            warn("mesh", "telemetry retention " + id + ": " + pruned)
+        }
+    }
+}
+
+// mesh_gateway_token is the bearer token the gateway's outbox requires. A
+// project may name its own; otherwise the deployment's shared token is used.
+fn mesh_gateway_token(project: string) string {
+    let token: string = state_value_in(project_file(project), "gateway_token")
+    if token != "" {
+        return token
+    }
+    return getenv("ROBOHUB_GATEWAY_TOKEN")
+}
+
+// telemetry_poll_once reads one page from every project's gateway. The key is
+// the project and the gateway address together: a project pointed at another
+// gateway starts from its new feed rather than from a sequence that belonged to
+// the old one.
+fn telemetry_poll_once() void {
+    let ids: string = project_ids()
+    var rest: string = ids
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        let url: string = mesh_project_gateway(id)
+        if url == "" {
+            continue
+        }
+        let result: string = telemetry_poll(id, id + "@" + url, url,
+            mesh_gateway_token(id))
+        // A gateway that is simply down is expected while a project is being
+        // built; the store's status page is where that belongs. A failure of
+        // the store itself is what should reach the log every time.
+        if rho_str_index_of(result, "\"ok\":true") < 0 &&
+            rho_str_index_of(result, "the gateway did not answer") < 0 {
+            warn("mesh", "telemetry " + id + ": " + result)
+        }
+    }
+}
+
+fn telemetry_worker() void {
+    if !telemetry_start() {
+        warn("mesh", "telemetry store unavailable")
+        return
+    }
+    // A store that was offline longer than its window should not wait an hour
+    // for the first pass.
+    telemetry_prune_once()
+    var ticks: u32 = 0
+    while true {
+        telemetry_poll_once()
+        // Once an hour at the two-second poll cadence. The pass rolls each
+        // project up before it prunes, so the old range a chart asks for is
+        // still there after the raw rows are gone.
+        ticks = ticks + 1
+        if ticks >= 1800 {
+            ticks = 0
+            telemetry_prune_once()
+        }
+        telemetry_sleep(2000)
+    }
+}
+
+// mesh_source_coordinates maps a source ID to the device key and field a
+// reading was stored under. A module source belongs to the node it extends; a
+// device source uses the device id the plan recorded, or the node index when it
+// has none.
+fn mesh_source_coordinates(project: string, source: string) string {
+    let spec: string = mesh_source_spec(project, source)
+    if spec == "" {
+        return ""
+    }
+    let kind: string = field(spec, 0)
+    let field_name: string = field(spec, 3)
+    let area: string = project_area_id(project_file(project))
+    if kind == "module" {
+        let parent: string = field(spec, 9)
+        if !rho_str_starts_with(parent, "node.") {
+            return ""
+        }
+        let node: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
+        return area + "|" + node + "|" + field_name
+    }
+    if kind == "device" {
+        let index: string = field(spec, 1)
+        // A network device's reading is stored under the id the gateway
+        // assigned it, not the plan's node index. The gateway's listing is
+        // matched by the name the plan gave the device and its address.
+        let object: string = gateway_device_object(mesh_project_gateway(project),
+            field(spec, 6), field(spec, 8))
+        var node: string = json_number(object, "id")
+        if node == "" {
+            let candidate: string = project_node_value(project_file(project),
+                u32(rho_int_from_str(index)), "device_id", "")
+            // A Shelly id is a name, not the gateway's number; reading it as a
+            // number would silently become node zero. The plan's index is the
+            // better fallback until the gateway can be asked again.
+            if candidate != "" && rho_int_from_str(candidate) > 0 {
+                node = candidate
+            } else {
+                node = index
+            }
+        }
+        return area + "|" + node + "|" + field_name
+    }
+    return ""
+}
+
+fn mesh_api_telemetry_status(req: Request) Response {
+    let project: string = param(req, "project")
+    return Response{ 200, telemetry_status(project), "application/json", "" }
+}
+
+fn mesh_api_telemetry_latest(req: Request) Response {
+    let project: string = param(req, "project")
+    let source: string = request_query_param(req, "source")
+    let coords: string = mesh_source_coordinates(project, source)
+    if coords == "" {
+        return json(404, "{\"ok\":false,\"error\":\"unknown source\"}")
+    }
+    return Response{ 200, telemetry_latest(project,
+        u32(rho_int_from_str(field(coords, 0))),
+        u32(rho_int_from_str(field(coords, 1))),
+        field(coords, 2)), "application/json", "" }
+}
+
+fn mesh_api_telemetry_series(req: Request) Response {
+    let project: string = param(req, "project")
+    let source: string = request_query_param(req, "source")
+    if source == "" {
+        return json(400, "{\"ok\":false,\"error\":\"source is required\"}")
+    }
+    let coords: string = mesh_source_coordinates(project, source)
+    if coords == "" {
+        return json(404, "{\"ok\":false,\"error\":\"unknown source\"}")
+    }
+    return Response{ 200, telemetry_series(project,
+        u32(rho_int_from_str(field(coords, 0))),
+        u32(rho_int_from_str(field(coords, 1))),
+        field(coords, 2),
+        request_query_param(req, "from"),
+        request_query_param(req, "to"),
+        request_query_param(req, "step")), "application/json", "" }
+}

@@ -2,6 +2,28 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [Unreleased]
+
+Mesh keeps a telemetry store for the other RoboHub applications. A background
+worker polls each project's `robohub-gateway` outbox, writes a page in one SQL
+transaction, advances the project's cursor and acknowledges the sequence. The
+store is SQLite in WAL mode with a series index and a latest-value table, and a
+retention pass removes raw readings older than 30 days.
+
+`/mesh/api/projects/{project}/telemetry/status`, `/latest` and `/series` serve
+the store, and a source object now carries `history_path` and `history_url`. The
+gateway contract gained `gateway_source_history` and `gateway_telemetry_status`,
+so an application can chart a source without knowing where the reading was
+stored. Mesh also passes the gateway its mode and area and records the URL of a
+native gateway it starts.
+
+The feed can require a bearer token: a project's `gateway_token` (or
+`ROBOHUB_GATEWAY_TOKEN`) is sent to the outbox and passed to a gateway Mesh
+starts. Retention is per project (`telemetry_retention_days`), and the store
+keeps one-minute and hourly rollups after the raw rows are pruned. A network
+device's readings are matched to the id the gateway assigned it by the device's
+name and address in the plan.
+
 ## [0.4.1] - 2026-11-04
 
 Mesh signs browser users in through Keeper and accepts signed service JWTs for /mesh/api, so Aquarium server-to-server calls keep working with authentication enforced.

@@ -23,6 +23,19 @@ build:
   targets:
     - go-server
 
+# Mesh owns the telemetry store other applications read. The schema is
+# declarative because the port that ingests a gateway's outbox writes the rows
+# it declares, and the sql port embeds it so the database is created by the
+# same reading of the same file.
+requires:
+  - name: rho/sqlite
+    version: ^1.0.0
+
+sql:
+  driver: rho-sql-sqlite
+  schema: db/schema.sql
+  out: src/db
+
 deps:
   rho-log: ">=0.1.0"
 

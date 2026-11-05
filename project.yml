@@ -12,6 +12,7 @@ targets:
     ports:
       - logemit
       - docstore
+      - telemetry
     api:
       public_paths: "/, /mesh, /mesh/docs"
     middleware:
@@ -24,6 +25,9 @@ targets:
           mode: direct
           login_url: "/auth/login?audience=mesh"
           scheme: auto
+          # The overview and the documentation are the shop window; the API
+          # that reads telemetry, devices and sensors is not.
+          skip_paths: "/healthz,/auth/login,/auth/callback,/static,/,/mesh,/mesh/docs"
     templates:
       - name: layout
         file: templates/layout.html

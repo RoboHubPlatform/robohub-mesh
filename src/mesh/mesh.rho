@@ -1057,6 +1057,11 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
             "One line about what this mesh is for.") +
         mesh_input("gateway_url", "Gateway URL", state_value_in(file, "gateway_url"),
             "The robohub-gateway this project owns. Aquarium reads it through the Mesh API.") +
+        mesh_secret_input("gateway_token", "Gateway token", state_value_in(file, "gateway_token"),
+            "The bearer token the gateway's telemetry outbox requires.") +
+        mesh_input("telemetry_retention_days", "Telemetry retention (days)",
+            state_value_in(file, "telemetry_retention_days"),
+            "How long raw readings are kept. Minute and hourly rollups are kept longer.") +
         "<button type=\"submit\">Save project</button></form>"
     var active_form: string = ""
     if id == current_project() {
@@ -1123,6 +1128,9 @@ fn mesh_project_settings_post(req: Request) Response {
     save_setting_at(file, "project.name", name)
     save_setting_at(file, "project.description", form_value(body, "description"))
     save_setting_at(file, "gateway_url", device_trim(form_value(body, "gateway_url")))
+    save_setting_at(file, "gateway_token", device_trim(form_value(body, "gateway_token")))
+    save_setting_at(file, "telemetry_retention_days",
+        device_trim(form_value(body, "telemetry_retention_days")))
     save_setting_at(file, "message.project", "Project settings saved.")
     info("mesh", "project " + id + " settings saved")
     return mesh_project_settings_page(req)
@@ -1207,6 +1215,15 @@ fn mesh_input(name: string, label: string, value: string, help: string) string {
         help_html = "<small>" + escape_html(help) + "</small>"
     }
     return "<label>" + escape_html(label) + "<input type=\"text\" name=\"" +
+        escape_html(name) + "\" value=\"" + escape_html(value) + "\">" + help_html + "</label>"
+}
+
+fn mesh_secret_input(name: string, label: string, value: string, help: string) string {
+    var help_html: string = ""
+    if help != "" {
+        help_html = "<small>" + escape_html(help) + "</small>"
+    }
+    return "<label>" + escape_html(label) + "<input type=\"password\" name=\"" +
         escape_html(name) + "\" value=\"" + escape_html(value) + "\">" + help_html + "</label>"
 }
 
@@ -1843,10 +1860,13 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
     let signal: string = field(row, 0)
     let id: string = kind + "." + rho_int_to_str(index) + "." + signal
     let base: string = "/mesh/api/projects/" + project + "/sources/" + id
+    let timeline: string = "/mesh/api/projects/" + project +
+        "/telemetry/series?source=" + id
     var urls: string = ""
     if origin != "" {
         urls = ",\"value_url\":" + json_string(origin + base + "/value") +
-            ",\"action_url\":" + json_string(origin + base + "/action")
+            ",\"action_url\":" + json_string(origin + base + "/action") +
+            ",\"history_url\":" + json_string(origin + timeline)
     }
     return ",{\"id\":" + json_string(id) +
         ",\"name\":" + json_string(owner + " · " + field(row, 1)) +
@@ -1859,7 +1879,8 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
         ",\"field\":" + json_string(field(row, 4)) +
         ",\"kinds\":" + json_string(field(row, 5)) +
         ",\"value_path\":" + json_string(base + "/value") +
-        ",\"action_path\":" + json_string(base + "/action") + urls + "}"
+        ",\"action_path\":" + json_string(base + "/action") +
+        ",\"history_path\":" + json_string(timeline) + urls + "}"
 }
 
 fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,

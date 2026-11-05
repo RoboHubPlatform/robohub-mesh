@@ -2661,6 +2661,20 @@ fn handler_flash_node() u32 {
         shell_quote(node_dir()) + " " + shell_quote(node_binary()), "flash-node")
 }
 
+// mesh_gateway_mode is the tree position the gateway should run as. A gateway
+// with another gateway above it is a relay; the root is the master.
+fn mesh_gateway_mode() string {
+    let gateway: string = default_value("gateway", "native")
+    if gateway == "native" {
+        return "master"
+    }
+    let parent: string = node_value(u32(rho_int_from_str(gateway)), "parent", "gateway")
+    if rho_str_starts_with(parent, "node.") {
+        return "relay"
+    }
+    return "master"
+}
+
 fn gateway_env() string {
     let link: string = node_link()
     let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
@@ -2682,7 +2696,18 @@ fn gateway_env() string {
         // discovered is the stable name for it.
         port = default_value("gateway_serial", port)
     }
-    var env: string = "RHO_HTTP_ADDR=:" + rest + " REST_PORT=" + rest + " PLOTJUGGLER_ADDR=127.0.0.1:9870"
+    var area: string = project_area_id(project_file(current_project()))
+    if area == "" {
+        area = WIZARD_DEFAULT_AREA
+    }
+    var env: string = "GATEWAY_MODE=" + mesh_gateway_mode() +
+        " GATEWAY_AREA=" + area +
+        " RHO_HTTP_ADDR=:" + rest + " REST_PORT=" + rest +
+        " PLOTJUGGLER_ADDR=127.0.0.1:9870"
+    let token: string = mesh_gateway_token(current_project())
+    if token != "" {
+        env = env + " OUTBOX_TOKEN=" + shell_quote(token)
+    }
     if link == "wifi" || link == "socket" {
         env = env + " SERIAL_PORT=/nonexistent UPLINK_PORT=" + uplink
     } else {
@@ -2736,7 +2761,17 @@ fn handler_start_native() u32 {
     let probe: string = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do " +
         "if curl -fsS -m 1 http://127.0.0.1:" + rest + "/healthz >/dev/null 2>&1; then exit 0; fi; " +
         "sleep 0.25; done; echo 'gateway did not answer at http://127.0.0.1:" + rest + "'; exit 1"
-    return run_shell(probe, "start-gateway-probe")
+    let probed: u32 = run_shell(probe, "start-gateway-probe")
+    if probed == 0 {
+        // The gateway Mesh started is the one Mesh reads; recording it here is
+        // what makes telemetry ingestion start without a manual URL.
+        let active: string = current_project()
+        if active != "" {
+            save_setting_at(project_file(active), "gateway_url",
+                "http://127.0.0.1:" + rest)
+        }
+    }
+    return probed
 }
 
 fn handler_start_board() u32 {
@@ -2788,7 +2823,15 @@ fn handler_start_board() u32 {
             shell_quote("pkill -x robohub-gateway 2>/dev/null || true; chmod +x " +
                 remote + "/robohub-gateway; cd " + remote + " && nohup env " +
                 gateway_env() + " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &")
-        return run_shell(command, "start-gateway")
+        let started: u32 = run_shell(command, "start-gateway")
+        if started == 0 {
+            let active: string = current_project()
+            if active != "" {
+                save_setting_at(project_file(active), "gateway_url",
+                    "http://" + host + ":" + default_value("rest_port", WIZARD_DEFAULT_REST))
+            }
+        }
+        return started
     }
     return 1
 }

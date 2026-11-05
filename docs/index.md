@@ -367,3 +367,42 @@ device integration's or board's `module.yml`, so a new part is visible to a
 dashboard without the dashboard knowing its type. A signal is listed even when
 the gateway does not carry its field yet; its value is empty until the node or
 device reports it.
+
+## Telemetry store
+
+Mesh keeps a durable series of what the project's gateway records. The gateway
+exposes a sequenced outbox; Mesh's background worker polls every project's
+gateway, writes a page in one transaction, advances the cursor and acknowledges
+the sequence. The unique key is `(gateway_id, seq)`, so a repeated page after a
+failed acknowledgement is ignored rather than stored twice.
+
+The store lives at `$ROBOHUB_MESH_TELEMETRY_DB`, or
+`~/.rho/mesh/telemetry.db` when the variable is unset. It is SQLite in WAL mode
+with a series index, a latest-value table and one-minute and hourly rollups.
+Raw readings are kept for the project's `telemetry_retention_days` (30 by
+default); minute rollups are kept for 180 days and hourly rollups for five
+years, so an old range still has a series. A project's `gateway_token` is the
+bearer token its gateway requires, and `ROBOHUB_GATEWAY_TOKEN` is the fallback
+for a deployment that uses one token everywhere. The schema is
+`db/schema.sql` and the host half is the `telemetry` port.
+
+An application reads it through the gateway contract, or directly through Mesh:
+
+- `GET /mesh/api/projects/{project}/telemetry/status` — rows, newest time and
+  gateway count for the project.
+- `GET /mesh/api/projects/{project}/telemetry/latest?source=<source>`
+- `GET /mesh/api/projects/{project}/telemetry/series?source=<source>&from=<ms>&to=<ms>&step=<ms>`
+  — raw readings when `step` is absent or zero, averaged into buckets otherwise.
+
+A source is the same ID `/sources` publishes (`device.3.power`,
+`module.2.temperature`). Its object carries `history_path` and, when Mesh knows
+its own origin, `history_url`, so a dashboard can ask for a chart without
+knowing the area, node or field the reading was stored under.
+
+Mesh records the URL of a native or SSH gateway it starts in the project's
+`gateway_url`, and passes the gateway its tree position (`GATEWAY_MODE`) and
+`GATEWAY_AREA`, so a project's gateway and the project's plan agree. A gateway
+reached over ADB still needs its address set in the project. A network device's
+readings are stored under the id the gateway assigned it; a device source is
+matched to that id by the name and address in the plan, so its chart does not
+need to know the gateway's numbering.

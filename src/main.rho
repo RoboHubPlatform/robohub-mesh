@@ -7,6 +7,7 @@ include "mesh/storage.rho"
 include "../../../contracts/alert/manager.rho"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
+include "mesh/telemetry.rho"
 
 import std.web.http
 import std.web.template
@@ -70,6 +71,9 @@ route GET "/mesh/api/projects/{project}/sources" => mesh_api_project_sources
 route GET "/mesh/api/projects/{project}/sources/{source}/value" => mesh_api_source_value
 route GET "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action
 route POST "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action
+route GET "/mesh/api/projects/{project}/telemetry/status" => mesh_api_telemetry_status
+route GET "/mesh/api/projects/{project}/telemetry/latest" => mesh_api_telemetry_latest
+route GET "/mesh/api/projects/{project}/telemetry/series" => mesh_api_telemetry_series
 route POST "/mesh/accept" => mesh_accept
 route POST "/mesh/reopen" => mesh_reopen
 route GET "/mesh/step/network" => mesh_network_page
@@ -89,3 +93,10 @@ route POST "/mesh/step/{step}" => wizard_step_post
 route GET "/mesh/progress/{step}/{run}" => wizard_progress_run
 route GET "/mesh/progress/{step}" => wizard_progress
 route POST "/mesh/console/clear/{step}" => mesh_console_clear
+
+// background is the telemetry worker: the generated server runs it on its own
+// goroutine beside the HTTP listener. It polls every project's gateway and
+// writes what it reads into the store the API serves.
+fn background() void {
+    telemetry_worker()
+}
