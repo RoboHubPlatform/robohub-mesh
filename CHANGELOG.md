@@ -156,3 +156,10 @@ activated by opening it, from its card or from its settings, and made inactive
 again from the same places; with no active project the Operations group is
 hidden and the step pages return to the dashboard. The menu also returns to the
 keeper when the keeper started the application.
+
+## [0.5.1] - 2026-11-06
+
+Security: per-project scope enforcement on all Mesh API handlers. Device HTTP
+polling supports per-device bearer tokens. Recovery mode added to generated
+node firmware (re-init on sensor failure). Frames no longer polluted by sensor
+entries. Chart widget now handles decimal values and limited time window.

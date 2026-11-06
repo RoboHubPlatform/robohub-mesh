@@ -9,7 +9,7 @@
 module:
   name: mesh
   type: rho
-  version: 0.5.0
+  version: 0.5.1
   author: Aurel Miron
   maintainer: Aurel Miron
 description: >

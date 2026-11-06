@@ -46,6 +46,46 @@ fn telemetry_start() bool {
 // telemetry_project_ids lists the projects without running the migration the
 // interactive pages run. The worker is a reader; a background task must not
 // rewrite project state while a person is editing it.
+fn mesh_scope_has(scopes: string, needle: string) bool {
+    var rest: string = scopes
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, ",")
+        var token: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            token = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        token = device_trim(token)
+        if token == needle {
+            return true
+        }
+    }
+    return false
+}
+
+// mesh_scoped accepts a request for one project. A browser session (no
+// audience header) is an administrator behind the keeper and may look at any
+// project. A service token must carry the project it is asking for, `mesh:*`,
+// or the wildcard `*`.
+fn mesh_scoped(req: Request, project: string) bool {
+    let aud: string = header_str(req, "X-Rho-Aud")
+    if aud == "" {
+        return true
+    }
+    let scopes: string = header_str(req, "X-Rho-Scopes")
+    if mesh_scope_has(scopes, "*") || mesh_scope_has(scopes, "mesh:*") {
+        return true
+    }
+    return mesh_scope_has(scopes, "mesh:" + project)
+}
+
+fn mesh_scope_denied() Response {
+    return json(403, "{\"ok\":false,\"error\":\"insufficient scope\"}")
+}
+
 fn telemetry_project_ids() string {
     let report: string = wizard_report("telemetry-projects")
     if rho_exec("ls", projects_dir(), report) != 0 {
@@ -155,7 +195,8 @@ fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
     if path == "" || fields == "" {
         return 0
     }
-    let body: string = mesh_url_get(address, path)
+    let device_token: string = yaml.value(manifest, "telemetry.http_token")
+    let body: string = mesh_url_get_auth(address, path, device_token)
     if body == "" {
         return 0
     }
@@ -310,11 +351,17 @@ fn mesh_source_coordinates(project: string, source: string) string {
 
 fn mesh_api_telemetry_status(req: Request) Response {
     let project: string = param(req, "project")
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
     return Response{ 200, telemetry_status(project), "application/json", "" }
 }
 
 fn mesh_api_telemetry_latest(req: Request) Response {
     let project: string = param(req, "project")
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
     let source: string = request_query_param(req, "source")
     let coords: string = mesh_source_coordinates(project, source)
     if coords == "" {
@@ -328,6 +375,9 @@ fn mesh_api_telemetry_latest(req: Request) Response {
 
 fn mesh_api_telemetry_series(req: Request) Response {
     let project: string = param(req, "project")
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
     let source: string = request_query_param(req, "source")
     if source == "" {
         return json(400, "{\"ok\":false,\"error\":\"source is required\"}")

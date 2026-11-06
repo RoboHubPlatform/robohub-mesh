@@ -1984,6 +1984,19 @@ fn mesh_url_get(base: string, path: string) string {
     return rho_read_text(report)
 }
 
+fn mesh_url_get_auth(base: string, path: string, token: string) string {
+    if base == "" || token == "" {
+        return mesh_url_get(base, path)
+    }
+    let report: string = wizard_report("mesh-source")
+    if rho_exec("curl", "-fsS -m 4 -H " +
+        mesh_quote("Authorization: Bearer " + token) + " " +
+        mesh_quote(base + path), report) != 0 {
+        return ""
+    }
+    return rho_read_text(report)
+}
+
 fn gateway_device_object(base: string, name: string, address: string) string {
     let text: string = mesh_url_get(base, "/api/v1/devices")
     var rest: string = text
@@ -2227,6 +2240,9 @@ fn mesh_source_action(project: string, source: string, state: string) bool {
 
 fn mesh_api_sources(req: Request) Response {
     let project: string = current_project()
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
     if project == "" {
         return json(200, "[]")
     }
@@ -2234,16 +2250,25 @@ fn mesh_api_sources(req: Request) Response {
 }
 
 fn mesh_api_project_sources(req: Request) Response {
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
     return json(200, mesh_sources_json(param(req, "project"),
         request_query_param(req, "base")))
 }
 
 fn mesh_api_source_value(req: Request) Response {
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
     let value: string = mesh_source_value(param(req, "project"), param(req, "source"))
     return Response{ 200, value, "text/plain; charset=utf-8", "" }
 }
 
 fn mesh_api_source_action(req: Request) Response {
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
     var state: string = request_query_param(req, "state")
     if state == "" {
         state = form_value(request_body(req), "state")
@@ -2317,6 +2342,9 @@ fn mesh_api_gateway(req: Request) Response {
 }
 
 fn mesh_api_devices(req: Request) Response {
+    if !mesh_scoped(req, current_project()) {
+        return mesh_scope_denied()
+    }
     var out: string = "["
     var first: bool = true
     var index: u32 = 1
@@ -2341,6 +2369,9 @@ fn mesh_api_devices(req: Request) Response {
 }
 
 fn mesh_api_device_switch(req: Request) Response {
+    if !mesh_scoped(req, current_project()) {
+        return mesh_scope_denied()
+    }
     let index: u32 = rho_int_from_str(param(req, "id"))
     let body: string = request_body(req)
     var state: string = form_value(body, "state")

@@ -77,7 +77,7 @@ fn firmware_c_value(kind: string, variable: string) string {
     return "(rh_f32)(" + variable + ")"
 }
 
-fn firmware_single_poll(number: u32, fields: string, prefix: string) string {
+fn firmware_single_poll(number: u32, fields: string, prefix: string, init_fn: string, config: string) string {
     let n: string = rho_int_to_str(number)
     var out: string = ""
     var rest: string = fields
@@ -100,12 +100,24 @@ fn firmware_single_poll(number: u32, fields: string, prefix: string) string {
         }
         let variable: string = "node_sensor_" + n + "_" + signal
         out = out + "    if (!node_sensor_" + n + "_ready) {\n" +
-            "        publish_reading(" + kconfig_string(prefix + field_name) + ", 0.0f, NODE_STATUS_FAULT);\n" +
-            "    } else {\n" +
+            "        // Recovery: the previous read failed, so try to bring the\n" +
+            "        // module up again rather than staying stuck.\n" +
+            "        node_sensor_" + n + "_error = " + init_fn + "(&node_sensor_" + n + ", NULL);\n" +
+            "        node_sensor_" + n + "_ready = ROBOHUB_SUCCEEDED(node_sensor_" + n + "_error);\n" +
+            "        if (!node_sensor_" + n + "_ready) {\n" +
+            "            publish_reading(" + kconfig_string(prefix + field_name) + ", 0.0f, NODE_STATUS_FAULT);\n" +
+            "            return;\n" +
+            "        }\n" +
+            "    }\n" +
+            "    {\n" +
             "        " + firmware_c_type(kind) + " " + variable + " = " +
                 firmware_c_zero(kind) + ";\n" +
             "        node_sensor_" + n + "_error = node_sensor_" + n + "." + member + "." +
                 read + "(&node_sensor_" + n + "." + member + ", &" + variable + ");\n" +
+            "        if (ROBOHUB_FAILED(node_sensor_" + n + "_error)) {\n" +
+            "            // Mark the module down so the next poll re-initialises it.\n" +
+            "            node_sensor_" + n + "_ready = RH_FALSE;\n" +
+            "        }\n" +
             "        publish_reading(" + kconfig_string(prefix + field_name) + ", " +
                 firmware_c_value(kind, variable) +
                 ", ROBOHUB_SUCCEEDED(node_sensor_" + n + "_error) " +
@@ -209,7 +221,7 @@ fn firmware_sources(sensors: string) string {
             driver == "robohub-driver-infrared-receiver-gpio" {
             poll = poll + firmware_two_poll(number, driver, prefix)
         } else {
-            poll = poll + firmware_single_poll(number, fields, prefix)
+            poll = poll + firmware_single_poll(number, fields, prefix, init_fn, config)
         }
         errors = errors + "    if (ROBOHUB_FAILED(node_sensor_" + n +
             "_error)) { return node_sensor_" + n + "_error; }\n"

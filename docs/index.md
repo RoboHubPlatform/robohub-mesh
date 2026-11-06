@@ -452,3 +452,11 @@ so a chart and the live value read the same series. The device page's Poll
 button uses the same descriptor as the background poller; it is not Shelly-only.
 Switch actions appear only for a plug, switch or actuator, so an inverter does
 not offer a meaningless switch button.
+## Scope enforcement
+
+Every `/mesh/api` handler verifies the authenticated token's audience and
+project scope. A service token must carry `mesh:<project>`, `mesh:*`, or `*`;
+a browser session behind the keeper is exempt. Mint a scoped service token with
+`rho auth ticket --scopes mesh:default`. A token that was revoked is refused
+without consulting the keeper: the middleware reads the same `revoked.txt` the
+`rho auth revoke --jti` command writes.
