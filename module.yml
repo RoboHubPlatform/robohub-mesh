@@ -81,6 +81,10 @@ plugins:
       chat_id: ""
       severity_threshold: WARNING
 
+deploy:
+  port: 8478
+  service: mesh
+
 docs:
   title: The RoboHub Mesh application
   section: applications
