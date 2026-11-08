@@ -43,6 +43,11 @@ deps:
   robohub:
     htmx: ">=0.1.0"
     i18n: ">=0.1.0"
+    robohub-auth: ">=0.1.0"
+    alert-dispatcher: ">=0.1.0"
+    alert-log: ">=0.1.0"
+    email-alert: ">=0.1.0"
+    telegram-notifier: ">=0.1.0"
   rho-sql: ">=0.1.0"
 
 # A hosted application is not a service the keeper is: it has its own listener,
