@@ -1,7 +1,9 @@
 <h1>{{t "faults.title"}}</h1>
 <p>{{t "faults.intro"}}</p>
+<div hx-ext="sse" sse-connect="/mesh/faults/events">
 <table class="faults-table">
   <thead><tr><th>{{t "faults.severity"}}</th><th>{{t "faults.created"}}</th><th>{{t "faults.message"}}</th><th></th></tr></thead>
-  <tbody id="faults-rows">{{{ rows }}}</tbody>
+  <tbody id="faults-rows" sse-swap="faults" hx-swap="innerHTML">{{{ rows }}}</tbody>
 </table>
+</div>
 <p><a href="/settings?tab=storage">← {{t "settings.tab.storage"}}</a></p>
