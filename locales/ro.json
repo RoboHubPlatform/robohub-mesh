@@ -1,0 +1,14 @@
+{
+  "nav.dashboard": "Panou",
+  "nav.plan": "Plan",
+  "nav.network": "Rețea",
+  "nav.build": "Compilare și programare",
+  "nav.verify": "Verificare",
+  "nav.gateway": "Gateway",
+  "nav.settings": "Setări",
+  "nav.docs": "Documentație",
+  "nav.keeper": "Keeper",
+  "nav.active": "Activ",
+  "nav.no_projects": "Niciun proiect încă",
+  "nav.for": "pentru"
+}

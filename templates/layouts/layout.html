@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ locale }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -352,7 +352,8 @@
 <body>
 <header class="topbar">
   <a class="brand" href="/mesh">RoboHub <em>Mesh</em></a>
-  <nav class="topnav" aria-label="Mesh navigation">{{{ menu }}}</nav>
+  <nav class="topnav" aria-label="Mesh navigation">{{{ menu }}}
+      {{{ locale_switch }}}</nav>
 </header>
 <main class="page">
   <div class="crumb" id="crumb">{{ title }}</div>

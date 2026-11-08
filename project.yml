@@ -27,7 +27,17 @@ targets:
           scheme: auto
           # The overview and the documentation are the shop window; the API
           # that reads telemetry, devices and sensors is not.
-          skip_paths: "/healthz,/auth/login,/assets,/assets/,/auth/callback,/static,/mesh/docs"
+          skip_paths: "/healthz,/auth/login,/assets,/assets/,/i18n,/auth/callback,/static,/mesh/docs"
+    default_locale: en
+    locales:
+      - locale: en
+        file: locales/en.json
+      - locale: ro
+        file: locales/ro.json
+      - locale: en
+        file: ../../modules/i18n/locales/en.json
+      - locale: ro
+        file: ../../modules/i18n/locales/ro.json
     templates:
       - name: layout
         file: templates/layouts/layout.html

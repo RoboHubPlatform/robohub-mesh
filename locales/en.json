@@ -1,0 +1,14 @@
+{
+  "nav.dashboard": "Dashboard",
+  "nav.plan": "Plan",
+  "nav.network": "Network",
+  "nav.build": "Build & program",
+  "nav.verify": "Verify",
+  "nav.gateway": "Gateway",
+  "nav.settings": "Settings",
+  "nav.docs": "Documentation",
+  "nav.keeper": "Keeper",
+  "nav.active": "Active",
+  "nav.no_projects": "No projects yet",
+  "nav.for": "for"
+}

@@ -1143,7 +1143,7 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
             "onsubmit=\"return confirm('Delete this project and its settings?');\">" +
             "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
             "<button type=\"submit\" class=\"danger\">Delete project</button></form>"))
-    return html(status_ok(), mesh_shell("Project settings",
+    return html(status_ok(), mesh_shell(req, "Project settings",
         "<section class=\"mesh-form-panel page-panel\">" + content + "</section>"))
 }
 
@@ -1374,7 +1374,7 @@ fn mesh_module_node_page(req: Request, index: u32, is_new: bool) Response {
         "The boards are read from robohub-drivers when this page is loaded.</p>" +
         form + delete_form +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
-    return page(title, body)
+    return page(req, title, body)
 }
 
 fn mesh_quote(value: string) string {
@@ -1531,7 +1531,7 @@ fn mesh_device_node_page(req: Request, index: u32, is_new: bool) Response {
         "the others are carried by the node they are attached to.</p>" + form + actions +
         publish_hint + delete_form +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
-    return page(title, body)
+    return page(req, title, body)
 }
 
 fn mesh_device_poll(req: Request) Response {
@@ -2531,7 +2531,7 @@ fn mesh_node_page(req: Request) Response {
         "Modules are nodes of their own, added to the node they extend.</p>" +
         modules_link + form + plan_html + delete_form +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>"
-    return page(title, body)
+    return page(req, title, body)
 }
 
 fn mesh_node_post_inner(req: Request) Response {
@@ -2833,7 +2833,7 @@ fn mesh_gateway_page(req: Request) Response {
         modules = modules + "<p><small>A native host has no pins, so it cannot take modules. " +
             "Network devices can still be attached.</small></p>"
     }
-    return page("Gateway", "<h1>Gateway</h1><p>The root of the mesh.</p>" + form + modules +
+    return page(req, "Gateway", "<h1>Gateway</h1><p>The root of the mesh.</p>" + form + modules +
         "<p class=\"mesh-nav\"><a href=\"/mesh\">← Mesh</a></p>")
 }
 
@@ -2969,7 +2969,7 @@ fn mesh_menu_link(label: string, href: string, icon: string) string {
         icon + "</span>" + escape_html(label) + "</a>"
 }
 
-fn mesh_project_menu() string {
+fn mesh_project_menu(req: Request) string {
     var items: string = ""
     var ids: string = project_ids()
     while ids != "" {
@@ -2989,13 +2989,13 @@ fn mesh_project_menu() string {
         var badge: string = ""
         if id == current_project() {
             classes = classes + " active"
-            badge = "<span class=\"nav-badge\">Active</span>"
+            badge = "<span class=\"nav-badge\">" + i18n_t(req, "nav.active") + "</span>"
         }
         items = items + "<a class=\"" + classes + "\" href=\"/mesh/project/" + escape_html(id) +
             "\">" + escape_html(project_name(id)) + badge + "</a>"
     }
     if items == "" {
-        items = "<span class=\"nav-empty\">No projects yet</span>"
+        items = "<span class=\"nav-empty\">" + i18n_t(req, "nav.no_projects") + "</span>"
     }
     return items
 }
@@ -3009,45 +3009,45 @@ fn mesh_context() string {
         escape_html(project_name(active)) + "</strong>"
 }
 
-fn mesh_bottom_menu() string {
+fn mesh_bottom_menu(req: Request) string {
     var out: string = "<a class=\"nav-link new-project\" href=\"/mesh#new-project\">" +
         "<span class=\"ico\" aria-hidden=\"true\">+</span>New project</a>"
-    out = out + mesh_project_menu()
+    out = out + mesh_project_menu(req)
     return out
 }
 
-fn mesh_menu() string {
+fn mesh_menu(req: Request) string {
     ensure_wizard_dir()
     var out: string = ""
     let keeper_port: string = getenv("RHO_KEEPER_PORT")
     if keeper_port != "" {
         out = out + "<a class=\"nav-link keeper-link\" href=\"#\" data-keeper-port=\"" +
-            escape_html(keeper_port) + "\"><span class=\"ico\" aria-hidden=\"true\">↑</span>Keeper</a>"
+            escape_html(keeper_port) + "\"><span class=\"ico\" aria-hidden=\"true\">↑</span>" + i18n_t(req, "nav.keeper") + "</a>"
         out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     }
-    out = out + mesh_menu_link("Dashboard", "/mesh", "⌁")
+    out = out + mesh_menu_link(i18n_t(req, "nav.dashboard"), "/mesh", "⌁")
     let active: string = current_project()
     if active != "" {
         out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
-        out = out + "<span class=\"nav-context\">for <strong>" +
+        out = out + "<span class=\"nav-context\">" + i18n_t(req, "nav.for") + " <strong>" +
             escape_html(project_name(active)) + "</strong></span>"
-        out = out + mesh_menu_link("Plan", "/mesh/plan", "1")
-        out = out + mesh_menu_link("Network", "/mesh/step/network", "2")
-        out = out + mesh_menu_link("Build & program", "/mesh/step/build", "3")
-        out = out + mesh_menu_link("Verify", "/mesh/step/verify", "4")
-        out = out + mesh_menu_link("Gateway", "/mesh/gateway", "⌂")
-        out = out + mesh_menu_link("Settings",
+        out = out + mesh_menu_link(i18n_t(req, "nav.plan"), "/mesh/plan", "1")
+        out = out + mesh_menu_link(i18n_t(req, "nav.network"), "/mesh/step/network", "2")
+        out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build", "3")
+        out = out + mesh_menu_link(i18n_t(req, "nav.verify"), "/mesh/step/verify", "4")
+        out = out + mesh_menu_link(i18n_t(req, "nav.gateway"), "/mesh/gateway", "⌂")
+        out = out + mesh_menu_link(i18n_t(req, "nav.settings"),
             "/mesh/project/" + active + "/settings", "⚙")
     }
     out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
-    out = out + mesh_menu_link("Documentation", "/mesh/docs", "▤")
+    out = out + mesh_menu_link(i18n_t(req, "nav.docs"), "/mesh/docs", "▤")
     return out
 }
 
-fn mesh_shell(title: string, content: string) string {
+fn mesh_shell(req: Request, title: string, content: string) string {
     return template_fill(template_get("layout"),
-        vars("title", title) + vars("htmx", htmx_head()) + vars("menu", mesh_menu()) +
-        vars("context", mesh_context()) + vars("projects", mesh_bottom_menu()) +
+        vars("title", title) + vars("htmx", htmx_head()) + i18n_vars(req) + vars("menu", mesh_menu(req)) +
+        vars("context", mesh_context()) + vars("projects", mesh_bottom_menu(req)) +
         vars("body", content))
 }
 
@@ -3066,7 +3066,7 @@ fn mesh_docs_page(req: Request) Response {
     if content == "" {
         content = "<h1>Documentation</h1><p>No documentation was found for this application.</p>"
     }
-    return html(status_ok(), mesh_shell("Documentation",
+    return html(status_ok(), mesh_shell(req, "Documentation",
         "<section class=\"mesh-form-panel page-panel doc-panel\">" + content + "</section>"))
 }
 
@@ -3075,7 +3075,7 @@ fn mesh_dashboard(req: Request) Response {
     let content: string = template_fill(template_get("mesh-dashboard"),
         vars("location", projects_dir()) +
         vars("projects", mesh_projects()))
-    return html(status_ok(), mesh_shell("RoboHub Mesh", content))
+    return html(status_ok(), mesh_shell(req, "RoboHub Mesh", content))
 }
 
 fn mesh_gateway_restart(req: Request) Response {
@@ -3158,7 +3158,7 @@ fn mesh_page(req: Request) Response {
         vars("tree", mesh_tree(!editing)) +
         vars("project_actions", mesh_project_actions(current_project())) +
         vars("plan", mesh_plan_panel(editing)))
-    return html(status_ok(), mesh_shell(title, content))
+    return html(status_ok(), mesh_shell(req, title, content))
 }
 
 fn mesh_accept_inner(req: Request) Response {
@@ -3479,7 +3479,7 @@ fn mesh_connection_page(req: Request) Response {
         vars("actions", "") +
         vars("output", "") +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/step/network\">← Network</a></p>"))
-    return html(status_ok(), mesh_shell("Connection", content))
+    return html(status_ok(), mesh_shell(req, "Connection", content))
 }
 
 fn mesh_connection_post(req: Request) Response {
@@ -3586,7 +3586,7 @@ fn mesh_network_page(req: Request) Response {
         vars("notice", notice) +
         vars("panel", panel) +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh\">← Plan</a></p>"))
-    return html(status_ok(), mesh_shell("Network", content))
+    return html(status_ok(), mesh_shell(req, "Network", content))
 }
 
 fn mesh_network_accept_inner(req: Request) Response {
@@ -3651,7 +3651,7 @@ fn mesh_network_node_page(req: Request) Response {
         vars("actions", "") +
         vars("output", "") +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/step/network\">← Network</a></p>"))
-    return html(status_ok(), mesh_shell("Node network", content))
+    return html(status_ok(), mesh_shell(req, "Node network", content))
 }
 
 fn mesh_gateway_network_form() string {
@@ -3721,7 +3721,7 @@ fn mesh_network_gateway_page(req: Request) Response {
         vars("actions", "") +
         vars("output", "") +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/step/network\">← Network</a></p>"))
-    return html(status_ok(), mesh_shell("Gateway network", content))
+    return html(status_ok(), mesh_shell(req, "Gateway network", content))
 }
 
 fn mesh_node_summary(index: u32) string {
@@ -3839,7 +3839,7 @@ fn mesh_program_confirm_page(req: Request, index: u32) Response {
         vars("output", "") +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/build/node/" + rho_int_to_str(index) +
             "\">← Back to node</a></p>"))
-    return html(status_ok(), mesh_shell("Program node", content))
+    return html(status_ok(), mesh_shell(req, "Program node", content))
 }
 
 fn mesh_build_node_page(req: Request) Response {
@@ -3870,7 +3870,7 @@ fn mesh_build_node_page(req: Request) Response {
         vars("actions", mesh_node_build_actions(index)) +
         vars("output", output_block("build")) +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/step/build\">← Build & program</a></p>"))
-    return html(status_ok(), mesh_shell("Build node", content))
+    return html(status_ok(), mesh_shell(req, "Build node", content))
 }
 
 fn mesh_build_node_post_inner(req: Request) Response {
@@ -4120,7 +4120,7 @@ fn mesh_build_gateway_page(req: Request) Response {
         vars("actions", mesh_gateway_build_actions()) +
         vars("output", output_block("build")) +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/step/build\">← Build & program</a></p>"))
-    return html(status_ok(), mesh_shell("Build gateway", content))
+    return html(status_ok(), mesh_shell(req, "Build gateway", content))
 }
 
 fn mesh_build_gateway_post(req: Request) Response {
@@ -4204,7 +4204,7 @@ fn mesh_build_page(req: Request) Response {
         vars("notice", notice) +
         vars("panel", panel) +
         vars("nav", "<p class=\"mesh-nav\"><a href=\"/mesh/step/network\">← Network</a></p>"))
-    return html(status_ok(), mesh_shell("Build & program", content))
+    return html(status_ok(), mesh_shell(req, "Build & program", content))
 }
 
 fn mesh_node_selector() string {
@@ -4283,5 +4283,5 @@ fn mesh_step_page(req: Request) Response {
         vars("actions", actions) +
         vars("output", output_block(stage)) +
         vars("nav", mesh_nav(stage)))
-    return html(status_ok(), mesh_shell(step_title(stage), content))
+    return html(status_ok(), mesh_shell(req, step_title(stage), content))
 }

@@ -3259,9 +3259,9 @@ fn output_block(stage: string) string {
 /*  Pages                                                                     */
 /* -------------------------------------------------------------------------- */
 
-fn page(title: string, body: string) Response {
+fn page(req: Request, title: string, body: string) Response {
     let panel: string = template_fill(template_get("mesh-panel"), vars("body", body))
-    return html(status_ok(), mesh_shell(title, panel))
+    return html(status_ok(), mesh_shell(req, title, panel))
 }
 
 fn step_card(stage: string) string {
@@ -3341,7 +3341,7 @@ fn wizard_overview(req: Request) Response {
     let content: string = template_fill(template_get("wizard"),
         vars("title", title) + vars("description", description) +
         vars("cards", step_cards()) + vars("settings", state_table()))
-    return html(status_ok(), mesh_shell(title, content))
+    return html(status_ok(), mesh_shell(req, title, content))
 }
 
 fn wizard_step_page(req: Request) Response {
@@ -3351,7 +3351,7 @@ fn wizard_step_page(req: Request) Response {
     let stage: string = param(req, "step")
     if !step_exists(stage) {
         let body: string = template_fill(template_get("mesh-unknown-step"), vars("stage", stage))
-        return page("Unknown step", body)
+        return page(req, "Unknown step", body)
     }
     let content: string = template_fill(template_get("wizard-step"),
         vars("title", step_title(stage)) +
@@ -3361,7 +3361,7 @@ fn wizard_step_page(req: Request) Response {
         vars("fields", fields_form(stage)) +
         vars("actions", actions_form(stage)) +
         vars("output", output_block(stage)))
-    return html(status_ok(), mesh_shell(step_title(stage), content))
+    return html(status_ok(), mesh_shell(req, step_title(stage), content))
 }
 
 fn save_step_fields(stage: string, body: string) bool {
@@ -3504,7 +3504,7 @@ fn wizard_step_post(req: Request) Response {
     let stage: string = param(req, "step")
     if !step_exists(stage) {
         let body: string = template_fill(template_get("mesh-unknown-step"), vars("stage", stage))
-        return page("Unknown step", body)
+        return page(req, "Unknown step", body)
     }
     let body: string = request_body(req)
     let action: string = form_value(body, "action")
