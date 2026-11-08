@@ -11,6 +11,7 @@ include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/telemetry.rho"
 include "mesh/firmware.rho"
+include "mesh/settings.rho"
 include "htmx"
 include "i18n"
 
@@ -58,6 +59,8 @@ route POST "/mesh/project/restart" => mesh_project_restart
 route POST "/mesh/project/stop" => mesh_project_stop
 route POST "/mesh/gateway/restart" => mesh_gateway_restart
 route POST "/mesh/gateway/stop" => mesh_gateway_stop
+route GET "/settings" => mesh_settings_page
+route POST "/settings" => mesh_settings_save
 route GET "/mesh/docs" => mesh_docs_page
 route GET "/docs" => mesh_docs_page
 route GET "/mesh/gateway" => mesh_gateway_page

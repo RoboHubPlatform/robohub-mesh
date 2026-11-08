@@ -1,0 +1,19 @@
+<style>
+.settings-layout { display: flex; gap: 1.2rem; align-items: flex-start; }
+.settings-layout.horizontal { flex-direction: column; }
+.settings-tabs { display: flex; flex-direction: column; gap: .25rem; min-width: 12rem; padding-right: .6rem; border-right: 1px solid rgba(228,184,102,.25); }
+.settings-layout.horizontal .settings-tabs { flex-direction: row; flex-wrap: wrap; min-width: 0; padding: 0; border-right: 0; border-bottom: 1px solid rgba(228,184,102,.25); }
+.settings-tabs a { padding: .45rem .8rem; border-radius: 8px; color: #8aa0b8; text-decoration: none; font-size: .82rem; }
+.settings-tabs a:hover { color: #e4b866; }
+.settings-tabs a.active { color: #1b2a3a; background: #e4b866; font-weight: 700; }
+.settings dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; }
+.settings dt { color: #8aa0b8; }
+.settings dd { margin: 0; }
+</style>
+<h1>{{t "page.settings"}}</h1>
+<p>{{t "settings.intro"}}</p>
+{{{ notice }}}
+<div class="settings-layout {{ tabs_orientation }}">
+  {{{ nav }}}
+  <section class="settings">{{{ tab_content }}}</section>
+</div>

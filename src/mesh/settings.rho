@@ -1,0 +1,123 @@
+module mesh.settings
+
+fn mesh_settings_tab(req: Request) string {
+    let tab: string = request_query_param(req, "tab")
+    if tab == "" { return "general" }
+    if rho_str_eq(tab, "alerts") || rho_str_eq(tab, "auth") ||
+        rho_str_eq(tab, "gateway") || rho_str_eq(tab, "configuration") {
+        return tab
+    }
+    return "general"
+}
+
+fn mesh_settings_nav(req: Request, active: string) string {
+    var out: string = "<nav class=\"vtabnav settings-tabs\">"
+    let ids: string = "general,alerts,auth,gateway,configuration"
+    let keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.configuration"
+    while ids != "" {
+        let id_at: i32 = rho_str_index_of(ids, ",")
+        let key_at: i32 = rho_str_index_of(keys, ",")
+        var id: string = ids
+        var key: string = keys
+        if id_at < 0 { ids = "" } else {
+            id = rho_str_slice(ids, 0, u32(id_at))
+            ids = rho_str_slice(ids, u32(id_at) + 1, u32(rho_strlen(ids)) - u32(id_at) - 1)
+        }
+        if key_at < 0 { keys = "" } else {
+            key = rho_str_slice(keys, 0, u32(key_at))
+            keys = rho_str_slice(keys, u32(key_at) + 1, u32(rho_strlen(keys)) - u32(key_at) - 1)
+        }
+        var css: string = ""
+        if rho_str_eq(id, active) { css = " class=\"active\"" }
+        out = out + "<a href=\"/settings?tab=" + id + "\"" + css + ">" + i18n_t(req, key) + "</a>"
+    }
+    return out + "</nav>"
+}
+
+fn mesh_settings_form(req: Request, tab: string) string {
+    if rho_str_eq(tab, "alerts") {
+        var fields: FormField[7]
+        fields[0] = FormField{ "targets", "text", i18n_t(req, "settings.alerts.targets"), "",
+            "alert-log,email-alert", false, "", "",
+            settings_get("alerts.alert-dispatcher.targets", ""), "", "" }
+        fields[1] = FormField{ "threshold", "select", i18n_t(req, "settings.alerts.threshold"), "",
+            "", false, "", "INFO|INFO,WARNING|WARNING,ERROR|ERROR",
+            settings_get("alerts.alert-dispatcher.severity_threshold", "INFO"), "", "" }
+        fields[2] = FormField{ "log_path", "text", i18n_t(req, "settings.alerts.log_path"), "",
+            "~/.rho/mesh/alerts.log", false, "", "",
+            settings_get("alerts.alert-log.path", ""), "", "" }
+        fields[3] = FormField{ "email_to", "text", i18n_t(req, "settings.alerts.email_to"), "",
+            "ops@example.com", false, "", "",
+            settings_get("alerts.email-alert.to_address", ""), "", "" }
+        fields[4] = FormField{ "email_threshold", "select", i18n_t(req, "settings.alerts.email_threshold"), "",
+            "", false, "", "INFO|INFO,WARNING|WARNING,ERROR|ERROR",
+            settings_get("alerts.email-alert.severity_threshold", "ERROR"), "", "" }
+        fields[5] = FormField{ "telegram_chat", "text", i18n_t(req, "settings.alerts.telegram_chat"), "",
+            "", false, "", "", settings_get("alerts.telegram-notifier.chat_id", ""), "", "" }
+        fields[6] = FormField{ "telegram_token", "password", i18n_t(req, "settings.alerts.telegram_token"), "",
+            "", false, "", "", settings_get("alerts.telegram-notifier.bot_token", ""), "", "" }
+        return forms_open(fields, 7, "/settings?tab=alerts",
+            i18n_t(req, "settings.save"), i18n_locale(req))
+    }
+    if rho_str_eq(tab, "auth") {
+        return "<dl class=\"settings\"><dt>Issuer</dt><dd>keeper</dd>" +
+            "<dt>Mode</dt><dd>direct</dd>" +
+            "<dt>Login URL</dt><dd><code>http://127.0.0.1:19090/auth/login</code></dd></dl>"
+    }
+    if rho_str_eq(tab, "gateway") {
+        return "<dl class=\"settings\"><dt>Provider</dt><dd>mesh-gateway</dd>" +
+            "<dt>Route</dt><dd>/mesh</dd><dt>Port</dt><dd>8478</dd>" +
+            "<dt>Current project</dt><dd>" + escape_html(current_project()) + "</dd></dl>"
+    }
+    if rho_str_eq(tab, "configuration") {
+        return "<dl class=\"settings\"><dt>Application</dt><dd>mesh</dd>" +
+            "<dt>Workspace</dt><dd><code>" + escape_html(robohub_root()) + "</code></dd>" +
+            "<dt>Plugins</dt><dd>robohub-auth, alert-dispatcher, alert-log, email-alert, telegram-notifier</dd></dl>"
+    }
+    var fields: FormField[1]
+    fields[0] = FormField{ "tabs", "select", i18n_t(req, "settings.orientation"), "",
+        "", false, "", "vertical|" + i18n_t(req, "settings.orientation.vertical") +
+        ",horizontal|" + i18n_t(req, "settings.orientation.horizontal"),
+        settings_get("ui.tabs", "vertical"), "", "" }
+    return forms_open(fields, 1, "/settings?tab=general",
+        i18n_t(req, "settings.save"), i18n_locale(req))
+}
+
+fn mesh_settings_page_message(req: Request, message: string) Response {
+    let tab: string = mesh_settings_tab(req)
+    var notice: string = ""
+    if message != "" {
+        notice = "<p class=\"notice\">" + escape_html(message) + "</p>"
+    }
+    let body: string = template_fill(template_get("settings"),
+        i18n_vars(req) +
+        vars("notice", notice) +
+        vars("tabs_orientation", settings_get("ui.tabs", "vertical")) +
+        vars("nav", mesh_settings_nav(req, tab)) +
+        vars("tab_content", mesh_settings_form(req, tab)))
+    return page(req, i18n_t(req, "page.settings"), body)
+}
+
+fn mesh_settings_page(req: Request) Response {
+    return mesh_settings_page_message(req, "")
+}
+
+fn mesh_settings_save(req: Request) Response {
+    let body: string = request_body(req)
+    let tab: string = mesh_settings_tab(req)
+    if !forms_csrf_ok(body) {
+        return mesh_settings_page_message(req, i18n_t(req, "settings.csrf_refused"))
+    }
+    if rho_str_eq(tab, "alerts") {
+        settings_set("alerts.alert-dispatcher.targets", device_trim(form_value(body, "targets")))
+        settings_set("alerts.alert-dispatcher.severity_threshold", device_trim(form_value(body, "threshold")))
+        settings_set("alerts.alert-log.path", device_trim(form_value(body, "log_path")))
+        settings_set("alerts.email-alert.to_address", device_trim(form_value(body, "email_to")))
+        settings_set("alerts.email-alert.severity_threshold", device_trim(form_value(body, "email_threshold")))
+        settings_set("alerts.telegram-notifier.chat_id", device_trim(form_value(body, "telegram_chat")))
+        settings_set("alerts.telegram-notifier.bot_token", device_trim(form_value(body, "telegram_token")))
+        return redirect("/settings?tab=alerts")
+    }
+    settings_set("ui.tabs", device_trim(form_value(body, "tabs")))
+    return redirect("/settings?tab=general")
+}
