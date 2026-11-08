@@ -54,7 +54,7 @@ fn gateway_live_badge() string {
     }
     let state: string = gateway_status()
     if state == "running" || state == "programmed" {
-        return "<span class=\"node-status status-failed\">not running</span>"
+        return status_badge_label("failed", "not running")
     }
     return status_badge(state)
 }
@@ -87,8 +87,12 @@ fn status_label(status: string) string {
 }
 
 fn status_badge(status: string) string {
-    return "<span class=\"node-status status-" + status + "\">" +
-        escape_html(status_label(status)) + "</span>"
+    return status_badge_label(status, status_label(status))
+}
+
+fn status_badge_label(status: string, label: string) string {
+    return template_fill(template_get("mesh-status"),
+        vars("status", status) + vars("label", label))
 }
 
 fn all_nodes_programmed() bool {
@@ -144,37 +148,37 @@ fn node_card_body(index: u32) string {
         if description == "" {
             description = device_label(device_name)
         }
-        return "<span class=\"node-role\">device</span>" +
-            "<strong>" + escape_html(name) + "</strong>" +
-            "<small>" + escape_html(description) + "</small>" +
-            "<span class=\"node-meta\">" + escape_html(device_label(device_name)) +
-            " · " + escape_html(node_device_transport(index)) + " · " +
-            escape_html(parent) + "</span>" +
-            "<span class=\"node-status status-attached\">device</span>"
+        return template_fill(template_get("mesh-card-device"),
+            vars("name", name) +
+            vars("description", description) +
+            vars("device_label", device_label(device_name)) +
+            vars("transport", node_device_transport(index)) +
+            vars("parent", parent))
     }
     if is_module_node(index) {
         let module_name: string = node_module_name(index)
         if description == "" {
             description = module_summary(module_name)
         }
-        return "<span class=\"node-role\">module</span>" +
-            "<strong>" + escape_html(name) + "</strong>" +
-            "<small>" + escape_html(description) + "</small>" +
-            "<span class=\"node-meta\">" + escape_html(module_label(module_name)) +
-            " · attached to " + escape_html(parent) + "</span>" +
-            "<span class=\"node-status status-attached\">attached</span>"
+        return template_fill(template_get("mesh-card-module"),
+            vars("name", name) +
+            vars("description", description) +
+            vars("module_label", module_label(module_name)) +
+            vars("parent", parent))
     }
     let board: string = node_value(index, "board", "")
     let modules: string = module_names_for(node_module_children(index))
     if description == "" {
         description = board_summary(board)
     }
-    return "<span class=\"node-role\">" + escape_html(role) + "</span>" +
-        "<strong>" + escape_html(name) + "</strong>" +
-        "<small>" + escape_html(description) + "</small>" +
-        "<span class=\"node-meta\">" + escape_html(label_for(board_rows(), board)) +
-        " · " + escape_html(sensor_labels(modules)) + " · parent " +
-        escape_html(parent) + "</span>" + status_badge(node_status(index))
+    return template_fill(template_get("mesh-card-node"),
+        vars("role", role) +
+        vars("name", name) +
+        vars("description", description) +
+        vars("board_label", label_for(board_rows(), board)) +
+        vars("sensors", sensor_labels(modules)) +
+        vars("parent", parent) +
+        vars("status", status_badge(node_status(index))))
 }
 
 fn node_card(index: u32, readonly: bool) string {
@@ -207,12 +211,14 @@ fn gateway_card_body() string {
     }
     var module_text: string = ""
     if gateway_allows_modules() {
-        module_text = " · " + escape_html(sensor_labels(module_names_for(gateway_module_indices())))
+        module_text = sensor_labels(module_names_for(gateway_module_indices()))
     }
-    return "<span class=\"node-role\">gateway</span><strong>" +
-        escape_html(name) + "</strong><small>" + escape_html(description) +
-        "</small><span class=\"node-meta\">" + escape_html(label_for(board_rows(), gateway)) +
-        module_text + "</span>" + gateway_live_badge()
+    return template_fill(template_get("mesh-card-gateway"),
+        vars("name", name) +
+        vars("description", description) +
+        vars("board_label", label_for(board_rows(), gateway)) +
+        vars("modules", module_text) +
+        vars("status", gateway_live_badge()))
 }
 
 fn gateway_card(readonly: bool) string {

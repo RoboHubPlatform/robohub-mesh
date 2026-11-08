@@ -45,6 +45,16 @@ targets:
         file: templates/wizard.html
       - name: wizard-step
         file: templates/wizard-step.html
+      - name: mesh-status
+        file: templates/mesh-status.html
+      - name: mesh-card-device
+        file: templates/mesh-card-device.html
+      - name: mesh-card-module
+        file: templates/mesh-card-module.html
+      - name: mesh-card-node
+        file: templates/mesh-card-node.html
+      - name: mesh-card-gateway
+        file: templates/mesh-card-gateway.html
     files:
       - path: app.go
         role: implementation
