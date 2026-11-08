@@ -1796,8 +1796,8 @@ fn option(value: string, label: string, description: string, selected: string) s
     if description != "" {
         text = text + " — " + description
     }
-    return "<option value=\"" + escape_html(value) + "\"" + mark + ">" +
-        escape_html(text) + "</option>"
+    return template_fill(template_get("mesh-option"),
+        vars("value", value) + vars("selected", mark) + vars("text", text))
 }
 
 fn usable_board(line: string, role: string) bool {
@@ -3223,7 +3223,7 @@ fn status_notice(stage: string) string {
     if default_value("step_" + stage, "pending") == "failed" {
         css = "notice bad"
     }
-    return "<p class=\"" + css + "\">" + escape_html(message) + "</p>"
+    return template_fill(template_get("mesh-message"), vars("css", css) + vars("message", message))
 }
 
 fn strip_done_marker(text: string) string {
@@ -3252,9 +3252,7 @@ fn output_block(stage: string) string {
     if output == "" {
         return ""
     }
-    return "<div class=\"console-head\"><h2>Last output</h2>" +
-        "<button type=\"button\" class=\"quiet\" onclick=\"wizardClearConsole()\">Clear console</button></div>" +
-        "<pre id=\"final-log\" class=\"out\">" + escape_html(output) + "</pre>"
+    return template_fill(template_get("mesh-console"), vars("output", output))
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3262,8 +3260,8 @@ fn output_block(stage: string) string {
 /* -------------------------------------------------------------------------- */
 
 fn page(title: string, body: string) Response {
-    return html(status_ok(), mesh_shell(title,
-        "<section class=\"mesh-form-panel page-panel\">" + body + "</section>"))
+    let panel: string = template_fill(template_get("mesh-panel"), vars("body", body))
+    return html(status_ok(), mesh_shell(title, panel))
 }
 
 fn step_card(stage: string) string {
@@ -3274,8 +3272,9 @@ fn step_card(stage: string) string {
     } else if status == "failed" {
         css = "step failed"
     }
-    return "<a class=\"" + css + "\" href=\"/mesh/step/" + stage + "\"><strong>" +
-        escape_html(step_title(stage)) + "</strong><span>" + escape_html(status) + "</span></a>"
+    return template_fill(template_get("mesh-step-card"),
+        vars("css", css) + vars("stage", stage) +
+        vars("title", step_title(stage)) + vars("status", status))
 }
 
 fn step_cards() string {
@@ -3295,7 +3294,7 @@ fn step_cards() string {
             cards = cards + step_card(stage)
         }
     }
-    return "<div class=\"steps\">" + cards + "</div>"
+    return template_fill(template_get("mesh-steps"), vars("cards", cards))
 }
 
 fn state_table() string {
@@ -3328,9 +3327,9 @@ fn state_table() string {
         }
         let value: string = rho_str_slice(line, u32(equals) + 1,
             u32(rho_strlen(line)) - u32(equals) - 1)
-        out = out + "<dt>" + escape_html(key) + "</dt><dd>" + escape_html(value) + "</dd>"
+        out = out + template_fill(template_get("mesh-setting"), vars("key", key) + vars("value", value))
     }
-    return "<dl class=\"settings\">" + out + "</dl>"
+    return template_fill(template_get("mesh-settings"), vars("rows", out))
 }
 
 fn wizard_overview(req: Request) Response {
@@ -3351,8 +3350,7 @@ fn wizard_step_page(req: Request) Response {
     }
     let stage: string = param(req, "step")
     if !step_exists(stage) {
-        let body: string = "<h1>Unknown step</h1><p>No step named " + escape_html(stage) +
-            ".</p><p><a href=\"/wizard\">Overview</a></p>"
+        let body: string = template_fill(template_get("mesh-unknown-step"), vars("stage", stage))
         return page("Unknown step", body)
     }
     let content: string = template_fill(template_get("wizard-step"),
@@ -3505,7 +3503,7 @@ fn wizard_step_post(req: Request) Response {
     }
     let stage: string = param(req, "step")
     if !step_exists(stage) {
-        let body: string = "<h1>Unknown step</h1><p>No step named " + escape_html(stage) + ".</p>"
+        let body: string = template_fill(template_get("mesh-unknown-step"), vars("stage", stage))
         return page("Unknown step", body)
     }
     let body: string = request_body(req)

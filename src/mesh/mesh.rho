@@ -182,21 +182,24 @@ fn node_card_body(index: u32) string {
 }
 
 fn node_card(index: u32, readonly: bool) string {
-    var open: string = "<a class=\"node-card " + node_value(index, "role", "node") + "\""
-    var close: string = "</a>"
+    let role: string = node_value(index, "role", "node")
+    let body: string = node_card_body(index)
     if readonly {
-        open = "<div class=\"node-card " + node_value(index, "role", "node") + " readonly\""
-        close = "</div>"
-    } else {
-        open = open + " href=\"/mesh/node/" + rho_int_to_str(index) + "\""
+        return template_fill(template_get("mesh-card-readonly"),
+            vars("role", role) + vars("extra", " readonly") + vars("body", body))
     }
-    return open + ">" + node_card_body(index) + close
+    return template_fill(template_get("mesh-card-link"),
+        vars("role", role) + vars("extra", "") +
+        vars("href", "/mesh/node/" + rho_int_to_str(index)) +
+        vars("body", body))
 }
 
 fn build_node_card(index: u32) string {
-    return "<a class=\"node-card " + node_value(index, "role", "node") +
-        " build-link\" href=\"/mesh/build/node/" + rho_int_to_str(index) + "\">" +
-        node_card_body(index) + "</a>"
+    return template_fill(template_get("mesh-card-link"),
+        vars("role", node_value(index, "role", "node")) +
+        vars("extra", " build-link") +
+        vars("href", "/mesh/build/node/" + rho_int_to_str(index)) +
+        vars("body", node_card_body(index)))
 }
 
 fn gateway_card_body() string {
@@ -222,18 +225,19 @@ fn gateway_card_body() string {
 }
 
 fn gateway_card(readonly: bool) string {
-    var open: string = "<a class=\"node-card gateway\" href=\"/mesh/gateway\">"
-    var close: string = "</a>"
     if readonly {
-        open = "<div class=\"node-card gateway readonly\">"
-        close = "</div>"
+        return template_fill(template_get("mesh-card-readonly"),
+            vars("role", "gateway") + vars("extra", " readonly") + vars("body", gateway_card_body()))
     }
-    return open + gateway_card_body() + close
+    return template_fill(template_get("mesh-card-link"),
+        vars("role", "gateway") + vars("extra", "") +
+        vars("href", "/mesh/gateway") + vars("body", gateway_card_body()))
 }
 
 fn build_gateway_card() string {
-    return "<a class=\"node-card gateway build-link\" href=\"/mesh/build/gateway\">" +
-        gateway_card_body() + "</a>"
+    return template_fill(template_get("mesh-card-link"),
+        vars("role", "gateway") + vars("extra", " build-link") +
+        vars("href", "/mesh/build/gateway") + vars("body", gateway_card_body()))
 }
 
 fn node_attached(index: u32) bool {
@@ -302,6 +306,28 @@ fn node_visible(index: u32) bool {
     return true
 }
 
+fn mesh_badge(label: string, is_module: bool) string {
+    var module_flag: string = ""
+    if is_module {
+        module_flag = "true"
+    }
+    return template_fill(template_get("mesh-badge"),
+        vars("module", module_flag) + vars("label", label))
+}
+
+fn mesh_branch(badge: string, card: string, quick: string, children: string, is_module: bool) string {
+    var module_flag: string = ""
+    if is_module {
+        module_flag = "true"
+    }
+    return template_fill(template_get("mesh-branch"),
+        vars("module", module_flag) +
+        vars("badge", badge) +
+        vars("card", card) +
+        vars("quick", quick) +
+        vars("children", children))
+}
+
 fn mesh_child_items(parent: string, readonly: bool) string {
     var out: string = ""
     var index: u32 = 1
@@ -309,26 +335,24 @@ fn mesh_child_items(parent: string, readonly: bool) string {
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
             if is_module_node(index) || is_device_node(index) {
-                let badge: string = "module"
+                var label: string = "module"
                 if is_device_node(index) {
-                    badge = "device"
+                    label = "device"
                 }
-                out = out + "<li class=\"mesh-branch module-branch\">" +
-                    "<span class=\"link-badge module\">" + badge + "</span>" +
-                    node_card(index, readonly) + "</li>"
+                out = out + mesh_branch(mesh_badge(label, true), node_card(index, readonly), "", "", true)
             } else {
                 let link: string = node_value(index, "link", "uart")
                 var quick: string = ""
                 if !readonly {
-                    quick = " <a class=\"quick-add\" href=\"/mesh/node/new?kind=module&parent=node." +
-                        rho_int_to_str(index) + "\">+ module</a>" +
-                        " <a class=\"quick-add\" href=\"/mesh/node/new?kind=device&parent=node." +
-                        rho_int_to_str(index) + "\">+ device</a>"
+                    quick = template_fill(template_get("mesh-quick-add"),
+                        vars("index", rho_int_to_str(index)))
                 }
-                out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
-                    escape_html(link_label(link)) + "</span>" +
-                    node_card(index, readonly) + quick +
-                    mesh_children("node." + rho_int_to_str(index), readonly) + "</li>"
+                out = out + mesh_branch(
+                    mesh_badge(link_label(link), false),
+                    node_card(index, readonly),
+                    quick,
+                    mesh_children("node." + rho_int_to_str(index), readonly),
+                    false)
             }
         }
         index = index + 1
@@ -341,7 +365,7 @@ fn mesh_children(parent: string, readonly: bool) string {
     if items == "" {
         return ""
     }
-    return "<ul class=\"mesh-children\">" + items + "</ul>"
+    return template_fill(template_get("mesh-children"), vars("items", items))
 }
 
 fn mesh_free_child_items(readonly: bool) string {
@@ -351,9 +375,7 @@ fn mesh_free_child_items(readonly: bool) string {
     while index <= count {
         if is_device_node(index) && node_value(index, "parent", "") == "mesh" &&
             node_attached(index) {
-            out = out + "<li class=\"mesh-branch module-branch\">" +
-                "<span class=\"link-badge module\">device</span>" +
-                node_card(index, readonly) + "</li>"
+            out = out + mesh_branch(mesh_badge("device", true), node_card(index, readonly), "", "", true)
         }
         index = index + 1
     }
@@ -365,28 +387,26 @@ fn mesh_tree(readonly: bool) string {
         mesh_free_child_items(readonly)
     var out: string = gateway_card(readonly)
     if root_items != "" {
-        out = out + "<ul class=\"mesh-children\">" + root_items + "</ul>"
+        out = out + template_fill(template_get("mesh-children"), vars("items", root_items))
     }
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
         if !node_attached(index) && node_visible(index) {
-            orphans = orphans + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
-                escape_html(link_label(node_value(index, "link", "uart"))) + "</span>" +
-                node_card(index, readonly) + "</li>"
+            orphans = orphans + mesh_branch(
+                mesh_badge(link_label(node_value(index, "link", "uart")), false),
+                node_card(index, readonly), "", "", false)
         }
         index = index + 1
     }
     if orphans != "" {
-        out = out + "<p class=\"notice bad\">These nodes are not attached to the gateway.</p>" +
-            "<ul class=\"mesh-children\">" + orphans + "</ul>"
+        out = out + template_fill(template_get("mesh-orphans"), vars("items", orphans))
     }
     if count == 0 {
-        out = out + "<div class=\"node-card empty\"><strong>No nodes yet</strong>" +
-            "<small>Add the first node to the mesh.</small></div>"
+        out = out + template_fill(template_get("mesh-empty"), vars("hint", "Add the first node to the mesh."))
     }
-    return "<div class=\"mesh-tree\">" + out + "</div>"
+    return template_fill(template_get("mesh-tree"), vars("content", out))
 }
 
 fn mesh_build_child_items(parent: string) string {
@@ -396,18 +416,19 @@ fn mesh_build_child_items(parent: string) string {
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) {
             if is_module_node(index) || is_device_node(index) {
-                var badge: string = "module"
+                var label: string = "module"
                 if is_device_node(index) {
-                    badge = "device"
+                    label = "device"
                 }
-                out = out + "<li class=\"mesh-branch module-branch\">" +
-                    "<span class=\"link-badge module\">" + badge + "</span>" +
-                    node_card(index, true) + "</li>"
+                out = out + mesh_branch(mesh_badge(label, true), node_card(index, true), "", "", true)
             } else {
                 let link: string = node_value(index, "link", "uart")
-                out = out + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
-                    escape_html(link_label(link)) + "</span>" + build_node_card(index) +
-                    mesh_build_children("node." + rho_int_to_str(index)) + "</li>"
+                out = out + mesh_branch(
+                    mesh_badge(link_label(link), false),
+                    build_node_card(index),
+                    "",
+                    mesh_build_children("node." + rho_int_to_str(index)),
+                    false)
             }
         }
         index = index + 1
@@ -420,7 +441,7 @@ fn mesh_build_children(parent: string) string {
     if items == "" {
         return ""
     }
-    return "<ul class=\"mesh-children\">" + items + "</ul>"
+    return template_fill(template_get("mesh-children"), vars("items", items))
 }
 
 fn mesh_build_tree() string {
@@ -428,28 +449,26 @@ fn mesh_build_tree() string {
         mesh_free_child_items(true)
     var out: string = build_gateway_card()
     if root_items != "" {
-        out = out + "<ul class=\"mesh-children\">" + root_items + "</ul>"
+        out = out + template_fill(template_get("mesh-children"), vars("items", root_items))
     }
     var orphans: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
         if !node_attached(index) && node_visible(index) {
-            orphans = orphans + "<li class=\"mesh-branch\"><span class=\"link-badge\">" +
-                escape_html(link_label(node_value(index, "link", "uart"))) + "</span>" +
-                build_node_card(index) + "</li>"
+            orphans = orphans + mesh_branch(
+                mesh_badge(link_label(node_value(index, "link", "uart")), false),
+                build_node_card(index), "", "", false)
         }
         index = index + 1
     }
     if orphans != "" {
-        out = out + "<p class=\"notice bad\">These nodes are not attached to the gateway.</p>" +
-            "<ul class=\"mesh-children\">" + orphans + "</ul>"
+        out = out + template_fill(template_get("mesh-orphans"), vars("items", orphans))
     }
     if count == 0 {
-        out = out + "<div class=\"node-card empty\"><strong>No nodes yet</strong>" +
-            "<small>Add the first node to the mesh.</small></div>"
+        out = out + template_fill(template_get("mesh-empty"), vars("hint", "Add the first node to the mesh."))
     }
-    return "<div class=\"mesh-tree\">" + out + "</div>"
+    return template_fill(template_get("mesh-tree"), vars("content", out))
 }
 
 /* -------------------------------------------------------------------------- */

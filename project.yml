@@ -55,6 +55,42 @@ targets:
         file: templates/mesh-card-node.html
       - name: mesh-card-gateway
         file: templates/mesh-card-gateway.html
+      - name: mesh-card-link
+        file: templates/mesh-card-link.html
+      - name: mesh-card-readonly
+        file: templates/mesh-card-readonly.html
+      - name: mesh-badge
+        file: templates/mesh-badge.html
+      - name: mesh-branch
+        file: templates/mesh-branch.html
+      - name: mesh-children
+        file: templates/mesh-children.html
+      - name: mesh-orphans
+        file: templates/mesh-orphans.html
+      - name: mesh-empty
+        file: templates/mesh-empty.html
+      - name: mesh-quick-add
+        file: templates/mesh-quick-add.html
+      - name: mesh-tree
+        file: templates/mesh-tree.html
+      - name: mesh-option
+        file: templates/mesh-option.html
+      - name: mesh-step-card
+        file: templates/mesh-step-card.html
+      - name: mesh-steps
+        file: templates/mesh-steps.html
+      - name: mesh-message
+        file: templates/mesh-message.html
+      - name: mesh-console
+        file: templates/mesh-console.html
+      - name: mesh-panel
+        file: templates/mesh-panel.html
+      - name: mesh-settings
+        file: templates/mesh-settings.html
+      - name: mesh-setting
+        file: templates/mesh-setting.html
+      - name: mesh-unknown-step
+        file: templates/mesh-unknown-step.html
     files:
       - path: app.go
         role: implementation
