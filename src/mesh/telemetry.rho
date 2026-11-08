@@ -24,6 +24,16 @@ extern fn telemetry_rollup(project: string) string
 extern fn telemetry_record(project: string, area_id: u32, node_id: u32, field_name: string, value: string, status: u32) u32
 extern fn telemetry_json_number(document: string, path: string, scale: string) string
 extern fn telemetry_json_bool(document: string, path: string) string
+extern fn telemetry_checkpoint(mode: string) string
+extern fn telemetry_vacuum(mode: string) string
+extern fn telemetry_storage_status(project: string) string
+extern fn telemetry_fault_record(project: string, gateway: string, field: string,
+    severity: string, message: string, area: u32, node: u32, status: u32, created_ms: string) u32
+extern fn telemetry_fault_list(project: string, since_ms: string, limit: u32) string
+extern fn telemetry_fault_clear(project: string, id: u32) string
+extern fn telemetry_fault_prune(project: string, days: u32) string
+extern fn telemetry_fault_rows(project: string, limit: u32) string
+
 
 // telemetry_path is where the store lives. A deployment names it; a workstation
 // keeps it under the Mesh state directory.
@@ -126,18 +136,41 @@ fn telemetry_project_ids() string {
 // hour rollups have their own, longer windows; a project setting changes the
 // raw window without making a chart of an older season disappear.
 fn mesh_retention_days(project: string) u32 {
-    var value: string = state_value_in(project_file(project), "telemetry_retention_days")
+    var value: string = settings_get("telemetry.raw_days", "")
+    if value == "" {
+        value = state_value_in(project_file(project), "telemetry_retention_days")
+    }
     if value == "" {
         value = getenv("ROBOHUB_MESH_TELEMETRY_RETENTION_DAYS")
     }
     if value == "" {
-        return 30
+        return 14
     }
     let days: u32 = u32(rho_int_from_str(value))
     if days == 0 {
-        return 30
+        return 14
     }
     return days
+}
+
+fn mesh_retention_setting(key: string, fallback: u32) u32 {
+    let value: string = settings_get("telemetry." + key, "")
+    if value == "" {
+        return fallback
+    }
+    let number: u32 = u32(rho_int_from_str(value))
+    if number == 0 {
+        return fallback
+    }
+    return number
+}
+
+fn mesh_vacuum_mode() string {
+    let mode: string = settings_get("telemetry.vacuum_mode", "")
+    if mode == "" {
+        return "incremental"
+    }
+    return mode
 }
 
 fn telemetry_prune_once() void {
@@ -155,10 +188,13 @@ fn telemetry_prune_once() void {
         if id == "" {
             continue
         }
-        let pruned: string = telemetry_prune(id, mesh_retention_days(id), 180, 1825)
+        let pruned: string = telemetry_prune(id, mesh_retention_days(id),
+            mesh_retention_setting("minute_days", 90),
+            mesh_retention_setting("hour_days", 1825))
         if rho_str_index_of(pruned, "\"ok\":true") < 0 {
             warn("mesh", "telemetry retention " + id + ": " + pruned)
         }
+        ignore_string(telemetry_fault_prune(id, mesh_retention_setting("fault_days", 365)))
     }
 }
 
@@ -317,8 +353,12 @@ fn telemetry_worker() void {
     // for the first pass.
     telemetry_prune_once()
     telemetry_device_poll_once()
+    ignore_string(telemetry_checkpoint("PASSIVE"))
     var ticks: u32 = 0
     var device_ticks: u32 = 0
+    var check_ticks: u32 = 0
+    let checkpoint_every: u32 = mesh_retention_setting("checkpoint_minutes", 5) * 30
+    let prune_every: u32 = mesh_retention_setting("prune_hours", 6) * 1800
     while true {
         telemetry_poll_once()
         device_ticks = device_ticks + 1
@@ -326,13 +366,26 @@ fn telemetry_worker() void {
             device_ticks = 0
             telemetry_device_poll_once()
         }
-        // Once an hour at the two-second poll cadence. The pass rolls each
+        check_ticks = check_ticks + 1
+        if check_ticks >= checkpoint_every {
+            check_ticks = 0
+            if rho_str_index_of(telemetry_checkpoint("PASSIVE"), "\"ok\":true") < 0 {
+                warn("mesh", "telemetry WAL checkpoint failed")
+            }
+        }
+        // Every six hours at the two-second poll cadence. The pass rolls each
         // project up before it prunes, so the old range a chart asks for is
-        // still there after the raw rows are gone.
+        // still there after the raw rows are gone. Checkpoint with TRUNCATE
+        // and vacuum only in this quieter maintenance window.
         ticks = ticks + 1
-        if ticks >= 1800 {
+        if ticks >= prune_every {
             ticks = 0
             telemetry_prune_once()
+            ignore_string(telemetry_checkpoint("TRUNCATE"))
+            let vacuum_mode: string = mesh_vacuum_mode()
+            if !rho_str_eq(vacuum_mode, "off") {
+                ignore_string(telemetry_vacuum(vacuum_mode))
+            }
         }
         telemetry_sleep(2000)
     }
@@ -431,4 +484,84 @@ fn mesh_api_telemetry_stream(req: Request) Response {
     // The live feed carries changes only; a reader that needs the current state
     // asks /telemetry/latest first.
     return sse_events(telemetry_event_stream(), "", 500)
+}
+fn mesh_fault_rows(project: string) string {
+    var out: string = ""
+    var rest: string = telemetry_fault_rows(project, 100)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let first: i32 = rho_str_index_of(line, "\t")
+        if first < 0 { continue }
+        let second_at: i32 = rho_str_index_of(rho_str_slice(line, u32(first) + 1,
+            u32(rho_strlen(line)) - u32(first) - 1), "\t")
+        if second_at < 0 { continue }
+        let second: u32 = u32(first) + 1 + u32(second_at) + 1
+        let third_at: i32 = rho_str_index_of(rho_str_slice(line, second,
+            u32(rho_strlen(line)) - second), "\t")
+        if third_at < 0 { continue }
+        let third: u32 = second + u32(third_at) + 1
+        let id: string = rho_str_slice(line, 0, u32(first))
+        let severity: string = rho_str_slice(line, u32(first) + 1,
+            u32(second_at))
+        let created: string = rho_str_slice(line, second, u32(third_at))
+        let message: string = rho_str_slice(line, third,
+            u32(rho_strlen(line)) - third)
+        var severity_css: string = "warn"
+        if rho_str_eq(severity, "ERROR") {
+            severity_css = "bad"
+        }
+        out = out + template_fill(template_get("fault-row"),
+            vars("id", id) + vars("severity", severity) +
+            vars("severity_css", severity_css) + vars("created", created) +
+            vars("message", message) + vars("csrf", forms_csrf_field()))
+    }
+    return out
+}
+
+fn mesh_faults_page(req: Request) Response {
+    let project: string = current_project()
+    if project == "" {
+        return page(req, i18n_t(req, "faults.title"),
+            "<p>Choose a project first.</p>")
+    }
+    let rows: string = mesh_fault_rows(project)
+    if rows == "" {
+        rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
+    }
+    let body: string = template_fill(template_get("faults"),
+        i18n_vars(req) + vars("rows", rows))
+    return page(req, i18n_t(req, "faults.title"), body)
+}
+
+fn mesh_fault_clear(req: Request) Response {
+    let body: string = request_body(req)
+    if !forms_csrf_ok(body) {
+        return page(req, i18n_t(req, "faults.title"),
+            "<p class=\"notice\">" + i18n_t(req, "settings.csrf_refused") + "</p>")
+    }
+    let id: u32 = u32(rho_int_from_str(form_value(body, "id")))
+    let project: string = current_project()
+    if project != "" {
+        ignore_string(telemetry_fault_clear(project, id))
+    }
+    return redirect("/faults")
+}
+
+fn mesh_api_telemetry_faults(req: Request) Response {
+    let project: string = param(req, "project")
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
+    let since: string = request_query_param(req, "since")
+    return Response{ 200, telemetry_fault_list(project, since, 100), "application/json", "" }
 }

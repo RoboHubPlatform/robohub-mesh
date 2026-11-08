@@ -78,3 +78,17 @@ struct TelemetryRollup1h {
     samples: i64
 }
 
+// Actionable faults: a reading whose status says the signal is not healthy. These drive the live UI and safety loops; raw debug traces and audit text stay in files. A fault is kept long enough for an operator to act on it and is pruned separately from the readings.
+struct TelemetryFault {
+    id: i64
+    project: string
+    gatewayId: string
+    areaId: i64
+    nodeId: i64
+    field: string
+    status: i64
+    severity: string
+    message: string
+    createdMs: i64
+}
+

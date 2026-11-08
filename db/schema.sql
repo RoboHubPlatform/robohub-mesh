@@ -7,6 +7,9 @@
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA busy_timeout=5000;
+PRAGMA journal_size_limit=16777216;
+PRAGMA wal_autocheckpoint=512;
+PRAGMA auto_vacuum=INCREMENTAL;
 
 -- One row per gateway feed, holding the sequence that has been committed and
 -- the address the feed was read from. A changed address starts a new feed.
@@ -71,6 +74,9 @@ CREATE TABLE IF NOT EXISTS telemetry_rollup_1m (
 CREATE INDEX IF NOT EXISTS telemetry_rollup_1m_series
     ON telemetry_rollup_1m(project, area_id, node_id, field, bucket_ms);
 
+CREATE INDEX IF NOT EXISTS telemetry_rollup_1m_time
+    ON telemetry_rollup_1m(project, bucket_ms);
+
 -- Hourly rollups, written from the minute rollups. They outlive raw readings
 -- and minute rollups, so a chart over a season still has a series.
 CREATE TABLE IF NOT EXISTS telemetry_rollup_1h (
@@ -88,3 +94,29 @@ CREATE TABLE IF NOT EXISTS telemetry_rollup_1h (
 
 CREATE INDEX IF NOT EXISTS telemetry_rollup_1h_series
     ON telemetry_rollup_1h(project, area_id, node_id, field, bucket_ms);
+
+CREATE INDEX IF NOT EXISTS telemetry_rollup_1h_time
+    ON telemetry_rollup_1h(project, bucket_ms);
+
+-- Actionable faults: a reading whose status says the signal is not healthy.
+-- These drive the live UI and safety loops; raw debug traces and audit text stay
+-- in files. A fault is kept long enough for an operator to act on it and is
+-- pruned separately from the readings.
+CREATE TABLE IF NOT EXISTS telemetry_fault (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project     TEXT NOT NULL,
+    gateway_id  TEXT NOT NULL DEFAULT '',
+    area_id     INTEGER NOT NULL DEFAULT 0,
+    node_id     INTEGER NOT NULL DEFAULT 0,
+    field       TEXT NOT NULL,
+    status      INTEGER NOT NULL,
+    severity    TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    created_ms  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS telemetry_fault_time
+    ON telemetry_fault(project, created_ms);
+
+CREATE INDEX IF NOT EXISTS telemetry_fault_open
+    ON telemetry_fault(project, severity, created_ms);

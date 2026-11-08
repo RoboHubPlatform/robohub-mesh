@@ -1,0 +1,6 @@
+<tr>
+  <td><span class="badge {{ severity_css }}">{{ severity }}</span></td>
+  <td><span class="local-time" data-ms="{{ created }}">{{ created }}</span></td>
+  <td>{{ message }}</td>
+  <td><form method="post" action="/mesh/faults/clear"><input type="hidden" name="id" value="{{ id }}">{{{ csrf }}}<button type="submit" class="quiet">{{t "faults.clear"}}</button></form></td>
+</tr>

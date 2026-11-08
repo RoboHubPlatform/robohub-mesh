@@ -3026,6 +3026,7 @@ fn mesh_menu(req: Request) string {
         out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     }
     out = out + mesh_menu_link(i18n_t(req, "nav.dashboard"), "/mesh", "⌁")
+    out = out + mesh_menu_link(i18n_t(req, "nav.faults"), "/faults", "!")
     let active: string = current_project()
     if active != "" {
         out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"

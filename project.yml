@@ -57,6 +57,10 @@ targets:
         file: templates/pages/wizard-step.html
       - name: settings
         file: templates/pages/settings.html
+      - name: faults
+        file: templates/pages/faults.html
+      - name: fault-row
+        file: templates/rows/fault-row.html
       - name: mesh-status
         file: templates/parts/mesh-status.html
       - name: mesh-card-device

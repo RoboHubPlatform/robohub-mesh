@@ -4,7 +4,8 @@ fn mesh_settings_tab(req: Request) string {
     let tab: string = request_query_param(req, "tab")
     if tab == "" { return "general" }
     if rho_str_eq(tab, "alerts") || rho_str_eq(tab, "auth") ||
-        rho_str_eq(tab, "gateway") || rho_str_eq(tab, "configuration") {
+        rho_str_eq(tab, "gateway") || rho_str_eq(tab, "storage") ||
+        rho_str_eq(tab, "configuration") {
         return tab
     }
     return "general"
@@ -12,8 +13,8 @@ fn mesh_settings_tab(req: Request) string {
 
 fn mesh_settings_nav(req: Request, active: string) string {
     var out: string = "<nav class=\"vtabnav settings-tabs\">"
-    let ids: string = "general,alerts,auth,gateway,configuration"
-    let keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.configuration"
+    let ids: string = "general,alerts,auth,gateway,storage,configuration"
+    let keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.storage,settings.tab.configuration"
     while ids != "" {
         let id_at: i32 = rho_str_index_of(ids, ",")
         let key_at: i32 = rho_str_index_of(keys, ",")
@@ -57,6 +58,28 @@ fn mesh_settings_form(req: Request, tab: string) string {
         fields[6] = FormField{ "telegram_token", "password", i18n_t(req, "settings.alerts.telegram_token"), "",
             "", false, "", "", settings_get("alerts.telegram-notifier.bot_token", ""), "", "" }
         return forms_open(fields, 7, "/settings?tab=alerts",
+            i18n_t(req, "settings.save"), i18n_locale(req))
+    }
+    if rho_str_eq(tab, "storage") {
+        var fields: FormField[7]
+        fields[0] = FormField{ "raw_days", "text", i18n_t(req, "settings.storage.raw_days"), "",
+            "14", false, "", "", settings_get("telemetry.raw_days", "14"), "", "numeric" }
+        fields[1] = FormField{ "minute_days", "text", i18n_t(req, "settings.storage.minute_days"), "",
+            "90", false, "", "", settings_get("telemetry.minute_days", "90"), "", "numeric" }
+        fields[2] = FormField{ "hour_days", "text", i18n_t(req, "settings.storage.hour_days"), "",
+            "1825", false, "", "", settings_get("telemetry.hour_days", "1825"), "", "numeric" }
+        fields[3] = FormField{ "fault_days", "text", i18n_t(req, "settings.storage.fault_days"), "",
+            "365", false, "", "", settings_get("telemetry.fault_days", "365"), "", "numeric" }
+        fields[4] = FormField{ "checkpoint_minutes", "text", i18n_t(req, "settings.storage.checkpoint"), "",
+            "5", false, "", "", settings_get("telemetry.checkpoint_minutes", "5"), "", "numeric" }
+        fields[5] = FormField{ "prune_hours", "text", i18n_t(req, "settings.storage.prune_hours"), "",
+            "6", false, "", "", settings_get("telemetry.prune_hours", "6"), "", "numeric" }
+        fields[6] = FormField{ "vacuum_mode", "select", i18n_t(req, "settings.storage.vacuum"), "",
+            "", false, "", "off|" + i18n_t(req, "settings.storage.vacuum_off") +
+            ",incremental|" + i18n_t(req, "settings.storage.vacuum_incremental") +
+            ",full|" + i18n_t(req, "settings.storage.vacuum_full"),
+            settings_get("telemetry.vacuum_mode", "incremental"), "", "" }
+        return forms_open(fields, 7, "/settings?tab=storage",
             i18n_t(req, "settings.save"), i18n_locale(req))
     }
     if rho_str_eq(tab, "auth") {
@@ -106,6 +129,16 @@ fn mesh_settings_save(req: Request) Response {
     let tab: string = mesh_settings_tab(req)
     if !forms_csrf_ok(body) {
         return mesh_settings_page_message(req, i18n_t(req, "settings.csrf_refused"))
+    }
+    if rho_str_eq(tab, "storage") {
+        settings_set("telemetry.raw_days", device_trim(form_value(body, "raw_days")))
+        settings_set("telemetry.minute_days", device_trim(form_value(body, "minute_days")))
+        settings_set("telemetry.hour_days", device_trim(form_value(body, "hour_days")))
+        settings_set("telemetry.fault_days", device_trim(form_value(body, "fault_days")))
+        settings_set("telemetry.checkpoint_minutes", device_trim(form_value(body, "checkpoint_minutes")))
+        settings_set("telemetry.prune_hours", device_trim(form_value(body, "prune_hours")))
+        settings_set("telemetry.vacuum_mode", device_trim(form_value(body, "vacuum_mode")))
+        return redirect("/settings?tab=storage")
     }
     if rho_str_eq(tab, "alerts") {
         settings_set("alerts.alert-dispatcher.targets", device_trim(form_value(body, "targets")))
