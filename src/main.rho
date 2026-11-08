@@ -76,6 +76,7 @@ route POST "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_so
 route GET "/mesh/api/projects/{project}/telemetry/status" => mesh_api_telemetry_status
 route GET "/mesh/api/projects/{project}/telemetry/latest" => mesh_api_telemetry_latest
 route GET "/mesh/api/projects/{project}/telemetry/series" => mesh_api_telemetry_series
+route GET "/mesh/events" => mesh_events
 route POST "/mesh/accept" => mesh_accept
 route POST "/mesh/reopen" => mesh_reopen
 route GET "/mesh/step/network" => mesh_network_page

@@ -406,7 +406,36 @@ fn mesh_tree(readonly: bool) string {
     if count == 0 {
         out = out + template_fill(template_get("mesh-empty"), vars("hint", "Add the first node to the mesh."))
     }
-    return template_fill(template_get("mesh-tree"), vars("content", out))
+    return template_fill(template_get("mesh-tree"), vars("content", out) + vars("tree_event", mesh_tree_event_name(readonly)))
+}
+
+fn mesh_tree_event_name(readonly: bool) string {
+    if readonly {
+        return "mesh-tree"
+    }
+    return "mesh-tree-edit"
+}
+
+fn mesh_event_json(event: string, data: string) string {
+    return "{\"event\":" + json_string(event) + ",\"data\":" + json_string(data) + "}\n"
+}
+
+fn mesh_event_tree() void {
+    ensure_wizard_dir()
+    let file: string = wizard_dir() + "/tree-events.jsonl"
+    let lines: string = mesh_event_json("mesh-tree", mesh_tree(true)) +
+        mesh_event_json("mesh-tree-edit", mesh_tree(false))
+    ignore_bool(rho_write_text(file, rho_read_text(file) + lines))
+}
+
+fn mesh_events(req: Request) Response {
+    ensure_wizard_dir()
+    let snapshot: string = wizard_dir() + "/tree-snapshot.jsonl"
+    let live: string = wizard_dir() + "/tree-events.jsonl"
+    ignore_bool(rho_write_text(snapshot,
+        mesh_event_json("mesh-tree", mesh_tree(true)) +
+        mesh_event_json("mesh-tree-edit", mesh_tree(false))))
+    return sse_events(live, snapshot, 1000)
 }
 
 fn mesh_build_child_items(parent: string) string {
@@ -468,7 +497,7 @@ fn mesh_build_tree() string {
     if count == 0 {
         out = out + template_fill(template_get("mesh-empty"), vars("hint", "Add the first node to the mesh."))
     }
-    return template_fill(template_get("mesh-tree"), vars("content", out))
+    return template_fill(template_get("mesh-tree"), vars("content", out) + vars("tree_event", "mesh-tree"))
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2505,7 +2534,7 @@ fn mesh_node_page(req: Request) Response {
     return page(title, body)
 }
 
-fn mesh_node_post(req: Request) Response {
+fn mesh_node_post_inner(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3132,7 +3161,7 @@ fn mesh_page(req: Request) Response {
     return html(status_ok(), mesh_shell(title, content))
 }
 
-fn mesh_accept(req: Request) Response {
+fn mesh_accept_inner(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3160,7 +3189,7 @@ fn mesh_accept(req: Request) Response {
     return mesh_page(req)
 }
 
-fn mesh_reopen(req: Request) Response {
+fn mesh_reopen_inner(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3168,6 +3197,36 @@ fn mesh_reopen(req: Request) Response {
     mesh_reset_after("topology")
     save_setting("mesh_message", "Topology unlocked for editing.")
     return mesh_page(req)
+}
+
+fn mesh_node_post(req: Request) Response {
+    let response: Response = mesh_node_post_inner(req)
+    mesh_event_tree()
+    return response
+}
+
+fn mesh_accept(req: Request) Response {
+    let response: Response = mesh_accept_inner(req)
+    mesh_event_tree()
+    return response
+}
+
+fn mesh_reopen(req: Request) Response {
+    let response: Response = mesh_reopen_inner(req)
+    mesh_event_tree()
+    return response
+}
+
+fn mesh_network_accept(req: Request) Response {
+    let response: Response = mesh_network_accept_inner(req)
+    mesh_event_tree()
+    return response
+}
+
+fn mesh_build_node_post(req: Request) Response {
+    let response: Response = mesh_build_node_post_inner(req)
+    mesh_event_tree()
+    return response
 }
 
 fn mesh_secret(name: string, label: string, value: string) string {
@@ -3530,7 +3589,7 @@ fn mesh_network_page(req: Request) Response {
     return html(status_ok(), mesh_shell("Network", content))
 }
 
-fn mesh_network_accept(req: Request) Response {
+fn mesh_network_accept_inner(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3814,7 +3873,7 @@ fn mesh_build_node_page(req: Request) Response {
     return html(status_ok(), mesh_shell("Build node", content))
 }
 
-fn mesh_build_node_post(req: Request) Response {
+fn mesh_build_node_post_inner(req: Request) Response {
     if current_project() == "" {
         return mesh_dashboard(req)
     }
