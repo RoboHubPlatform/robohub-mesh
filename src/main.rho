@@ -4,13 +4,15 @@ module mesh
 // It is standalone on its own port and can be launched by the keeper.
 
 include "mesh/storage.rho"
-include "../../../contracts/alert/manager.rho"
+include "forms"
+include "settings"
+include "alert"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/telemetry.rho"
 include "mesh/firmware.rho"
-include "../../../modules/htmx/src/main.rho"
-include "../../../modules/i18n/src/main.rho"
+include "htmx"
+include "i18n"
 
 import std.web.http
 import std.web.template

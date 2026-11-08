@@ -1,7 +1,7 @@
 module mesh.wizard_test
 
 include "../src/mesh/wizard_text.rho"
-include "../../../contracts/alert/rule.rho"
+include "contracts/alert/rule.rho"
 
 // Unit tests for the string half of the deployment wizard.
 //
