@@ -3036,7 +3036,7 @@ fn mesh_menu(req: Request) string {
         out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build", "3")
         out = out + mesh_menu_link(i18n_t(req, "nav.verify"), "/mesh/step/verify", "4")
         out = out + mesh_menu_link(i18n_t(req, "nav.gateway"), "/mesh/gateway", "⌂")
-        out = out + mesh_menu_link(i18n_t(req, "nav.settings"),
+        out = out + mesh_menu_link(i18n_t(req, "nav.project_settings"),
             "/mesh/project/" + active + "/settings", "⚙")
     }
     out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"

@@ -1,19 +1,19 @@
 <style>
-.settings-layout { display: flex; gap: 1.2rem; align-items: flex-start; }
-.settings-layout.horizontal { flex-direction: column; }
-.settings-tabs { display: flex; flex-direction: column; gap: .25rem; min-width: 12rem; padding-right: .6rem; border-right: 1px solid rgba(228,184,102,.25); }
-.settings-layout.horizontal .settings-tabs { flex-direction: row; flex-wrap: wrap; min-width: 0; padding: 0; border-right: 0; border-bottom: 1px solid rgba(228,184,102,.25); }
-.settings-tabs a { padding: .45rem .8rem; border-radius: 8px; color: #8aa0b8; text-decoration: none; font-size: .82rem; }
-.settings-tabs a:hover { color: #e4b866; }
-.settings-tabs a.active { color: #1b2a3a; background: #e4b866; font-weight: 700; }
+.settings-layout { display: flex; align-items: stretch; width: 100%; max-width: 980px; min-height: 360px; background: rgba(127,127,127,.06); border: 1px solid rgba(127,127,127,.18); border-radius: 12px; overflow: hidden; }
+.settings-tabs { flex: 0 0 220px; width: 220px; display: flex; flex-direction: column; gap: .25rem; padding: .65rem; background: rgba(127,127,127,.10); border-right: 1px solid rgba(127,127,127,.18); }
+.settings-tabs a { display: block; padding: .6rem .75rem; border-radius: 8px; color: inherit; opacity: .72; text-decoration: none; font-size: .85rem; }
+.settings-tabs a:hover { opacity: 1; background: rgba(127,127,127,.10); }
+.settings-tabs a.active { opacity: 1; color: #e4b866; font-weight: 700; background: rgba(228,184,102,.18); box-shadow: inset 3px 0 0 #e4b866; }
+.settings { flex: 1 1 720px; max-width: 720px; min-height: 360px; padding: 1.25rem 1.4rem; background: rgba(127,127,127,.035); }
 .settings dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1rem; }
 .settings dt { color: #8aa0b8; }
 .settings dd { margin: 0; }
+@media (max-width: 760px) { .settings-layout { flex-direction: column; } .settings-tabs { flex: none; width: auto; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid rgba(127,127,127,.18); } .settings { max-width: none; min-height: 0; } }
 </style>
 <h1>{{t "page.settings"}}</h1>
 <p>{{t "settings.intro"}}</p>
 {{{ notice }}}
-<div class="settings-layout {{ tabs_orientation }}">
+<div class="settings-layout">
   {{{ nav }}}
   <section class="settings">{{{ tab_content }}}</section>
 </div>
