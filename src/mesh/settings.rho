@@ -61,7 +61,7 @@ fn mesh_settings_form(req: Request, tab: string) string {
             i18n_t(req, "settings.save"), i18n_locale(req))
     }
     if rho_str_eq(tab, "storage") {
-        var fields: FormField[7]
+        var fields: FormField[8]
         fields[0] = FormField{ "raw_days", "text", i18n_t(req, "settings.storage.raw_days"), "",
             "14", false, "", "", settings_get("telemetry.raw_days", "14"), "", "numeric" }
         fields[1] = FormField{ "minute_days", "text", i18n_t(req, "settings.storage.minute_days"), "",
@@ -79,7 +79,9 @@ fn mesh_settings_form(req: Request, tab: string) string {
             ",incremental|" + i18n_t(req, "settings.storage.vacuum_incremental") +
             ",full|" + i18n_t(req, "settings.storage.vacuum_full"),
             settings_get("telemetry.vacuum_mode", "incremental"), "", "" }
-        return forms_open(fields, 7, "/settings?tab=storage",
+        fields[7] = FormField{ "backoff_max_s", "text", i18n_t(req, "settings.storage.backoff"), "",
+            "60", false, "", "", settings_get("telemetry.backoff_max_s", "60"), "", "numeric" }
+        return forms_open(fields, 8, "/settings?tab=storage",
             i18n_t(req, "settings.save"), i18n_locale(req))
     }
     if rho_str_eq(tab, "auth") {
@@ -138,6 +140,7 @@ fn mesh_settings_save(req: Request) Response {
         settings_set("telemetry.checkpoint_minutes", device_trim(form_value(body, "checkpoint_minutes")))
         settings_set("telemetry.prune_hours", device_trim(form_value(body, "prune_hours")))
         settings_set("telemetry.vacuum_mode", device_trim(form_value(body, "vacuum_mode")))
+        settings_set("telemetry.backoff_max_s", device_trim(form_value(body, "backoff_max_s")))
         return redirect("/settings?tab=storage")
     }
     if rho_str_eq(tab, "alerts") {

@@ -211,6 +211,59 @@ fn mesh_gateway_token(project: string) string {
     return getenv("ROBOHUB_GATEWAY_TOKEN")
 }
 
+fn mesh_now_seconds() u32 {
+    let report: string = wizard_report("telemetry-now")
+    ignore_u32(rho_exec("date", "+%s", report))
+    return u32(rho_int_from_str(first_line(rho_read_text(report))))
+}
+
+fn mesh_gateway_value(project: string, key: string) string {
+    return state_value_in(project_file(project), "gateway." + key)
+}
+
+fn mesh_gateway_save(project: string, key: string, value: string) void {
+    save_setting_at(project_file(project), "gateway." + key, value)
+}
+
+fn mesh_gateway_ready(project: string) bool {
+    let next: string = mesh_gateway_value(project, "next_poll_s")
+    if next == "" {
+        return true
+    }
+    return mesh_now_seconds() >= u32(rho_int_from_str(next))
+}
+
+fn mesh_gateway_failed(project: string, message: string) void {
+    let now: u32 = mesh_now_seconds()
+    var backoff: u32 = u32(rho_int_from_str(mesh_gateway_value(project, "backoff_s")))
+    if backoff == 0 {
+        backoff = 2
+    } else {
+        backoff = backoff * 2
+    }
+    let maximum: u32 = mesh_retention_setting("backoff_max_s", 60)
+    if backoff > maximum {
+        backoff = maximum
+    }
+    mesh_gateway_save(project, "backoff_s", rho_int_to_str(backoff))
+    mesh_gateway_save(project, "next_poll_s", rho_int_to_str(now + backoff))
+    mesh_gateway_save(project, "last_error", message)
+    if mesh_gateway_value(project, "fault_open") != "true" {
+        ignore_u32(telemetry_fault_record(project, project + "@gateway", "gateway",
+            "ERROR", "gateway unreachable: " + message, 0, 0, 2, ""))
+        mesh_gateway_save(project, "fault_open", "true")
+    }
+}
+
+fn mesh_gateway_ok(project: string) void {
+    let now: u32 = mesh_now_seconds()
+    mesh_gateway_save(project, "backoff_s", "0")
+    mesh_gateway_save(project, "next_poll_s", "0")
+    mesh_gateway_save(project, "fault_open", "")
+    mesh_gateway_save(project, "last_error", "")
+    mesh_gateway_save(project, "last_success_s", rho_int_to_str(now))
+}
+
 // telemetry_poll_once reads one page from every project's gateway. The key is
 // the project and the gateway address together: a project pointed at another
 // gateway starts from its new feed rather than from a sequence that belonged to
@@ -234,14 +287,21 @@ fn telemetry_poll_once() void {
         if url == "" {
             continue
         }
+        if !mesh_gateway_ready(id) {
+            continue
+        }
         let result: string = telemetry_poll(id, id + "@" + url, url,
             mesh_gateway_token(id))
         // A gateway that is simply down is expected while a project is being
-        // built; the store's status page is where that belongs. A failure of
-        // the store itself is what should reach the log every time.
-        if rho_str_index_of(result, "\"ok\":true") < 0 &&
-            rho_str_index_of(result, "the gateway did not answer") < 0 {
-            warn("mesh", "telemetry " + id + ": " + result)
+        // built. It becomes a fault once and then backs off exponentially, so
+        // the poll loop does not hammer a dead link or fill the log.
+        if rho_str_index_of(result, "\"ok\":true") < 0 {
+            mesh_gateway_failed(id, result)
+            if rho_str_index_of(result, "the gateway did not answer") < 0 {
+                warn("mesh", "telemetry " + id + ": " + result)
+            }
+        } else {
+            mesh_gateway_ok(id)
         }
     }
 }
@@ -598,6 +658,28 @@ fn mesh_faults_events(req: Request) Response {
     ignore_bool(rho_write_text(mesh_fault_snapshot_file(),
         "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"))
     return sse_events(mesh_fault_events_file(), mesh_fault_snapshot_file(), 1000)
+}
+
+fn json_number_or_zero(value: string) string {
+    if value == "" { return "0" }
+    return value
+}
+
+fn mesh_gateway_status_json(project: string) string {
+    return "{\"ok\":true" +
+        ",\"backoff_s\":" + json_number_or_zero(mesh_gateway_value(project, "backoff_s")) +
+        ",\"next_poll_s\":" + json_number_or_zero(mesh_gateway_value(project, "next_poll_s")) +
+        ",\"last_success_s\":" + json_number_or_zero(mesh_gateway_value(project, "last_success_s")) +
+        ",\"fault_open\":" + json_string(mesh_gateway_value(project, "fault_open")) +
+        ",\"last_error\":" + json_string(mesh_gateway_value(project, "last_error")) + "}"
+}
+
+fn mesh_api_gateway_status(req: Request) Response {
+    let project: string = param(req, "project")
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
+    return Response{ 200, mesh_gateway_status_json(project), "application/json", "" }
 }
 
 fn mesh_fault_rows(project: string) string {

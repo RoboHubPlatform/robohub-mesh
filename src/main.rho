@@ -63,6 +63,7 @@ route GET "/faults" => mesh_faults_page
 route GET "/mesh/faults/events" => mesh_faults_events
 route POST "/faults/clear" => mesh_fault_clear
 route GET "/mesh/api/projects/{project}/telemetry/faults" => mesh_api_telemetry_faults
+route GET "/mesh/api/projects/{project}/telemetry/gateway" => mesh_api_gateway_status
 route GET "/settings" => mesh_settings_page
 route POST "/settings" => mesh_settings_save
 route GET "/mesh/docs" => mesh_docs_page

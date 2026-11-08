@@ -50,5 +50,6 @@
   "faults.message": "Message",
   "faults.clear": "Clear",
   "nav.faults": "Faults",
-  "faults.empty": "No faults recorded."
+  "faults.empty": "No faults recorded.",
+  "settings.storage.backoff": "Maximum gateway backoff (seconds)"
 }

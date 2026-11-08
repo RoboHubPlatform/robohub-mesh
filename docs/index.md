@@ -350,6 +350,25 @@ topology, edits a connection, creates, renames and deletes a project, checks the
 locked tree, and reads the event stream.
 
 
+
+### Gateway outage behaviour
+
+Mesh backs off a gateway that does not answer: the delay starts at two seconds,
+doubles to the configured maximum, and resets on the next successful poll. The
+first failure in an outage is recorded as an actionable telemetry fault so the
+fault page and Keeper loops see it without a repeated log line every two
+seconds.
+
+`GET /mesh/api/projects/{project}/telemetry/gateway` reports the backoff,
+next poll time, last success, whether a fault is open, and the last error. The
+maximum backoff is set in Mesh Settings → Storage.
+
+The gateway keeps its own sequenced outbox, so a Mesh outage does not require
+the gateway to discard frames; Mesh's cursor and unique key already make
+repeated pages idempotent. Node-side buffering and gateway outbox retention are
+the remaining store-and-forward pieces, and belong to the firmware/gateway
+repositories because they run before this worker sees a frame.
+
 ## Connecting another application
 
 A project's settings name the gateway URL that project owns. The project list is
