@@ -2,6 +2,21 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.5.2] - 2026-11-08
+
+English/Romanian UI and settings, host gateway/auth/alert/storage tabs, and
+HTMX/SSE updates for the tree and actionable faults. Telemetry now bounds WAL
+and retention, supports incremental/full vacuum, exposes storage status, stores
+faults in a dedicated table with live events, and backs off a gateway that stops
+answering.
+
+## [0.5.1] - 2026-11-06
+
+Security: per-project scope enforcement on all Mesh API handlers. Device HTTP
+polling supports per-device bearer tokens. Recovery mode added to generated
+node firmware (re-init on sensor failure). Frames no longer polluted by sensor
+entries. Chart widget now handles decimal values and limited time window.
+
 ## [0.5.0] - 2026-11-05
 
 Device telemetry follows the same descriptor model as sensors. Mesh polls HTTP
@@ -118,6 +133,7 @@ tree, attached to a gateway or a relay; it is not built or programmed. The
 editor discovers device integrations from the checkout; the Shelly Plug M Gen3
 is the first, over HTTP RPC or MQTT. An HTTP device can be polled and switched
 from its node page; an MQTT device is carried by its relay or gateway.
+
 ## [0.2.0] - 2026-11-02
 
 A node is one computer, and a sensor module is a node of its own (`kind: module`)
@@ -156,10 +172,3 @@ activated by opening it, from its card or from its settings, and made inactive
 again from the same places; with no active project the Operations group is
 hidden and the step pages return to the dashboard. The menu also returns to the
 keeper when the keeper started the application.
-
-## [0.5.1] - 2026-11-06
-
-Security: per-project scope enforcement on all Mesh API handlers. Device HTTP
-polling supports per-device bearer tokens. Recovery mode added to generated
-node firmware (re-init on sensor failure). Frames no longer polluted by sensor
-entries. Chart widget now handles decimal values and limited time window.
