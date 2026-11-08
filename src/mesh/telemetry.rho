@@ -554,6 +554,13 @@ fn mesh_fault_clear(req: Request) Response {
     if project != "" {
         ignore_string(telemetry_fault_clear(project, id))
     }
+    if has_header(req, "HX-Request") && rho_str_eq(header_str(req, "HX-Request"), "true") {
+        let rows: string = mesh_fault_rows(project)
+        if rows == "" {
+            rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
+        }
+        return html(status_ok(), rows)
+    }
     return redirect("/faults")
 }
 
