@@ -40,6 +40,8 @@ sql:
 
 deps:
   rho-log: ">=0.1.0"
+  robohub:
+    htmx: ">=0.1.0"
   rho-sql: ">=0.1.0"
 
 # A hosted application is not a service the keeper is: it has its own listener,

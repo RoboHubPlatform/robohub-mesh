@@ -9,6 +9,7 @@ include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/telemetry.rho"
 include "mesh/firmware.rho"
+include "../../../modules/htmx/src/main.rho"
 
 import std.web.http
 import std.web.template

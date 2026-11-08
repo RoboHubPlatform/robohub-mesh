@@ -3017,7 +3017,7 @@ fn mesh_menu() string {
 
 fn mesh_shell(title: string, content: string) string {
     return template_fill(template_get("layout"),
-        vars("title", title) + vars("menu", mesh_menu()) +
+        vars("title", title) + vars("htmx", htmx_head()) + vars("menu", mesh_menu()) +
         vars("context", mesh_context()) + vars("projects", mesh_bottom_menu()) +
         vars("body", content))
 }
