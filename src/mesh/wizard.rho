@@ -382,7 +382,7 @@ fn save_setting(key: string, value: string) void {
     out = out + key + "=" + sanitize(value) + "\n"
     let written: bool = rho_write_text(wizard_file(), out)
     if !written {
-        error("keeper", "could not write " + wizard_file())
+        error("mesh", "could not write " + wizard_file())
     }
 }
 
@@ -3451,7 +3451,7 @@ fn run_step_action(stage: string, action: string) u32 {
         report = stage + "-" + action
     }
     begin_progress(stage)
-    info("keeper", "starting " + action + " on " + stage)
+    info("mesh", "starting " + action + " on " + stage)
     var code: u32 = 1
     if handler != "" {
         code = run_handler(handler)
@@ -3478,10 +3478,10 @@ fn run_step_action(stage: string, action: string) u32 {
     finish_progress(stage, code)
     save_setting("last_report." + stage, progress_path(stage))
     if code == 0 {
-        info("keeper", action + " on " + stage + " succeeded")
+        info("mesh", action + " on " + stage + " succeeded")
         save_setting("message." + stage, action_attr(stage, action, "label") + " succeeded.")
     } else if code == 2 {
-        warn("keeper", action + " on " + stage + " produced an unexpected result")
+        warn("mesh", action + " on " + stage + " produced an unexpected result")
         if stage == "verify" {
             save_setting("message." + stage,
                 "The gateway answers, but no node reading has arrived yet. Check the connection's parent serial port and that the node is running.")
@@ -3490,7 +3490,7 @@ fn run_step_action(stage: string, action: string) u32 {
                 action_attr(stage, action, "label") + " ran, but the expected result was not there.")
         }
     } else {
-        error("keeper", action + " on " + stage + " failed with status " + rho_int_to_str(code))
+        error("mesh", action + " on " + stage + " failed with status " + rho_int_to_str(code))
         save_setting("message." + stage,
             action_attr(stage, action, "label") + " failed with exit status " + rho_int_to_str(code) + ".")
     }

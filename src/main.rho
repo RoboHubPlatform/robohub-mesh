@@ -16,6 +16,7 @@ include "mesh/firmware.rho"
 include "mesh/settings.rho"
 include "htmx"
 include "i18n"
+include "logging"
 
 import std.web.http
 import std.web.template
@@ -120,6 +121,11 @@ route POST "/mesh/console/clear/{step}" => mesh_console_clear
 // background is the telemetry worker: the generated server runs it on its own
 // goroutine beside the HTTP listener. It polls every project's gateway and
 // writes what it reads into the store the API serves.
+fn init() void {
+    log_config_apply("mesh")
+    info("mesh", "starting")
+}
+
 fn background() void {
     telemetry_worker()
 }

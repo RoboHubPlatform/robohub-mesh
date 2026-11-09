@@ -51,5 +51,6 @@
   "faults.clear": "Clear",
   "nav.faults": "Faults",
   "faults.empty": "No faults recorded.",
-  "settings.storage.backoff": "Maximum gateway backoff (seconds)"
+  "settings.storage.backoff": "Maximum gateway backoff (seconds)",
+  "settings.tab.logging": "Logging"
 }

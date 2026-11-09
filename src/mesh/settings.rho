@@ -5,7 +5,7 @@ fn mesh_settings_tab(req: Request) string {
     if tab == "" { return "general" }
     if rho_str_eq(tab, "alerts") || rho_str_eq(tab, "auth") ||
         rho_str_eq(tab, "gateway") || rho_str_eq(tab, "storage") ||
-        rho_str_eq(tab, "configuration") {
+        rho_str_eq(tab, "logging") || rho_str_eq(tab, "configuration") {
         return tab
     }
     return "general"
@@ -13,8 +13,8 @@ fn mesh_settings_tab(req: Request) string {
 
 fn mesh_settings_nav(req: Request, active: string) string {
     var out: string = "<nav class=\"vtabnav settings-tabs\">"
-    let ids: string = "general,alerts,auth,gateway,storage,configuration"
-    let keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.storage,settings.tab.configuration"
+    let ids: string = "general,alerts,auth,gateway,storage,logging,configuration"
+    let keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.storage,settings.tab.logging,settings.tab.configuration"
     while ids != "" {
         let id_at: i32 = rho_str_index_of(ids, ",")
         let key_at: i32 = rho_str_index_of(keys, ",")
@@ -36,6 +36,10 @@ fn mesh_settings_nav(req: Request, active: string) string {
 }
 
 fn mesh_settings_form(req: Request, tab: string) string {
+    if rho_str_eq(tab, "logging") {
+        return log_settings_form("mesh", "/settings?tab=logging",
+            i18n_locale(req))
+    }
     if rho_str_eq(tab, "alerts") {
         var fields: FormField[7]
         fields[0] = FormField{ "targets", "text", i18n_t(req, "settings.alerts.targets"), "",
@@ -131,6 +135,12 @@ fn mesh_settings_save(req: Request) Response {
     let tab: string = mesh_settings_tab(req)
     if !forms_csrf_ok(body) {
         return mesh_settings_page_message(req, i18n_t(req, "settings.csrf_refused"))
+    }
+    if rho_str_eq(tab, "logging") {
+        if log_settings_save("mesh", body) {
+            info("mesh", "logging settings updated")
+        }
+        return redirect("/settings?tab=logging")
     }
     if rho_str_eq(tab, "storage") {
         settings_set("telemetry.raw_days", device_trim(form_value(body, "raw_days")))

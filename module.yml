@@ -42,8 +42,9 @@ sql:
   out: src/db
 
 deps:
-  rho-log: ">=0.1.0"
+  rho-log: ">=0.1.2"
   robohub:
+    logging: ">=0.1.0"
     htmx: ">=0.1.0"
     i18n: ">=0.1.0"
     settings: ">=0.1.0"

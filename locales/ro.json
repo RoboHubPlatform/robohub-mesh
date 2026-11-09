@@ -51,5 +51,6 @@
   "faults.clear": "Șterge",
   "nav.faults": "Defecte",
   "faults.empty": "Niciun defect înregistrat.",
-  "settings.storage.backoff": "Backoff maxim gateway (secunde)"
+  "settings.storage.backoff": "Backoff maxim gateway (secunde)",
+  "settings.tab.logging": "Jurnalizare"
 }
