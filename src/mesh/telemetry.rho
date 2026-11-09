@@ -88,6 +88,10 @@ fn mesh_scoped(req: Request, project: string) bool {
     if aud == "" {
         return true
     }
+    let subject: string = header_str(req, "X-Rho-Subject")
+    if mesh_subject_revoked(project, subject) {
+        return false
+    }
     let scopes: string = header_str(req, "X-Rho-Scopes")
     if mesh_scope_has(scopes, "*") || mesh_scope_has(scopes, "mesh:*") {
         return true
@@ -204,7 +208,7 @@ fn telemetry_prune_once() void {
 // mesh_gateway_token is the bearer token the gateway's outbox requires. A
 // project may name its own; otherwise the deployment's shared token is used.
 fn mesh_gateway_token(project: string) string {
-    let token: string = state_value_in(project_file(project), "gateway_token")
+    let token: string = mesh_active_token(project)
     if token != "" {
         return token
     }

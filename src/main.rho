@@ -9,7 +9,9 @@ include "settings"
 include "alert"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
+include "mesh/tokens.rho"
 include "mesh/telemetry.rho"
+include "mesh/clients.rho"
 include "mesh/firmware.rho"
 include "mesh/settings.rho"
 include "htmx"
@@ -51,6 +53,8 @@ route GET "/mesh" => mesh_dashboard
 route GET "/mesh/plan" => mesh_page
 route GET "/mesh/project/{id}/settings" => mesh_project_settings_page
 route POST "/mesh/project/{id}/settings" => mesh_project_settings_post
+route POST "/mesh/project/{id}/token" => mesh_project_token_generate
+route POST "/mesh/project/{id}/token/revoke" => mesh_project_token_revoke
 route GET "/mesh/project/{id}" => mesh_project_open_page
 route POST "/mesh/project/delete" => mesh_project_delete
 route POST "/mesh/project/active" => mesh_project_active
@@ -78,6 +82,10 @@ route GET "/mesh/api/devices" => mesh_api_devices
 route POST "/mesh/api/devices/{id}/switch" => mesh_api_device_switch
 route GET "/mesh/api/gateway" => mesh_api_gateway
 route GET "/mesh/api/sources" => mesh_api_sources
+route POST "/mesh/api/clients/register" => mesh_client_register
+route POST "/mesh/api/clients/heartbeat" => mesh_client_heartbeat
+route GET "/mesh/api/clients" => mesh_client_list
+route POST "/mesh/api/clients/publish" => mesh_publish
 route GET "/mesh/api/projects" => mesh_api_projects
 route GET "/mesh/api/projects/{project}/gateway" => mesh_api_project_gateway
 route GET "/mesh/api/projects/{project}/sources" => mesh_api_project_sources

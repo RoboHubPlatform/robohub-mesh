@@ -387,6 +387,64 @@ dashboard without the dashboard knowing its type. A signal is listed even when
 the gateway does not carry its field yet; its value is empty until the node or
 device reports it.
 
+## Application clients
+
+An application that reads a project registers itself instead of being known to
+Mesh in advance. The handshake is HTTP because the gateway provider is already
+an HTTP client and the applications are separate processes; the same facts a
+socket frame would carry travel in the registration.
+
+```http
+POST /mesh/api/clients/register
+Authorization: Bearer <mesh service token>
+
+{"app_name":"robohub-energy","project":"default",
+ "instance_id":"energy-8482",
+ "callback_url":"http://127.0.0.1:8482/api/energy/mesh/events",
+ "topics":"energy.commands,grid.status.*"}
+```
+
+Mesh stores the client, the project it attached to, its callback and its
+last-seen time, and returns a per-client secret.
+
+The token that authorizes this is **per application and per project**. The
+Mesh project settings page has an *Application tokens* table: generate a token
+for the application name, choose its lifetime, then copy it into that
+application's Mesh token setting. A project can hold several of these tokens, so
+the aquarium and energy tokens are independent; rotating or revoking one does
+not affect the other. A token is scoped to the project, so the application's
+project list shows that project only. A deliberately broader `mesh:*` token is
+an administrative choice, not the default. Every later call carries the
+service token; every callback Mesh makes carries
+`Authorization: Bearer <client secret>`, so an application callback is not open
+to any local process.
+
+```http
+POST /mesh/api/clients/heartbeat
+{"client_id":"robohub-energy-energy-8482"}
+
+POST /mesh/api/clients/publish
+{"project":"default","topic":"energy.fault",
+ "payload":"South roof: back-sheet temperature above limit"}
+
+GET /mesh/api/clients
+```
+
+`GET /mesh/api/clients` lists each client with its project, topics, last-seen
+time and online flag. A client is online when its last heartbeat is less than
+ninety seconds old, so a crashed application disappears without a separate
+unregister.
+
+Topic matching is exact or a trailing `.*` prefix match: `grid.status.*` matches
+`grid.status.online`, and `energy.*` matches every energy topic. Publishing
+routes to the clients whose project and topics match and does not send the
+message to anyone else.
+
+The aquarium registers with `energy.fault,energy.mode`; energy registers its own
+callbacks and publishes faults and mode changes. The context is in the client
+list, which is what Keeper uses to show who is online and which project each
+application is attached to.
+
 ## Telemetry store
 
 Mesh keeps a durable series of what the project's gateway records. The gateway

@@ -1,0 +1,315 @@
+module mesh
+
+// Per-project application tokens.
+//
+// A project can have several tokens, one per application. Each token is a
+// keeper-signed JWT scoped to this project only (`mesh:<project>`), named for
+// the application that uses it and carrying its own expiry. A token for the
+// aquarium does not stop working when the energy token is rotated, and
+// revoking one name does not revoke the other.
+//
+// This is the least-privilege choice: an application can see and use the
+// project it has a token for, and no other. A deliberate Mesh-wide token would
+// have to be minted outside a project page with a broader scope.
+
+fn mesh_tokens_file(project: string) string {
+    return project_location(project) + "/tokens.jsonl"
+}
+
+fn mesh_token_now() u32 {
+    // The state directory and the report file are created on first use. A
+    // failed first redirect must not turn a fresh token into a 1970 token, so
+    // prepare the directory and retry the clock read.
+    ignore_u32(rho_exec("mkdir", "-p " + wizard_dir(), "/dev/null"))
+    var attempt: u32 = 0
+    while attempt < 3 {
+        let report: string = wizard_report("token-clock")
+        if rho_exec("date", "+%s", report) == 0 {
+            let value: u32 = rho_int_from_str(first_line(rho_read_text(report)))
+            if value > 0 {
+                return value
+            }
+        }
+        attempt = attempt + 1
+    }
+    return 0
+}
+
+fn mesh_token_date(epoch: u32) string {
+    if epoch == 0 {
+        return "never"
+    }
+    let report: string = wizard_report("token-date")
+    if rho_exec("date", "-d @" + rho_int_to_str(epoch) +
+            " \"+%Y-%m-%d %H:%M\"", report) == 0 {
+        return first_line(rho_read_text(report))
+    }
+    return ""
+}
+
+fn mesh_token_line(name: string, token: string, created_s: u32, expires_s: u32,
+    revoked: u32) string {
+    return "{\"name\":" + json_string(name) +
+        ",\"token\":" + json_string(token) +
+        ",\"created_s\":\"" + rho_int_to_str(created_s) +
+        "\",\"expires_s\":\"" + rho_int_to_str(expires_s) +
+        "\",\"revoked\":\"" + rho_int_to_str(revoked) + "\"}"
+}
+
+fn mesh_token_entries(project: string) string {
+    return rho_read_text(mesh_tokens_file(project))
+}
+
+fn mesh_token_rewrite(project: string, match_name: string,
+    replacement: string) void {
+    let file: string = mesh_tokens_file(project)
+    var rest: string = rho_read_text(file)
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        if rho_str_eq(mesh_json_string_field(line, "name"), match_name) {
+            continue
+        }
+        out = out + line + "\n"
+    }
+    if replacement != "" {
+        out = out + replacement + "\n"
+    }
+    ignore_bool(rho_write_text(file, out))
+}
+
+// A legacy project kept one `gateway_token` in project.txt. It becomes a named
+// token once, so an existing installation keeps working.
+fn mesh_tokens_migrate(project: string) void {
+    let file: string = mesh_tokens_file(project)
+    if rho_path_exists(file) {
+        return
+    }
+    let legacy: string = state_value_in(project_file(project), "gateway_token")
+    if legacy != "" {
+        ignore_bool(rho_write_text(file,
+            mesh_token_line("gateway", legacy, mesh_token_now(), 0, 0) + "\n"))
+    }
+}
+
+fn mesh_token_mint(project: string, name: string, days: u32) string {
+    let private: string = getenv("HOME") + "/.rho/auth/private.pem"
+    if !rho_path_exists(private) {
+        return ""
+    }
+    let report: string = wizard_report("mesh-token-mint")
+    let command: string = "rho auth ticket --private " + mesh_quote(private) +
+        " --issuer keeper --audience mesh --subject " + mesh_quote(name) +
+        " --scopes " + mesh_quote("mesh:" + project) +
+        " --ttl " + rho_int_to_str(days * 24) + "h"
+    if rho_exec("sh", "-c " + mesh_quote(command), report) != 0 {
+        return ""
+    }
+    return first_line(rho_read_text(report))
+}
+
+fn mesh_admin_request(req: Request) bool {
+    if header_str(req, "X-Rho-Aud") == "" {
+        return true
+    }
+    let scopes: string = header_str(req, "X-Rho-Scopes")
+    return mesh_scope_has(scopes, "*") || mesh_scope_has(scopes, "mesh:*")
+}
+
+fn mesh_project_token_generate(req: Request) Response {
+    if !mesh_admin_request(req) {
+        return mesh_scope_denied()
+    }
+    let id: string = sanitize(param(req, "id"))
+    let file: string = project_file(id)
+    if id == "" || !rho_path_exists(file) {
+        return mesh_dashboard(req)
+    }
+    let body: string = request_body(req)
+    var name: string = sanitize(device_trim(form_value(body, "name")))
+    if name == "" {
+        name = "application"
+    }
+    var days: u32 = 90
+    let days_text: string = device_trim(form_value(body, "days"))
+    if days_text != "" {
+        let parsed: u32 = rho_int_from_str(days_text)
+        if parsed > 0 && parsed <= 3650 {
+            days = parsed
+        }
+    }
+    let token: string = mesh_token_mint(id, name, days)
+    if token == "" {
+        save_setting_at(file, "message.project",
+            "The token could not be minted. The keeper signing key must be available on this host.")
+        return mesh_project_settings_for(req, id)
+    }
+    let now: u32 = mesh_token_now()
+    let expires: u32 = now + days * 86400
+    mesh_token_rewrite(id, name, mesh_token_line(name, token, now, expires, 0))
+    save_setting_at(file, "message.project",
+        "Generated a token for " + name + " valid until " + mesh_token_date(expires) +
+        ". Copy it now; it is shown in the token table.")
+    info("mesh", "generated a token for " + name + " on project " + id)
+    return mesh_project_settings_for(req, id)
+}
+
+fn mesh_project_token_revoke(req: Request) Response {
+    if !mesh_admin_request(req) {
+        return mesh_scope_denied()
+    }
+    let id: string = sanitize(param(req, "id"))
+    let file: string = project_file(id)
+    if id == "" || !rho_path_exists(file) {
+        return mesh_dashboard(req)
+    }
+    let name: string = sanitize(device_trim(form_value(request_body(req), "name")))
+    if name == "" {
+        return mesh_project_settings_for(req, id)
+    }
+    let now: u32 = mesh_token_now()
+    var rest: string = mesh_token_entries(id)
+    var out: string = ""
+    var found: bool = false
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        if rho_str_eq(mesh_json_string_field(line, "name"), name) {
+            line = mesh_token_line(name,
+                mesh_json_string_field(line, "token"),
+                rho_int_from_str(mesh_json_string_field(line, "created_s")),
+                rho_int_from_str(mesh_json_string_field(line, "expires_s")), 1)
+            found = true
+        }
+        out = out + line + "\n"
+    }
+    ignore_bool(rho_write_text(mesh_tokens_file(id), out))
+    save_setting_at(file, "message.project",
+        if found { "Token " + name + " revoked." } else { "No token named " + name + "." })
+    info("mesh", "revoked token " + name + " on project " + id)
+    return mesh_project_settings_for(req, id)
+}
+
+fn mesh_tokens_html(project: string) string {
+    mesh_tokens_migrate(project)
+    let now: u32 = mesh_token_now()
+    var out: string = "<table><thead><tr><th>Application</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>"
+    var count: u32 = 0
+    var rest: string = mesh_token_entries(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let name: string = mesh_json_string_field(line, "name")
+        let token: string = mesh_json_string_field(line, "token")
+        let expires: u32 = rho_int_from_str(
+            mesh_json_string_field(line, "expires_s"))
+        let revoked: string = mesh_json_string_field(line, "revoked")
+        var status: string = "active"
+        if revoked == "1" {
+            status = "revoked"
+        } else if expires != 0 && now > expires {
+            status = "expired"
+        }
+        let input_id: string = "mesh-project-token-" + escape_html(name)
+        out = out + "<tr><td><strong>" + escape_html(name) + "</strong></td><td>" +
+            escape_html(mesh_token_date(expires)) + "</td><td>" +
+            escape_html(status) + "</td><td>" +
+            "<input id=\"" + input_id + "\" type=\"hidden\" value=\"" +
+            escape_html(token) + "\">" +
+            "<button type=\"button\" class=\"quiet\" onclick=\"navigator.clipboard.writeText(document.getElementById('" +
+            input_id + "').value)\">Copy</button> " +
+            "<form method=\"post\" action=\"/mesh/project/" + escape_html(project) +
+            "/token/revoke\" style=\"display:inline\">" +
+            "<input type=\"hidden\" name=\"name\" value=\"" + escape_html(name) + "\">" +
+            "<button type=\"submit\" class=\"quiet\">Revoke</button></form></td></tr>"
+        count = count + 1
+    }
+    if count == 0 {
+        out = out + "<tr><td colspan=\"4\">No application tokens yet.</td></tr>"
+    }
+    return out + "</tbody></table>"
+}
+
+fn mesh_subject_revoked(project: string, subject: string) bool {
+    if subject == "" {
+        return false
+    }
+    var rest: string = mesh_token_entries(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        if rho_str_eq(mesh_json_string_field(line, "name"), subject) &&
+            rho_str_eq(mesh_json_string_field(line, "revoked"), "1") {
+            return true
+        }
+    }
+    return false
+}
+
+fn mesh_active_token(project: string) string {
+    mesh_tokens_migrate(project)
+    let now: u32 = mesh_token_now()
+    var rest: string = mesh_token_entries(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let expires: u32 = rho_int_from_str(
+            mesh_json_string_field(line, "expires_s"))
+        if rho_str_eq(mesh_json_string_field(line, "revoked"), "0") &&
+            (expires == 0 || now <= expires) {
+            return mesh_json_string_field(line, "token")
+        }
+    }
+    return state_value_in(project_file(project), "gateway_token")
+}

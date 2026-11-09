@@ -11,7 +11,7 @@
   "nav.active": "Active",
   "nav.no_projects": "No projects yet",
   "nav.for": "for",
-  "page.settings": "Application settings",
+  "page.settings": "Settings",
   "settings.tab.gateway": "Gateway",
   "settings.tab.auth": "Authentication",
   "settings.tab.alerts": "Alerts",

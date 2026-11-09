@@ -14,7 +14,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.5.2
+  version: 0.5.3
   author: Aurel Miron
   maintainer: Aurel Miron
 description: >
@@ -32,6 +32,9 @@ build:
 # declarative because the port that ingests a gateway's outbox writes the rows
 # it declares, and the sql port embeds it so the database is created by the
 # same reading of the same file.
+
+requires:
+  - name: rho/sqlite
 
 sql:
   driver: rho-sql-sqlite

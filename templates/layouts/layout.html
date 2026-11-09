@@ -68,8 +68,11 @@
   .nav-context { display: inline-flex; align-items: center; gap: .3rem; padding: 0 .25rem; color: var(--faint); font-size: .72rem; white-space: nowrap; }
   .nav-context strong { color: var(--teal); font-weight: 700; }
   .keeper-link { color: var(--teal); }
-  .foot-context { display: flex; align-items: center; gap: .35rem; min-width: 0; white-space: nowrap; color: var(--muted); }
-  .foot-context strong { color: var(--teal); font-weight: 700; }
+  .foot-context { display: flex; align-items: center; gap: .1rem; min-width: 0; overflow-x: auto; scrollbar-width: none; color: var(--muted); }
+  .foot-context::-webkit-scrollbar { display: none; }
+  .foot-context strong { color: var(--teal); font-weight: 700; white-space: nowrap; }
+  .foot-context .foot-label { white-space: nowrap; }
+  .foot-context .nav-link { text-transform: none; letter-spacing: 0; font-size: .76rem; padding: .25rem .5rem; }
   .foot-label { color: var(--faint); text-transform: uppercase; letter-spacing: .08em; font-size: .64rem; font-weight: 700; }
   .footnav { justify-content: flex-end; }
   .footnav .nav-link { text-transform: none; letter-spacing: 0; font-size: .76rem; padding: .25rem .5rem; }
@@ -343,8 +346,9 @@
     .brand { font-size: .95rem; }
     .page { padding: 6.5rem 1rem 7rem; }
     .mesh-layout { grid-template-columns: 1fr; }
-    .foot-context { display: none; }
-    .footnav { justify-content: flex-start; }
+    .bottombar { flex-wrap: wrap; }
+    .foot-context { width: 100%; }
+    .footnav { width: 100%; justify-content: flex-start; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>

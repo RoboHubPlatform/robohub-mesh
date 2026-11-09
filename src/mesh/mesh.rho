@@ -1104,19 +1104,27 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
     }
     let name: string = project_name(id)
     let description: string = project_description(id)
-    let form: string = "<form class=\"grid\" method=\"post\" action=\"/mesh/project/" +
+    let form0: string = "<form class=\"grid\" method=\"post\" action=\"/mesh/project/" +
         escape_html(id) + "/settings\">" +
         mesh_input("name", "Project name", name, "The name shown on the dashboard.") +
         mesh_input("description", "Short description", description,
             "One line about what this mesh is for.") +
         mesh_input("gateway_url", "Gateway URL", state_value_in(file, "gateway_url"),
             "The robohub-gateway this project owns. Aquarium reads it through the Mesh API.") +
-        mesh_secret_input("gateway_token", "Gateway token", state_value_in(file, "gateway_token"),
-            "The bearer token the gateway's telemetry outbox requires.") +
         mesh_input("telemetry_retention_days", "Telemetry retention (days)",
             state_value_in(file, "telemetry_retention_days"),
             "How long raw readings are kept. Minute and hourly rollups are kept longer.") +
         "<button type=\"submit\">Save project</button></form>"
+    let token_section: string = "<section class=\"token-section\" style=\"margin-top:1.4rem\">" +
+        "<h2>Application tokens</h2>" +
+        "<p>Each application gets its own token for this project. A token is scoped to this project, expires after the chosen number of days, and can be revoked without affecting another application.</p>" +
+        "<form class=\"grid\" method=\"post\" action=\"/mesh/project/" +
+        escape_html(id) + "/token\">" +
+        "<label>Application name<input name=\"name\" placeholder=\"aquarium\"></label>" +
+        "<label>Valid for (days)<input name=\"days\" value=\"90\" inputmode=\"numeric\"></label>" +
+        "<button type=\"submit\">Generate token</button></form>" +
+        "<div class=\"table-wrap\">" + mesh_tokens_html(id) + "</div></section>"
+    let form: string = form0 + token_section
     var active_form: string = ""
     if id == current_project() {
         active_form = "<p class=\"notice\">This project is the active one. The Operations menu and every step page act on it.</p>" +
@@ -1182,7 +1190,6 @@ fn mesh_project_settings_post(req: Request) Response {
     save_setting_at(file, "project.name", name)
     save_setting_at(file, "project.description", form_value(body, "description"))
     save_setting_at(file, "gateway_url", device_trim(form_value(body, "gateway_url")))
-    save_setting_at(file, "gateway_token", device_trim(form_value(body, "gateway_token")))
     save_setting_at(file, "telemetry_retention_days",
         device_trim(form_value(body, "telemetry_retention_days")))
     save_setting_at(file, "message.project", "Project settings saved.")
@@ -1277,8 +1284,16 @@ fn mesh_secret_input(name: string, label: string, value: string, help: string) s
     if help != "" {
         help_html = "<small>" + escape_html(help) + "</small>"
     }
-    return "<label>" + escape_html(label) + "<input type=\"password\" name=\"" +
-        escape_html(name) + "\" value=\"" + escape_html(value) + "\">" + help_html + "</label>"
+    let id: string = "mesh-secret-" + escape_html(name)
+    return "<label>" + escape_html(label) +
+        "<div style=\"display:flex;gap:.35rem;align-items:center\">" +
+        "<input id=\"" + id + "\" type=\"password\" name=\"" +
+        escape_html(name) + "\" value=\"" + escape_html(value) + "\" style=\"flex:1;min-width:0\">" +
+        "<button type=\"button\" class=\"quiet\" onclick=\"var i=document.getElementById('" + id +
+        "');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'Show':'Hide';\">Show</button>" +
+        "<button type=\"button\" class=\"quiet\" onclick=\"var i=document.getElementById('" + id +
+        "');i.type='text';i.select();navigator.clipboard.writeText(i.value);\">Copy</button>" +
+        "</div>" + help_html + "</label>"
 }
 
 fn mesh_textarea(name: string, label: string, value: string) string {
@@ -2350,6 +2365,9 @@ fn mesh_api_projects(req: Request) Response {
         if id == "" {
             continue
         }
+        if !mesh_scoped(req, id) {
+            continue
+        }
         if !first {
             out = out + ","
         }
@@ -3000,13 +3018,21 @@ fn mesh_project_menu(req: Request) string {
     return items
 }
 
-fn mesh_context() string {
+fn mesh_context(req: Request) string {
     let active: string = current_project()
     if active == "" {
         return "<span class=\"foot-label\">No active project</span>"
     }
-    return "<span class=\"foot-label\">Operations for</span> <strong>" +
+    var out: string = "<span class=\"foot-label\">Operations for</span> <strong>" +
         escape_html(project_name(active)) + "</strong>"
+    out = out + mesh_menu_link(i18n_t(req, "nav.plan"), "/mesh/plan", "1")
+    out = out + mesh_menu_link(i18n_t(req, "nav.network"), "/mesh/step/network", "2")
+    out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build", "3")
+    out = out + mesh_menu_link(i18n_t(req, "nav.verify"), "/mesh/step/verify", "4")
+    out = out + mesh_menu_link(i18n_t(req, "nav.gateway"), "/mesh/gateway", "⌂")
+    out = out + mesh_menu_link(i18n_t(req, "page.settings"),
+        "/mesh/project/" + escape_html(active) + "/settings", "⚙")
+    return out
 }
 
 fn mesh_bottom_menu(req: Request) string {
@@ -3027,19 +3053,6 @@ fn mesh_menu(req: Request) string {
     }
     out = out + mesh_menu_link(i18n_t(req, "nav.dashboard"), "/mesh", "⌁")
     out = out + mesh_menu_link(i18n_t(req, "nav.faults"), "/faults", "!")
-    let active: string = current_project()
-    if active != "" {
-        out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
-        out = out + "<span class=\"nav-context\">" + i18n_t(req, "nav.for") + " <strong>" +
-            escape_html(project_name(active)) + "</strong></span>"
-        out = out + mesh_menu_link(i18n_t(req, "nav.plan"), "/mesh/plan", "1")
-        out = out + mesh_menu_link(i18n_t(req, "nav.network"), "/mesh/step/network", "2")
-        out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build", "3")
-        out = out + mesh_menu_link(i18n_t(req, "nav.verify"), "/mesh/step/verify", "4")
-        out = out + mesh_menu_link(i18n_t(req, "nav.gateway"), "/mesh/gateway", "⌂")
-        out = out + mesh_menu_link(i18n_t(req, "nav.project_settings"),
-            "/mesh/project/" + active + "/settings", "⚙")
-    }
     out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     out = out + mesh_menu_link(i18n_t(req, "page.settings"), "/settings", "⚙")
     out = out + mesh_menu_link(i18n_t(req, "nav.docs"), "/mesh/docs", "▤")
@@ -3049,7 +3062,7 @@ fn mesh_menu(req: Request) string {
 fn mesh_shell(req: Request, title: string, content: string) string {
     return template_fill(template_get("layout"),
         vars("title", title) + vars("htmx", htmx_head()) + i18n_vars(req) + vars("menu", mesh_menu(req)) +
-        vars("context", mesh_context()) + vars("projects", mesh_bottom_menu(req)) +
+        vars("context", mesh_context(req)) + vars("projects", mesh_bottom_menu(req)) +
         vars("body", content))
 }
 

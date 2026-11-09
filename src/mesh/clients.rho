@@ -1,0 +1,366 @@
+module mesh
+
+// Application clients that attach to a Mesh project.
+//
+// A client registers once with the project it reads, the callback it listens
+// on, and the topics it wants. Mesh keeps the registration and a last-seen
+// time, so the gateway knows which applications are online and which project
+// each one attached to. Publishing a message routes it only to the clients
+// whose subscription matches; the application never has to know about the
+// other applications.
+//
+// The transport is HTTP, not a Unix-socket frame: the gateway provider is
+// already an HTTP client, the applications are separate processes, and a
+// callback is something Mesh can retry and report on. The handshake carries the
+// same facts your socket frame would: app, project, instance and topics.
+
+fn mesh_client_trim(text: string) string {
+    var out: string = text
+    while rho_strlen(out) > 0 &&
+        (rho_str_eq(rho_str_slice(out, 0, 1), " ") ||
+         rho_str_eq(rho_str_slice(out, 0, 1), "\n") ||
+         rho_str_eq(rho_str_slice(out, 0, 1), "\r") ||
+         rho_str_eq(rho_str_slice(out, 0, 1), "\t")) {
+        out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
+    }
+    while rho_strlen(out) > 0 {
+        let at: u32 = u32(rho_strlen(out)) - 1
+        let last: string = rho_str_slice(out, at, 1)
+        if rho_str_eq(last, " ") || rho_str_eq(last, "\n") ||
+            rho_str_eq(last, "\r") || rho_str_eq(last, "\t") {
+            out = rho_str_slice(out, 0, at)
+        } else {
+            break
+        }
+    }
+    return out
+}
+
+fn mesh_clients_file() string {
+    ensure_wizard_dir()
+    return wizard_dir() + "/clients.jsonl"
+}
+
+fn mesh_client_now() u32 {
+    let report: string = wizard_report("client-clock")
+    if rho_exec("date", "+%s", report) == 0 {
+        return rho_int_from_str(mesh_client_trim(rho_read_text(report)))
+    }
+    return 0
+}
+
+fn mesh_client_secret() string {
+    let report: string = wizard_report("client-secret")
+    if rho_exec("openssl", "rand -hex 16", report) == 0 {
+        let text: string = mesh_client_trim(rho_read_text(report))
+        if text != "" {
+            return text
+        }
+    }
+    return rho_int_to_str(mesh_client_now()) +
+        rho_int_to_str(u32(rho_strlen(rho_read_text(mesh_clients_file()))))
+}
+
+fn mesh_client_id(app_name: string, instance_id: string) string {
+    return project_id_from_name(app_name + "-" + instance_id)
+}
+
+fn mesh_client_line(id: string, app_name: string, project: string,
+    instance_id: string, callback_url: string, secret: string, topics: string,
+    created_s: u32, last_seen_s: u32) string {
+    return "{\"id\":" + json_string(id) +
+        ",\"app_name\":" + json_string(app_name) +
+        ",\"project\":" + json_string(project) +
+        ",\"instance_id\":" + json_string(instance_id) +
+        ",\"callback_url\":" + json_string(callback_url) +
+        ",\"secret\":" + json_string(secret) +
+        ",\"topics\":" + json_string(topics) +
+        ",\"created_s\":\"" + rho_int_to_str(created_s) +
+        "\",\"last_seen_s\":\"" + rho_int_to_str(last_seen_s) + "\"}"
+}
+
+fn mesh_client_rewrite(match_app: string, match_instance: string,
+    replacement: string) void {
+    let file: string = mesh_clients_file()
+    var rest: string = rho_read_text(file)
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let app: string = mesh_json_string_field(line, "app_name")
+        let instance: string = mesh_json_string_field(line, "instance_id")
+        if rho_str_eq(app, match_app) && rho_str_eq(instance, match_instance) {
+            continue
+        }
+        out = out + line + "\n"
+    }
+    if replacement != "" {
+        out = out + replacement + "\n"
+    }
+    ignore_bool(rho_write_text(file, out))
+}
+
+fn mesh_client_register(req: Request) Response {
+    let body: string = request_body(req)
+    let app_name: string = mesh_client_trim(mesh_json_string_field(body, "app_name"))
+    let project: string = mesh_client_trim(mesh_json_string_field(body, "project"))
+    let instance_id: string = mesh_client_trim(mesh_json_string_field(body, "instance_id"))
+    let callback_url: string = mesh_client_trim(mesh_json_string_field(body, "callback_url"))
+    let topics: string = mesh_client_trim(mesh_json_string_field(body, "topics"))
+    if app_name == "" || project == "" || callback_url == "" {
+        return json(400, "{\"ok\":false,\"error\":\"app_name, project and callback_url are required\"}")
+    }
+    if !rho_path_exists(project_file(project)) {
+        return json(400, "{\"ok\":false,\"error\":\"unknown project\"}")
+    }
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
+    if instance_id == "" {
+        instance_id = "default"
+    }
+    let id: string = mesh_client_id(app_name, instance_id)
+    // Keep the secret of a reconnecting client; issue one for a new client.
+    var secret: string = ""
+    var created: u32 = mesh_client_now()
+    var rest: string = rho_read_text(mesh_clients_file())
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        if rho_str_eq(mesh_json_string_field(line, "app_name"), app_name) &&
+            rho_str_eq(mesh_json_string_field(line, "instance_id"), instance_id) {
+            secret = mesh_json_string_field(line, "secret")
+            let prior: string = mesh_json_string_field(line, "created_s")
+            if prior != "" {
+                created = rho_int_from_str(prior)
+            }
+        }
+    }
+    if secret == "" {
+        secret = mesh_client_secret()
+    }
+    let now: u32 = mesh_client_now()
+    if created == 0 {
+        created = now
+    }
+    mesh_client_rewrite(app_name, instance_id,
+        mesh_client_line(id, app_name, project, instance_id, callback_url, secret,
+            topics, created, now))
+    return json(status_ok(), "{\"ok\":true,\"client_id\":" + json_string(id) +
+        ",\"secret\":" + json_string(secret) +
+        ",\"project\":" + json_string(project) + "}")
+}
+
+fn mesh_client_heartbeat(req: Request) Response {
+    let body: string = request_body(req)
+    let client_id: string = mesh_client_trim(mesh_json_string_field(body, "client_id"))
+    if client_id == "" {
+        return json(400, "{\"ok\":false,\"error\":\"client_id is required\"}")
+    }
+    let file: string = mesh_clients_file()
+    var rest: string = rho_read_text(file)
+    var out: string = ""
+    var found: bool = false
+    var now: u32 = mesh_client_now()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let id: string = mesh_json_string_field(line, "id")
+        if rho_str_eq(id, client_id) {
+            if !mesh_scoped(req, mesh_json_string_field(line, "project")) {
+                return mesh_scope_denied()
+            }
+            let created: string = mesh_json_string_field(line, "created_s")
+            line = mesh_client_line(
+                id,
+                mesh_json_string_field(line, "app_name"),
+                mesh_json_string_field(line, "project"),
+                mesh_json_string_field(line, "instance_id"),
+                mesh_json_string_field(line, "callback_url"),
+                mesh_json_string_field(line, "secret"),
+                mesh_json_string_field(line, "topics"),
+                rho_int_from_str(created), now)
+            found = true
+        }
+        out = out + line + "\n"
+    }
+    ignore_bool(rho_write_text(file, out))
+    if !found {
+        return json(404, "{\"ok\":false,\"error\":\"unknown client\"}")
+    }
+    return json(status_ok(), "{\"ok\":true}")
+}
+
+fn mesh_client_list(req: Request) Response {
+    let now: u32 = mesh_client_now()
+    var out: string = "["
+    var first: bool = true
+    var rest: string = rho_read_text(mesh_clients_file())
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let client_project: string = mesh_json_string_field(line, "project")
+        if !mesh_scoped(req, client_project) {
+            continue
+        }
+        let last_seen: u32 = rho_int_from_str(
+            mesh_json_string_field(line, "last_seen_s"))
+        var online: string = "false"
+        if now >= last_seen && now - last_seen < 90 {
+            online = "true"
+        }
+        if !first {
+            out = out + ","
+        }
+        first = false
+        out = out + "{\"id\":" + json_string(mesh_json_string_field(line, "id")) +
+            ",\"app_name\":" + json_string(mesh_json_string_field(line, "app_name")) +
+            ",\"project\":" + json_string(mesh_json_string_field(line, "project")) +
+            ",\"instance_id\":" + json_string(mesh_json_string_field(line, "instance_id")) +
+            ",\"topics\":" + json_string(mesh_json_string_field(line, "topics")) +
+            ",\"online\":" + online +
+            ",\"last_seen_s\":" + rho_int_to_str(last_seen) + "}"
+    }
+    return json(status_ok(), out + "]")
+}
+
+fn mesh_topic_matches(pattern: string, topic: string) bool {
+    if rho_str_eq(pattern, "*") || rho_str_eq(pattern, topic) {
+        return true
+    }
+    let length: u32 = u32(rho_strlen(pattern))
+    if length > 2 && rho_str_eq(rho_str_slice(pattern, length - 2, 2), ".*") {
+        let prefix: string = rho_str_slice(pattern, 0, length - 2)
+        let wanted: string = prefix + "."
+        return rho_str_index_of(topic, wanted) == 0
+    }
+    return false
+}
+
+fn mesh_topics_match(topics: string, topic: string) bool {
+    var rest: string = topics
+    while rest != "" {
+        let comma: i32 = rho_str_index_of(rest, ",")
+        var pattern: string = rest
+        if comma < 0 {
+            rest = ""
+        } else {
+            pattern = rho_str_slice(rest, 0, u32(comma))
+            rest = rho_str_slice(rest, u32(comma) + 1,
+                u32(rho_strlen(rest)) - u32(comma) - 1)
+        }
+        pattern = mesh_client_trim(pattern)
+        if pattern != "" && mesh_topic_matches(pattern, topic) {
+            return true
+        }
+    }
+    return false
+}
+
+fn mesh_client_deliver(project: string, app_name: string, client_id: string,
+    callback_url: string, secret: string, topic: string, payload: string) bool {
+    if callback_url == "" {
+        return false
+    }
+    let body: string = "{\"project\":" + json_string(project) +
+        ",\"app_name\":" + json_string(app_name) +
+        ",\"topic\":" + json_string(topic) +
+        ",\"payload\":" + json_string(payload) + "}"
+    let report: string = wizard_report("deliver-" + client_id)
+    let body_file: string = wizard_report("deliver-body-" + client_id)
+    ignore_bool(rho_write_text(body_file, body))
+    let command: string = "-fsS -m 4 -X POST -H " +
+        mesh_quote("Authorization: Bearer " + secret) +
+        " -H " + mesh_quote("Content-Type: application/json") +
+        " --data @" + mesh_quote(body_file) + " " + mesh_quote(callback_url)
+    return rho_exec("curl", command, report) == 0
+}
+
+fn mesh_publish(req: Request) Response {
+    let body: string = request_body(req)
+    let project: string = mesh_client_trim(mesh_json_string_field(body, "project"))
+    let topic: string = mesh_client_trim(mesh_json_string_field(body, "topic"))
+    let payload: string = mesh_json_string_field(body, "payload")
+    if topic == "" {
+        return json(400, "{\"ok\":false,\"error\":\"topic is required\"}")
+    }
+    if project == "" || !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
+    var delivered: u32 = 0
+    var rest: string = rho_read_text(mesh_clients_file())
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1,
+                u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let client_project: string = mesh_json_string_field(line, "project")
+        if !mesh_scoped(req, client_project) {
+            continue
+        }
+        let topics: string = mesh_json_string_field(line, "topics")
+        if project != "" && !rho_str_eq(project, client_project) {
+            continue
+        }
+        if !mesh_topics_match(topics, topic) {
+            continue
+        }
+        if mesh_client_deliver(client_project,
+                mesh_json_string_field(line, "app_name"),
+                mesh_json_string_field(line, "id"),
+                mesh_json_string_field(line, "callback_url"),
+                mesh_json_string_field(line, "secret"), topic, payload) {
+            delivered = delivered + 1
+        }
+    }
+    return json(status_ok(), "{\"ok\":true,\"delivered\":" +
+        rho_int_to_str(delivered) + "}")
+}

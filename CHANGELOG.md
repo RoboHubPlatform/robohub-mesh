@@ -2,6 +2,20 @@
 
 All notable changes to this module are recorded here, one section per release.
 
+## [0.5.3] - 2026-11-09
+
+Applications can register as clients of a project, subscribe to topics and
+publish messages. Mesh stores the client, its callback, its project and its
+last-seen time, and routes a published message only to the clients whose
+topic patterns match. Registration and publishing use a Mesh service token; callbacks carry a
+per-client secret. Project settings manage one token per application: each is
+scoped to the project, has its own expiry, can be copied or revoked, and does
+not replace another application's token. The project list is filtered to the
+projects the calling token can access. The project-context items (plan, network,
+build, verify, gateway and project settings) moved from the top menu to the
+bottom-left beside “Operations for …”; the top menu keeps the global items and
+both settings links read simply “Settings”.
+
 ## [0.5.2] - 2026-11-08
 
 English/Romanian UI and settings, host gateway/auth/alert/storage tabs, and
