@@ -31,6 +31,7 @@ MESH = HERE.parents[1]
 ROBOHUB = MESH.parents[1]
 PROJECTS = ROBOHUB.parent
 RHO = PROJECTS / "rho" / "bin" / "rho"
+SESSION = "smoke-session"
 
 
 def free_port() -> int:
@@ -52,7 +53,9 @@ def wait_for(base: str, timeout: float = 20.0) -> None:
 
 
 def get(base: str, path: str) -> str:
-    with urllib.request.urlopen(base + path, timeout=10) as response:
+    request = urllib.request.Request(base + path)
+    request.add_header("Cookie", f"keeper_session={SESSION}")
+    with urllib.request.urlopen(request, timeout=10) as response:
         return response.read().decode("utf-8", "replace")
 
 
@@ -60,6 +63,7 @@ def post(base: str, path: str, fields: dict) -> str:
     body = urllib.parse.urlencode(fields).encode()
     request = urllib.request.Request(base + path, data=body, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    request.add_header("Cookie", f"keeper_session={SESSION}")
     with urllib.request.urlopen(request, timeout=20) as response:
         return response.read().decode("utf-8", "replace")
 
@@ -126,6 +130,12 @@ def main() -> int:
         env["ROBOHUB_WORKSPACE"] = str(PROJECTS)
         env["RHO_MESH_STATE_DIR"] = state
         env["ROBOHUB_MESH_PROJECTS"] = os.path.join(state, "projects")
+        home = os.path.join(state, "home")
+        sessions = os.path.join(home, ".rho", "keeper")
+        os.makedirs(sessions, exist_ok=True)
+        with open(os.path.join(sessions, "auth-sessions.txt"), "w", encoding="utf-8") as fh:
+            fh.write(f"{SESSION}|{int(time.time()) + 3600}|smoke\n")
+        env["HOME"] = home
         env["RHO_HTTP_ADDR"] = f":{port}"
         process = subprocess.Popen(
             [str(binary)],
