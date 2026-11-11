@@ -221,12 +221,28 @@ fn mesh_now_seconds() u32 {
     return u32(rho_int_from_str(first_line(rho_read_text(report))))
 }
 
+// Gateway health is a sidecar, not a key in the plan.
+//
+// The telemetry worker writes it while a person may be editing the plan. The
+// plan is a file of keys read, changed and written as a whole; a background
+// writer that did the same could overwrite a save it had read before it began.
+// One file per fact keeps the worker out of the plan entirely.
+fn mesh_gateway_state_file(project: string, key: string) string {
+    return project_location(project) + "/gateway-" + sanitize(key) + ".txt"
+}
+
 fn mesh_gateway_value(project: string, key: string) string {
+    let path: string = mesh_gateway_state_file(project, key)
+    if rho_path_exists(path) {
+        return first_line(rho_read_text(path))
+    }
+    // A project written before the sidecar existed still has the value in the
+    // plan. It is read there and moved the next time it is saved.
     return state_value_in(project_file(project), "gateway." + key)
 }
 
 fn mesh_gateway_save(project: string, key: string, value: string) void {
-    save_setting_at(project_file(project), "gateway." + key, value)
+    ignore_bool(write_state_file(mesh_gateway_state_file(project, key), value + "\n"))
 }
 
 fn mesh_gateway_ready(project: string) bool {
@@ -551,7 +567,6 @@ fn mesh_api_telemetry_stream(req: Request) Response {
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
     }
-    ensure_wizard_dir()
     // The live feed carries changes only; a reader that needs the current state
     // asks /telemetry/latest first.
     return sse_events(telemetry_event_stream(), "", 500)
@@ -564,12 +579,28 @@ fn mesh_fault_snapshot_file() string {
     return wizard_dir() + "/fault-snapshot.jsonl"
 }
 
+// The fault watermark is a sidecar for the same reason: the telemetry worker
+// advances it while the plan may be open for editing.
+fn mesh_fault_state_file(project: string) string {
+    return project_location(project) + "/fault.last_id"
+}
+
 fn mesh_fault_last_id(project: string) u32 {
-    let value: string = state_value_in(project_file(project), "fault.last_id")
+    let path: string = mesh_fault_state_file(project)
+    var value: string = ""
+    if rho_path_exists(path) {
+        value = first_line(rho_read_text(path))
+    } else {
+        value = state_value_in(project_file(project), "fault.last_id")
+    }
     if value == "" {
         return 0
     }
     return u32(rho_int_from_str(value))
+}
+
+fn mesh_fault_save(project: string, value: u32) void {
+    ignore_bool(write_state_file(mesh_fault_state_file(project), rho_int_to_str(value) + "\n"))
 }
 
 // mesh_fault_init starts each project's live feed at the current state, so a
@@ -589,9 +620,8 @@ fn mesh_fault_init() void {
         if id == "" {
             continue
         }
-        let file: string = project_file(id)
-        if state_value_in(file, "fault.last_id") == "" {
-            save_setting_at(file, "fault.last_id", rho_int_to_str(telemetry_fault_max_id(id)))
+        if mesh_fault_last_id(id) == 0 && !rho_path_exists(mesh_fault_state_file(id)) {
+            mesh_fault_save(id, telemetry_fault_max_id(id))
         }
     }
 }
@@ -628,7 +658,7 @@ fn mesh_fault_emit(project: string) void {
     let line: string = "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"
     let file: string = mesh_fault_events_file()
     ignore_bool(rho_write_text(file, rho_read_text(file) + line))
-    save_setting_at(project_file(project), "fault.last_id", rho_int_to_str(highest))
+    mesh_fault_save(project, highest)
 }
 
 fn mesh_fault_emit_once() void {
@@ -658,7 +688,6 @@ fn mesh_faults_events(req: Request) Response {
     if rows == "" {
         rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
     }
-    ensure_wizard_dir()
     ignore_bool(rho_write_text(mesh_fault_snapshot_file(),
         "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"))
     return sse_events(mesh_fault_events_file(), mesh_fault_snapshot_file(), 1000)

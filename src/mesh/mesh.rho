@@ -421,7 +421,8 @@ fn mesh_event_json(event: string, data: string) string {
 }
 
 fn mesh_event_tree() void {
-    ensure_wizard_dir()
+    // A tree event is a read of the plan, not a preparation of it. Writing here
+    // would let an open dashboard race a save that is in progress.
     let file: string = wizard_dir() + "/tree-events.jsonl"
     let lines: string = mesh_event_json("mesh-tree", mesh_tree(true)) +
         mesh_event_json("mesh-tree-edit", mesh_tree(false))
@@ -429,7 +430,8 @@ fn mesh_event_tree() void {
 }
 
 fn mesh_events(req: Request) Response {
-    ensure_wizard_dir()
+    // Serve the snapshot without preparing the project: an SSE connection that
+    // writes the plan can replace an edit the person has not saved yet.
     let snapshot: string = wizard_dir() + "/tree-snapshot.jsonl"
     let live: string = wizard_dir() + "/tree-events.jsonl"
     ignore_bool(rho_write_text(snapshot,
@@ -1944,9 +1946,18 @@ fn project_area_id(file: string) string {
 }
 
 fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
-    row: string, origin: string) string {
+    module_id: string, driver_id: string, row: string, origin: string) string {
     let signal: string = field(row, 0)
     let id: string = kind + "." + rho_int_to_str(index) + "." + signal
+    var source_module: string = module_id
+    if driver_id != "" {
+        source_module = driver_id
+    }
+    var source: string = id
+    if source_module != "" {
+        source = source_module + "." + signal
+    }
+    let instance: string = project_area_id(project_file(project)) + ":" + rho_int_to_str(index)
     let base: string = "/mesh/api/projects/" + project + "/sources/" + id
     let timeline: string = "/mesh/api/projects/" + project +
         "/telemetry/series?source=" + id
@@ -1959,6 +1970,11 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
     return ",{\"id\":" + json_string(id) +
         ",\"name\":" + json_string(owner + " · " + field(row, 1)) +
         ",\"owner\":" + json_string(owner) +
+        ",\"module_id\":" + json_string(module_id) +
+        ",\"driver_id\":" + json_string(driver_id) +
+        ",\"source\":" + json_string(source) +
+        ",\"project\":" + json_string(project) +
+        ",\"instance\":" + json_string(instance) +
         ",\"kind\":" + json_string(kind) +
         ",\"signal\":" + json_string(signal) +
         ",\"label\":" + json_string(field(row, 1)) +
@@ -1972,7 +1988,7 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
 }
 
 fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,
-    rows: string, origin: string) string {
+    module_id: string, driver_id: string, rows: string, origin: string) string {
     var out: string = ""
     var rest: string = rows
     while rest != "" {
@@ -1985,7 +2001,7 @@ fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if line != "" {
-            out = out + mesh_source_entry(project, kind, index, owner, line, origin)
+            out = out + mesh_source_entry(project, kind, index, owner, module_id, driver_id, line, origin)
         }
     }
     return out
@@ -2009,7 +2025,7 @@ fn mesh_sources_json(project: string, origin: string) string {
                 owner = device_label(device)
             }
             out = out + mesh_source_entries(project, "device", index, owner,
-                manifest_signal_rows(device_manifest(device), true), origin)
+                device_module_id(device), "", manifest_signal_rows(device_manifest(device), true), origin)
         } else if kind == "module" {
             let name: string = project_node_value(file, index, "name", "")
             let module_name: string = project_node_value(file, index, "module", "")
@@ -2018,6 +2034,7 @@ fn mesh_sources_json(project: string, origin: string) string {
                 owner = module_label(module_name)
             }
             out = out + mesh_source_entries(project, "module", index, owner,
+                module_module_id(module_name), driver_module_id(module_driver(module_name)),
                 manifest_signal_rows(module_manifest(module_name), false), origin)
         }
         index = index + 1
@@ -2066,7 +2083,8 @@ fn mesh_url_get_auth(base: string, path: string, token: string) string {
     return rho_read_text(report)
 }
 
-fn gateway_device_object(base: string, name: string, address: string) string {
+fn gateway_device_object(base: string, name: string, address: string,
+    device_id: string) string {
     let text: string = mesh_url_get(base, "/api/v1/devices")
     var rest: string = text
     while rest != "" {
@@ -2080,7 +2098,9 @@ fn gateway_device_object(base: string, name: string, address: string) string {
         }
         let found_name: string = mesh_json_string_field(object, "name")
         let found_address: string = mesh_json_string_field(object, "address")
-        if (name != "" && found_name == name) ||
+        let found_id: string = mesh_json_string_field(object, "device_id")
+        if (device_id != "" && found_id == device_id) ||
+            (name != "" && found_name == name) ||
             (address != "" && found_address == address) {
             return object
         }
@@ -2154,7 +2174,8 @@ fn mesh_source_spec(project: string, source: string) string {
         field(row, 2) + "|" + owner + "|" + project_node_value(file, index, "name", "") +
         "|" + project_node_value(file, index, "transport", "") + "|" +
         project_node_value(file, index, "address", "") + "|" +
-        project_node_value(file, index, "parent", "") + "|" + field(row, 5)
+        project_node_value(file, index, "parent", "") + "|" + field(row, 5) + "|" +
+        project_node_value(file, index, "device_id", "")
 }
 
 fn mesh_stored_text(spec: string, stored: string) string {
@@ -2239,7 +2260,8 @@ fn mesh_source_value(project: string, source: string) string {
         return ""
     }
     if kind == "device" {
-        let object: string = gateway_device_object(base, field(spec, 6), address)
+        let object: string = gateway_device_object(base, field(spec, 6), address,
+            field(spec, 11))
         if object == "" {
             return ""
         }
@@ -2293,7 +2315,8 @@ fn mesh_source_action(project: string, source: string, state: string) bool {
     if base == "" {
         return false
     }
-    let object: string = gateway_device_object(base, field(spec, 6), address)
+    let object: string = gateway_device_object(base, field(spec, 6), address,
+        field(spec, 11))
     if object == "" {
         return false
     }

@@ -299,6 +299,26 @@ fn state_value(key: string) string {
     return ""
 }
 
+// write_state_file replaces a project file in one step.
+//
+// A state write is a read, a change and a write. If a reader sees the old file
+// while the writer is still writing, or two writers overlap, the file can lose
+// keys. The rename is atomic on the same filesystem, so a reader sees either
+// the old file or the new one, never half of each.
+fn write_state_file(path: string, text: string) bool {
+    let tmp: string = path + ".tmp"
+    if !rho_write_text(tmp, text) {
+        return false
+    }
+    // Keep the state a write replaces. A plan is the person's work, and a bug
+    // in a writer should cost one edit rather than the plan.
+    if rho_path_exists(path) {
+        ignore_u32(rho_exec("cp", "-f " + path + " " + path + ".bak", wizard_report("state-bak")))
+    }
+    let code: u32 = rho_exec("mv", "-f " + tmp + " " + path, wizard_report("state-mv"))
+    return code == 0
+}
+
 // save_setting_raw is save_setting without preparing the directory. The
 // migration that runs while preparing it writes many settings; asking to
 // prepare the directory from inside that would come back here forever.
@@ -327,11 +347,13 @@ fn save_setting_raw(key: string, value: string) void {
         out = out + line + "\n"
     }
     out = out + key + "=" + sanitize(value) + "\n"
-    ignore_bool(rho_write_text(file, out))
+    ignore_bool(write_state_file(file, out))
 }
 
 fn save_setting_at(path: string, key: string, value: string) void {
-    ensure_wizard_dir()
+    if path == "" {
+        return
+    }
     let text: string = rho_read_text(path)
     let prefix: string = key + "="
     var out: string = ""
@@ -352,12 +374,18 @@ fn save_setting_at(path: string, key: string, value: string) void {
         out = out + line + "\n"
     }
     out = out + key + "=" + sanitize(value) + "\n"
-    ignore_bool(rho_write_text(path, out))
+    ignore_bool(write_state_file(path, out))
 }
 
 fn save_setting(key: string, value: string) void {
-    ensure_wizard_dir()
-    let text: string = rho_read_text(wizard_file())
+    // The caller has already prepared the project; a write must not run the
+    // migration or touch any other key. The file is read once and replaced in
+    // one step so a concurrent reader never sees a half-written state.
+    let file: string = wizard_file()
+    if file == "" {
+        return
+    }
+    let text: string = rho_read_text(file)
     let prefix: string = key + "="
     var out: string = ""
     var rest: string = text
@@ -380,9 +408,8 @@ fn save_setting(key: string, value: string) void {
         out = out + line + "\n"
     }
     out = out + key + "=" + sanitize(value) + "\n"
-    let written: bool = rho_write_text(wizard_file(), out)
-    if !written {
-        error("mesh", "could not write " + wizard_file())
+    if !write_state_file(file, out) {
+        error("mesh", "could not write " + file)
     }
 }
 
@@ -783,8 +810,9 @@ fn module_rows() string {
         // transceivers. A module with no read path contributes no reading, but
         // it is still part of the node's build and appears in the picker.
         let driver: string = yaml.value(manifest, "board.driver")
+        let module_id: string = yaml.value(manifest, "module.id")
         out = out + name + "|" + label + "|" + summary + "|" + category + "|" +
-            driver + "|" + manifest + "\n"
+            driver + "|" + manifest + "|" + module_id + "\n"
     }
     return out
 }
@@ -887,18 +915,27 @@ fn device_rows() string {
         }
         let kind: string = yaml.value(manifest, "device.kind")
         let transports: string = yaml.value(manifest, "device.transports")
+        let module_id: string = yaml.value(manifest, "module.id")
         out = out + name + "|" + label + "|" + kind + "|" + transports + "|" +
-            manifest + "\n"
+            manifest + "|" + module_id + "\n"
     }
     return out
 }
 
+fn device_row(name: string) string {
+    return row_by_name_or_id(device_rows(), name, 5)
+}
+
 fn device_manifest(name: string) string {
-    return field(row_by_name(device_rows(), name), 4)
+    return field(device_row(name), 4)
+}
+
+fn device_module_id(name: string) string {
+    return field(device_row(name), 5)
 }
 
 fn device_label(name: string) string {
-    let label: string = field(row_by_name(device_rows(), name), 1)
+    let label: string = field(device_row(name), 1)
     if label == "" {
         return name
     }
@@ -906,11 +943,11 @@ fn device_label(name: string) string {
 }
 
 fn device_kind(name: string) string {
-    return field(row_by_name(device_rows(), name), 2)
+    return field(device_row(name), 2)
 }
 
 fn device_transports(name: string) string {
-    return field(row_by_name(device_rows(), name), 3)
+    return field(device_row(name), 3)
 }
 
 fn device_picker(selected: string) string {
@@ -942,16 +979,33 @@ fn device_picker(selected: string) string {
     return out
 }
 
+fn module_row(name: string) string {
+    return row_by_name_or_id(module_rows(), name, 6)
+}
+
 fn module_manifest(name: string) string {
-    return field(row_by_name(module_rows(), name), 5)
+    return field(module_row(name), 5)
 }
 
 fn module_driver(name: string) string {
-    return field(row_by_name(module_rows(), name), 4)
+    return field(module_row(name), 4)
+}
+
+fn module_module_id(name: string) string {
+    return field(module_row(name), 6)
+}
+
+// driver_module_id identifies the driver a board carries, so a signal a driver
+// produces is keyed on the driver's identity and not only on the board's.
+fn driver_module_id(name: string) string {
+    if name == "" {
+        return ""
+    }
+    return yaml.value(driver_manifest(name), "module.id")
 }
 
 fn module_label(name: string) string {
-    let label: string = field(row_by_name(module_rows(), name), 1)
+    let label: string = field(module_row(name), 1)
     if label == "" {
         return name
     }
@@ -1197,8 +1251,23 @@ fn migrate_module_nodes() void {
     if current_project() == "" {
         return
     }
+    // A migration is only a change when there is something to migrate. A plan
+    // that has already been migrated must not be written on every read: a
+    // background reader that writes is a writer that can race a form save.
     let initial: u32 = node_count()
+    var has_work: bool = gateway_allows_modules() && gateway_sensors() != ""
     var index: u32 = 1
+    while index <= initial {
+        if !is_module_node(index) && node_sensors(index) != "" {
+            has_work = true
+        }
+        index = index + 1
+    }
+    if !has_work && state_value("gateway_driver") == "" && gateway_sensors() == "" &&
+        default_value("driver", "") == "" {
+        return
+    }
+    index = 1
     while index <= initial {
         if !is_module_node(index) {
             var rest: string = node_sensors(index)
@@ -1935,6 +2004,32 @@ fn row_by_name(rows: string, name: string) string {
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if field(line, 0) == name {
+            return line
+        }
+    }
+    return ""
+}
+
+// row_by_name_or_id finds a row by the name a person chose or by the stable
+// module id a consumer keys on. A name is what a project stores; an id is what
+// makes two same-named modules in different repositories two things.
+fn row_by_name_or_id(rows: string, value: string, id_field: u32) string {
+    let by_name: string = row_by_name(rows, value)
+    if by_name != "" {
+        return by_name
+    }
+    var rest: string = rows
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let line: string = ""
+        if at < 0 {
+            line = rest
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if field(line, id_field) == value {
             return line
         }
     }
