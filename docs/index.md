@@ -472,8 +472,14 @@ An application reads it through the gateway contract, or directly through Mesh:
   — raw readings when `step` is absent or zero, averaged into buckets otherwise.
 
 A source is the same ID `/sources` publishes (`device.3.power`,
-`module.2.temperature`). Its object carries `history_path` and, when Mesh knows
-its own origin, `history_url`, so a dashboard can ask for a chart without
+`module.2.temperature`). That ID is unique within a project, but it is not the
+identity a stored series is keyed on: the object also carries `module_id`
+(the device integration or board), `driver_id` (the driver that produces the
+signal, when one does), `source`, `project` and `instance`. `source` is
+`<driver_id or module_id>.<signal.id>` and `instance` is `area:node`, so two
+modules with the same name in different repositories, or two instances of one
+module, are different series. Its object carries `history_path` and, when Mesh
+knows its own origin, `history_url`, so a dashboard can ask for a chart without
 knowing the area, node or field the reading was stored under.
 
 Mesh records the URL of a native or SSH gateway it starts in the project's
@@ -502,6 +508,9 @@ The descriptors are the contract:
 The generated field is `m<node-index>.<field>`. Two modules that both measure
 temperature on one node therefore become two series, and the source ID the
 application already uses (`module.3.temperature`) resolves to the right one.
+The source object also names the board (`module_id`) and the driver
+(`driver_id`), which is what makes the series identifiable when two
+repositories use the same module name.
 
 Every board module in `robohub-drivers/boards` appears in the picker, including
 relays and transceivers. A module with no read path is linked and configured

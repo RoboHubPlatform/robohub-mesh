@@ -5,6 +5,7 @@
 # the C backend, and giving the test directory its own manifest is what says so.
 module:
   name: mesh-tests
+  id: robohub.applications.mesh.tests
   type: rho
   version: 0.1.0
 
