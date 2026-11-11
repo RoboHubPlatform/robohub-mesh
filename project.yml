@@ -20,10 +20,8 @@ targets:
         options:
           issuer: keeper
           audience: mesh
-          cookie: keeper_session
           public_key: ~/.rho/auth/public.pem
           mode: direct
-          session_file: ~/.rho/keeper/auth-sessions.txt
           login_url: "/auth/login?audience=mesh"
           scheme: auto
           # The overview and the documentation are the shop window; the API

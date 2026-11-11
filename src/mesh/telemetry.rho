@@ -83,10 +83,14 @@ fn mesh_scope_has(scopes: string, needle: string) bool {
 // audience header) is an administrator behind the keeper and may look at any
 // project. A service token must carry the project it is asking for, `mesh:*`,
 // or the wildcard `*`.
+// mesh_scoped is whether the caller may read or act on a project. The auth
+// middleware sets the identity headers from a token or a session it verified,
+// and removes any a client sent, so a request without an audience is one nobody
+// vouched for and is refused.
 fn mesh_scoped(req: Request, project: string) bool {
     let aud: string = header_str(req, "X-Rho-Aud")
     if aud == "" {
-        return true
+        return false
     }
     let subject: string = header_str(req, "X-Rho-Subject")
     if mesh_subject_revoked(project, subject) {

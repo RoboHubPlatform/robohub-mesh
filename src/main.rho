@@ -25,12 +25,18 @@ import rho.log
 // The orchestrator root. A hosted application is started with the workspace in
 // the environment, and a standalone one from the repository root.
 fn robohub_root() string {
-    let root: string = getenv("ROBOHUB_WORKSPACE")
+    let root: string = getenv("ROBOHUB_ROOT")
     if root == "" {
+        // ROBOHUB_WORKSPACE is the directory that holds the ecosystem's
+        // repositories, the orchestrator among them.
+        let workspace: string = getenv("ROBOHUB_WORKSPACE")
+        if workspace != "" && rho_path_exists(workspace + "/robohub/registry/modules") {
+            return workspace + "/robohub"
+        }
         if rho_path_exists("registry/modules") {
             return "."
         }
-        warn("mesh", "set ROBOHUB_WORKSPACE to the directory holding the ecosystem")
+        warn("mesh", "set ROBOHUB_ROOT to the orchestrator directory")
         return "."
     }
     if rho_path_exists(root + "/robohub/registry/modules") {
