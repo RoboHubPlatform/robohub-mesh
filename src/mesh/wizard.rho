@@ -2817,10 +2817,9 @@ fn gateway_env() string {
         " GATEWAY_AREA=" + area +
         " RHO_HTTP_ADDR=:" + rest + " REST_PORT=" + rest +
         " PLOTJUGGLER_ADDR=127.0.0.1:9870"
-    let token: string = mesh_gateway_token(current_project())
-    if token != "" {
-        env = env + " OUTBOX_TOKEN=" + shell_quote(token)
-    }
+    // The gateway trusts keeper's tokens, verified with keeper's public key,
+    // which is installed beside it; it names itself so a token's scopes can.
+    env = env + " GATEWAY_ID=" + shell_quote(current_project())
     if link == "wifi" || link == "socket" {
         env = env + " SERIAL_PORT=/nonexistent UPLINK_PORT=" + uplink
     } else {
@@ -2932,6 +2931,15 @@ fn handler_start_board() u32 {
         if copy_code != 0 {
             return copy_code
         }
+        // keeper's public key, which the gateway verifies every caller's token
+        // with. Only the public half leaves this machine.
+        let key_code: u32 = run_shell("ssh " + shell_quote(target) + " " +
+            shell_quote("mkdir -p ~/.rho/auth") + " && scp " +
+            shell_quote(getenv("HOME") + "/.rho/auth/public.pem") + " " +
+            shell_quote(target + ":.rho/auth/public.pem"), "push-gateway-key")
+        if key_code != 0 {
+            return key_code
+        }
         let command: string = "ssh " + shell_quote(target) + " " +
             shell_quote("pkill -x robohub-gateway 2>/dev/null || true; chmod +x " +
                 remote + "/robohub-gateway; cd " + remote + " && nohup env " +
@@ -2958,11 +2966,21 @@ fn handler_verify() u32 {
     }
     let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
     let base: string = "http://" + host + ":" + rest
-    let nodes: u32 = run_shell("curl -sS -m 5 " + shell_quote(base + "/api/v1/nodes"),
-        "verify-nodes")
-    let diag: u32 = run_shell("curl -sS -m 5 " + shell_quote(base + "/api/v1/diagnostics"),
-        "verify-diagnostics")
     let stage: string = default_value("current_step", "verify")
+    // The gateway answers Mesh's token, which the shell does not hold, so the
+    // two checks are requests Mesh makes and the answers are added to the log.
+    let nodes_text: string = mesh_url_get(base, "/api/v1/nodes")
+    let diag_text: string = mesh_url_get(base, "/api/v1/diagnostics")
+    ignore_bool(rho_write_text(progress_path(stage), rho_read_text(progress_path(stage)) +
+        "\n== verify-nodes ==\n" + nodes_text + "\n== verify-diagnostics ==\n" + diag_text + "\n"))
+    var nodes: u32 = 0
+    if nodes_text == "" {
+        nodes = 1
+    }
+    var diag: u32 = 0
+    if diag_text == "" {
+        diag = 1
+    }
     let readings: string = rho_read_text(progress_path(stage))
     if nodes != 0 || diag != 0 {
         return 1

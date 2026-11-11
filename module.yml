@@ -104,7 +104,7 @@ deploy:
   port: 8478
   service: mesh
   # The services it calls; keeper registers it as a client for these alone.
-  calls: ["gateway:*", energy]
+  calls: [gateway, energy]
 
 docs:
   title: The RoboHub Mesh application

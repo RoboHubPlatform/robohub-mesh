@@ -103,20 +103,12 @@ fn mesh_tokens_migrate(project: string) void {
     }
 }
 
+// mesh_token_mint used to sign tokens with keeper's private key, which only the
+// issuer may hold. Mesh mints nothing now: an application that reads a project is
+// registered with keeper as a client (it declares `deploy.calls: [mesh]`) and gets
+// short-lived tokens itself, and Mesh reaches its gateways the same way.
 fn mesh_token_mint(project: string, name: string, days: u32) string {
-    let private: string = getenv("HOME") + "/.rho/auth/private.pem"
-    if !rho_path_exists(private) {
-        return ""
-    }
-    let report: string = wizard_report("mesh-token-mint")
-    let command: string = "rho auth ticket --private " + mesh_quote(private) +
-        " --issuer keeper --audience mesh --subject " + mesh_quote(name) +
-        " --scopes " + mesh_quote("mesh:" + project) +
-        " --ttl " + rho_int_to_str(days * 24) + "h"
-    if rho_exec("sh", "-c " + mesh_quote(command), report) != 0 {
-        return ""
-    }
-    return first_line(rho_read_text(report))
+    return ""
 }
 
 fn mesh_admin_request(req: Request) bool {
@@ -152,7 +144,7 @@ fn mesh_project_token_generate(req: Request) Response {
     let token: string = mesh_token_mint(id, name, days)
     if token == "" {
         save_setting_at(file, "message.project",
-            "The token could not be minted. The keeper signing key must be available on this host.")
+            "Mesh does not mint tokens. An application that reads this project declares deploy.calls: [mesh] and keeper registers it as a client; its short-lived tokens are issued by keeper.")
         return mesh_project_settings_for(req, id)
     }
     let now: u32 = mesh_token_now()

@@ -2059,15 +2059,43 @@ fn mesh_json_string_field(text: string, key: string) string {
     return rho_str_slice(rest, 0, u32(end))
 }
 
+// A gateway's API is under /api/v1/, and a gateway only answers a caller with a
+// short-lived token keeper issued for the audience `gateway`. Mesh orchestrates
+// every gateway of its projects, so it asks for `gateway:*` with its own client
+// credential; a device's own HTTP interface (a smart plug's RPC) is not a
+// gateway and is sent no token.
+const MESH_GATEWAY_SCOPE: string = "gateway:*"
+
+fn mesh_gateway_audience(path: string) string {
+    if rho_str_starts_with(path, "/api/v1/") {
+        return "gateway"
+    }
+    return ""
+}
+
 fn mesh_url_get(base: string, path: string) string {
     if base == "" {
         return ""
     }
     let report: string = wizard_report("mesh-source")
-    if rho_exec("curl", "-fsS -m 4 " + mesh_quote(base + path), report) != 0 {
+    let audience: string = mesh_gateway_audience(path)
+    var scopes: string = ""
+    if audience != "" {
+        scopes = MESH_GATEWAY_SCOPE
+    }
+    let status: u32 = rho_http_request("GET", base + path, "", "", audience, scopes, report)
+    if status != 200 {
         return ""
     }
     return rho_read_text(report)
+}
+
+// mesh_gateway_command sends a command to a gateway with a gateway token.
+fn mesh_gateway_command(base: string, path: string, body: string) bool {
+    let report: string = wizard_report("mesh-gateway-post")
+    let status: u32 = rho_http_request("POST", base + path, body, "application/json",
+        "gateway", MESH_GATEWAY_SCOPE, report)
+    return status >= 200 && status < 300
 }
 
 fn mesh_url_get_auth(base: string, path: string, token: string) string {
@@ -2324,10 +2352,7 @@ fn mesh_source_action(project: string, source: string, state: string) bool {
     if id == "" {
         return false
     }
-    let report: string = wizard_report("mesh-source-switch")
-    return rho_exec("curl", "-fsS -m 4 -X POST " +
-        mesh_quote(base + "/api/v1/devices/" + id + "/switch?state=" + desired),
-        report) == 0
+    return mesh_gateway_command(base, "/api/v1/devices/" + id + "/switch?state=" + desired, "")
 }
 
 fn mesh_api_sources(req: Request) Response {
@@ -2982,12 +3007,7 @@ fn gateway_http_for(gateway: string, host: string, rest: string, path: string) s
     if gateway == "native" {
         address = "127.0.0.1"
     }
-    let report: string = wizard_report("dashboard-gateway")
-    let code: u32 = rho_exec("curl", "-fsS -m 2 http://" + address + ":" + rest + path, report)
-    if code != 0 {
-        return ""
-    }
-    return rho_read_text(report)
+    return mesh_url_get("http://" + address + ":" + rest, path)
 }
 
 fn gateway_http(path: string) string {
