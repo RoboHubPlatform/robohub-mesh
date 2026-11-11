@@ -22,6 +22,8 @@ description: >
   Plans and runs RoboHub gateway deployments: projects, a gateway and its
   nodes, the network between them, and the firmware on their boards.
 
+platform: robohub
+
 main: src/main.rho
 
 build:
