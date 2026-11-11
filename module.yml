@@ -8,7 +8,9 @@
 #
 module:
   name: mesh
-  id: robohub.applications.mesh
+  id: robohub.app.mesh
+  previous_ids:
+    - robohub.applications.mesh
   type: rho
   kind: keeper-hosted
   title: RoboHub Mesh
