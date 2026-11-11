@@ -21,7 +21,7 @@ targets:
           issuer: keeper
           audience: mesh
           cookie: keeper_session
-          public_key: ${RHO_HOME}/auth/public.pem
+          public_key: ~/.rho/auth/public.pem
           mode: direct
           session_file: ~/.rho/keeper/auth-sessions.txt
           login_url: "/auth/login?audience=mesh"
