@@ -4,6 +4,7 @@ extern fn rho_arg(index: i32) string
 extern fn rho_path_exists(path: string) bool
 extern fn rho_read_text(path: string) string
 extern fn rho_write_text(path: string, text: string) bool
+extern fn rho_write_secret(path: string, text: string) bool
 extern fn rho_exec(program: string, arguments: string, output_path: string) u32
 extern fn rho_strlen(s: string) u64
 extern fn rho_str_slice(s: string, start: u32, length: u32) string

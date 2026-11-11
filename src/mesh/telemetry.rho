@@ -13,7 +13,9 @@ module mesh.telemetry
 // project's; the port writes the tables the schema declares.
 
 extern fn telemetry_open(path: string) bool
-extern fn telemetry_poll(project: string, gateway_id: string, gateway_url: string, token: string) string
+extern fn telemetry_poll(project: string, gateway_id: string, gateway_url: string, token: string, events_path: string) string
+extern fn telemetry_feed_record(path: string, project: string, area_id: u32, node_id: u32, field_name: string, value: string, status: u32) bool
+extern fn telemetry_latest_events(project: string) string
 extern fn telemetry_status(project: string) string
 extern fn telemetry_latest(project: string, area_id: u32, node_id: u32, field_name: string) string
 extern fn telemetry_latest_text(project: string, area_id: u32, node_id: u32, field_name: string) string
@@ -108,29 +110,27 @@ fn mesh_scope_denied() Response {
 }
 
 
-// telemetry_record_event records a reading and appends the same reading to the
-// data-only SSE feed. The feed is optional: a consumer that is not listening
-// costs one line in a file, and the SQLite store remains the source of truth.
-fn telemetry_event_stream() string {
-    return wizard_dir() + "/telemetry-events.jsonl"
+// A project's live feed: the readings it stored, one named SSE event per line.
+// Each project has its own, because a reader is allowed one project, and a feed
+// shared by every project is every project's readings sent to whoever may read
+// one. The SQLite store remains the source of truth; the feed is how a reader
+// hears of a change.
+fn telemetry_event_stream(project: string) string {
+    return project_location(project) + "/telemetry-events.jsonl"
+}
+
+// telemetry_snapshot_file is where a stream's opening snapshot is written: the
+// project's current values, sent before the live feed.
+fn telemetry_snapshot_file(project: string) string {
+    return project_location(project) + "/telemetry-snapshot.jsonl"
 }
 
 fn telemetry_record_event(project: string, area: u32, node: u32, field_name: string,
     value: string, status: u32) u32 {
     let code: u32 = telemetry_record(project, area, node, field_name, value, status)
     if code == 0 {
-        let data: string = "{\"project\":" + json_string(project) +
-            ",\"node\":" + rho_int_to_str(node) +
-            ",\"field\":" + json_string(field_name) +
-            ",\"value\":" + json_string(value) +
-            ",\"status\":" + rho_int_to_str(status) + "}"
-        let line: string = "{\"event\":\"telemetry\",\"data\":" + json_string(data) + "}\n"
-        let file: string = telemetry_event_stream()
-        var old: string = rho_read_text(file)
-        if rho_strlen(old) > 262144 {
-            old = ""
-        }
-        ignore_bool(rho_write_text(file, old + line))
+        ignore_bool(telemetry_feed_record(telemetry_event_stream(project), project, area, node,
+            field_name, value, status))
     }
     return code
 }
@@ -315,7 +315,7 @@ fn telemetry_poll_once() void {
             continue
         }
         let result: string = telemetry_poll(id, id + "@" + url, url,
-            mesh_gateway_token(id))
+            mesh_gateway_token(id), telemetry_event_stream(id))
         // A gateway that is simply down is expected while a project is being
         // built. It becomes a fault once and then backs off exponentially, so
         // the poll loop does not hammer a dead link or fill the log.
@@ -571,9 +571,11 @@ fn mesh_api_telemetry_stream(req: Request) Response {
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
     }
-    // The live feed carries changes only; a reader that needs the current state
-    // asks /telemetry/latest first.
-    return sse_events(telemetry_event_stream(), "", 500)
+    // The project's current values go first, so a page that connects (or
+    // reconnects) starts from the present; then its live feed, and only its.
+    let snapshot: string = telemetry_snapshot_file(project)
+    ignore_bool(rho_write_secret(snapshot, telemetry_latest_events(project)))
+    return sse_events(telemetry_event_stream(project), snapshot, 500)
 }
 fn mesh_fault_events_file() string {
     return wizard_dir() + "/fault-events.jsonl"
