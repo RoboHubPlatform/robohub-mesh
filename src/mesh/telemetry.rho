@@ -16,6 +16,7 @@ extern fn telemetry_open(path: string) bool
 extern fn telemetry_poll(project: string, gateway_id: string, gateway_url: string, token: string, events_path: string) string
 extern fn telemetry_feed_record(path: string, project: string, area_id: u32, node_id: u32, field_name: string, value: string, status: u32) bool
 extern fn telemetry_latest_events(project: string) string
+extern fn rho_service_token(audience: string, scopes: string) string
 extern fn telemetry_status(project: string) string
 extern fn telemetry_latest(project: string, area_id: u32, node_id: u32, field_name: string) string
 extern fn telemetry_latest_text(project: string, area_id: u32, node_id: u32, field_name: string) string
@@ -133,6 +134,19 @@ fn telemetry_record_event(project: string, area: u32, node: u32, field_name: str
             field_name, value, status))
     }
     return code
+}
+
+// mesh_poll_token is what Mesh shows a project's gateway. A gateway that is
+// another service of the installation (an application producing readings, like
+// energy) names its audience in the project as `gateway_audience`, and Mesh
+// presents a short-lived service token for it with the `<audience>:gateway`
+// scope, from the issuer, with Mesh's own credential.
+fn mesh_poll_token(project: string) string {
+    let audience: string = state_value_in(project_file(project), "gateway_audience")
+    if audience != "" {
+        return rho_service_token(audience, audience + ":gateway")
+    }
+    return mesh_gateway_token(project)
 }
 
 fn telemetry_project_ids() string {
@@ -315,7 +329,7 @@ fn telemetry_poll_once() void {
             continue
         }
         let result: string = telemetry_poll(id, id + "@" + url, url,
-            mesh_gateway_token(id), telemetry_event_stream(id))
+            mesh_poll_token(id), telemetry_event_stream(id))
         // A gateway that is simply down is expected while a project is being
         // built. It becomes a fault once and then backs off exponentially, so
         // the poll loop does not hammer a dead link or fill the log.

@@ -453,8 +453,14 @@ gateway, writes a page in one transaction, advances the cursor and acknowledges
 the sequence. The unique key is `(gateway_id, seq)`, so a repeated page after a
 failed acknowledgement is ignored rather than stored twice.
 
-The store lives at `$ROBOHUB_MESH_TELEMETRY_DB`, or
-`~/.rho/mesh/telemetry.db` when the variable is unset. It is SQLite in WAL mode
+Mesh is the only telemetry store in the installation: applications read it
+through `/mesh/api`, never by opening its file. A project's gateway may be another
+service that produces readings, such as energy: the project names its
+`gateway_audience`, and Mesh polls it with a short-lived service token for that
+audience with the `<audience>:gateway` scope.
+
+The store lives at `$RHO_TELEMETRY_DB` (or `$ROBOHUB_MESH_TELEMETRY_DB`), or
+`~/.rho/mesh/telemetry.db` when neither is set. It is SQLite in WAL mode
 with a series index, a latest-value table and one-minute and hourly rollups.
 Raw readings are kept for the project's `telemetry_retention_days` (30 by
 default); minute rollups are kept for 180 days and hourly rollups for five
