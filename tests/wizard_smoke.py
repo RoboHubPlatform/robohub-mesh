@@ -190,7 +190,8 @@ def main() -> int:
         legacy = Path(state) / "projects" / "Old-mesh"
         legacy.mkdir(parents=True)
         (legacy / "project.txt").write_text(
-            "project.name=Old mesh\nnode.count=1\nnode.1.name=Pump: main\nnode.1.parent=gateway\n")
+            "project.name=Old mesh\nnode.count=2\nnode.1.name=Pump: main\nnode.1.parent=gateway\n"
+            "node.2.name=Probe\nnode.2.parent=node.1\n")
         home = os.path.join(state, "home")
         TOKEN = mint_token(home)
         env.setdefault("RHO_HOME", os.path.join(os.path.expanduser("~"), ".rho"))
@@ -212,7 +213,8 @@ def main() -> int:
             if not old_plan.exists() or not (old_plan.parent / "project.txt.imported").exists():
                 raise AssertionError("the project written before plan.yml was not imported")
             assert_contains(plan_flat(old_plan),
-                            ["project.name=Old mesh", "node.1.name=Pump: main", "node.1.parent=gateway", "revision="],
+                            ["project.name=Old mesh", "node.1.name=Pump: main", "node.1.parent=gateway",
+                             "node.1.number=1", "node.2.number=2", "node.2.parent_node=1", "revision="],
                             "imported plan")
             assert_contains(mesh, ["Old mesh"], "imported project listed")
             assert_contains(
@@ -543,10 +545,10 @@ def main() -> int:
                     "node.1.name=Relay one",
                     "node.1.board=pico2w",
                     "node.1.kind=compute",
-                    "node.2.parent=node.1",
+                    "node.2.parent_node=1",
                     "node.3.kind=module",
                     "node.3.module=ds18b20-temperature-module",
-                    "node.3.parent=node.1",
+                    "node.3.parent_node=1",
                     "node.4.module=dht11-module",
                     "node.5.module=bmp180-module",
                     "node.5.parent=gateway",
@@ -566,7 +568,8 @@ def main() -> int:
             )
 
             # Removing a node moves the rows after it up in one write, and each
-            # node keeps the number its firmware and its telemetry carry.
+            # node keeps the number its firmware and its telemetry carry. A
+            # parent is stored by its number, so it needs no rewriting.
             before = int(dict(l.split("=", 1) for l in plan_flat(wizard_state).splitlines() if "=" in l)["revision"])
             post(base, "/mesh/node/5", {"action": "delete", "kind": "module"})
             removed = dict(l.split("=", 1) for l in plan_flat(wizard_state).splitlines() if "=" in l)
@@ -576,7 +579,7 @@ def main() -> int:
                 "node.5.number": "6",
                 "node.6.module": "ky-018-photoresistor-module",
                 "node.6.number": "7",
-                "node.2.parent": "node.1",
+                "node.2.parent_node": "1",
                 "node.2.number": "2",
                 "node.next_number": "8",
             }

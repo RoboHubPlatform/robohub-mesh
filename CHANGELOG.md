@@ -238,3 +238,8 @@ the fleet existed keeps the defaults it was built with while they are free. A
 native gateway is started with its process id written beside its project and
 stopped by that id, so stopping or deleting one mesh no longer stops every
 gateway on the machine, and each mesh has its own gateway log.
+
+plan.yml names a node's parent by the parent's number (`parent_node: 7`), which
+stays with the parent whatever happens to the rows around it; the pages still
+read and write the row form, translated on every read and write. A plan written
+before is converted the first time it is saved.
