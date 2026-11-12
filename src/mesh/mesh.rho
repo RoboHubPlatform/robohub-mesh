@@ -3110,17 +3110,8 @@ fn mesh_shell(req: Request, title: string, content: string) string {
 }
 
 fn mesh_docs_page(req: Request) Response {
-    // The guide ships with the application. A hosted application runs from its
-    // own folder, while one started from the repository root has the
-    // orchestrator's module.yml in front of it; both reach the same file.
-    var source: string = "docs/index.md"
-    if !rho_path_exists("module.yml") || yaml.value("module.yml", "module.name") != "mesh" {
-        let shipped: string = robohub_root() + "/applications/mesh/docs/index.md"
-        if rho_path_exists(shipped) {
-            source = shipped
-        }
-    }
-    var content: string = docs_render_source(source)
+    // The guide ships with the application, embedded when it is built.
+    var content: string = docs_render_source(rho_asset_dir("mesh") + "/docs/index.md")
     if content == "" {
         content = "<h1>Documentation</h1><p>No documentation was found for this application.</p>"
     }

@@ -46,6 +46,12 @@ sql:
   schema: db/schema.sql
   out: src/db
 
+# The application's own files, embedded when it is built.
+assets:
+  - module.yml
+  - docs/index.md
+  - wizard
+
 deps:
   rho-log: ">=0.1.2"
   robohub:
@@ -59,6 +65,7 @@ deps:
     alert-log: ">=0.1.0"
     email-alert: ">=0.1.0"
     telegram-notifier: ">=0.1.0"
+    robohub-contract-alert: ">=0.1.0"
   rho-sql: ">=0.1.0"
 
 # A hosted application is not a service the keeper is: it has its own listener,

@@ -3,6 +3,9 @@ module mesh.storage
 extern fn rho_arg(index: i32) string
 extern fn rho_path_exists(path: string) bool
 extern fn rho_read_text(path: string) string
+// The application's own files, embedded when it is built.
+extern fn rho_asset(module: string, path: string) string
+extern fn rho_asset_dir(module: string) string
 extern fn rho_write_text(path: string, text: string) bool
 extern fn rho_write_secret(path: string, text: string) bool
 extern fn rho_hmac_sha256_hex(key_hex: string, message_hex: string) string

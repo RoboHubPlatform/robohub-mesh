@@ -434,7 +434,8 @@ fn spec_root() string {
     if override != "" {
         return override
     }
-    let under: string = robohub_root() + "/applications/mesh/wizard"
+    // The steps ship with the application, embedded when it is built.
+    let under: string = rho_asset_dir("mesh") + "/wizard"
     if rho_path_exists(under + "/wizard.yml") {
         return under
     }
@@ -2280,7 +2281,8 @@ fn mesh_manifest_path() string {
         yaml.value("module.yml", "module.name") == "mesh" {
         return "module.yml"
     }
-    let path: string = robohub_root() + "/applications/mesh/module.yml"
+    // The manifest the application was built from travels with it.
+    let path: string = rho_asset_dir("mesh") + "/module.yml"
     if rho_path_exists(path) {
         return path
     }

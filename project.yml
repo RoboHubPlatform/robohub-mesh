@@ -33,10 +33,6 @@ targets:
         file: locales/en.json
       - locale: ro
         file: locales/ro.json
-      - locale: en
-        file: ../../modules/i18n/locales/en.json
-      - locale: ro
-        file: ../../modules/i18n/locales/ro.json
     templates:
       - name: layout
         file: templates/layouts/layout.html

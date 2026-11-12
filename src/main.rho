@@ -6,7 +6,7 @@ module mesh
 include "mesh/storage.rho"
 include "forms"
 include "settings"
-include "alert"
+include "robohub-contract-alert"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/tokens.rho"
