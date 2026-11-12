@@ -279,6 +279,39 @@ def check_editor(base: str, project: Path) -> None:
     if f"select=node:{relay}" not in landed or "Relay one" not in body:
         raise AssertionError(f"a plain form post did not come back to its node ({landed})")
 
+    # Apply: the relay is out of date, so "Apply changes" offers to build and
+    # flash it. Building it is a job that runs in the background; flashing it
+    # waits on its card for the person to put the board in BOOTSEL.
+    apply = hx(base, "/mesh/p/default/apply")
+    assert_contains(apply, ["Apply changes", "Relay one", "build, then flash"], "the apply dialog")
+    queued = hx(base, "/mesh/p/default/apply", {"only": f"node:{relay}"})
+    assert_contains(queued, ["Queued."], "the relay queued")
+    jobs = project / "jobs"
+    build_job, flash_job = sorted(p.stem for p in jobs.glob("*.job"))[-2:]
+    if (project / "boards").exists() is False:
+        raise AssertionError("the board was not prepared beside its project")
+    deadline = time.time() + 900
+    while time.time() < deadline and not (jobs / f"{build_job}.exit").exists():
+        time.sleep(2)
+    code = (jobs / f"{build_job}.exit").read_text().strip() if (jobs / f"{build_job}.exit").exists() else "none"
+    if code != "0":
+        log = (jobs / f"{build_job}.log").read_text() if (jobs / f"{build_job}.log").exists() else ""
+        raise AssertionError(f"the relay's build job ended {code}:\n{log[-3000:]}")
+    flash = hx(base, f"/mesh/p/default/job/{flash_job}")
+    assert_contains(flash, ["Flash Relay one", "waiting", "BOOTSEL", "The board is ready: flash it"], "the flash waiting")
+    if "waiting for you" not in get(base, "/mesh/p/default"):
+        raise AssertionError("the card does not say the flash waits for the person")
+    cancelled = hx(base, f"/mesh/p/default/job/{flash_job}/cancel", {})
+    assert_contains(cancelled, ["Cancelled."], "the flash cancelled")
+    deadline = time.time() + 20
+    while time.time() < deadline and not (jobs / f"{flash_job}.done").exists():
+        time.sleep(1)
+    if (jobs / f"{flash_job}.exit").read_text().strip() != "130":
+        raise AssertionError("a cancelled flash did not end as cancelled")
+    after = hx(base, f"/mesh/p/default/node/{relay}")
+    if "out of date" not in after or "runs what is planned" in after:
+        raise AssertionError("a flash that never ran recorded what the board runs")
+
 
 def main() -> int:
     global TOKEN
@@ -300,6 +333,9 @@ def main() -> int:
         home = os.path.join(state, "home")
         TOKEN = mint_token(home)
         env.setdefault("RHO_HOME", os.path.join(os.path.expanduser("~"), ".rho"))
+        # Tools installed with pip --user (cmake among them) find their package
+        # under the user base, which follows HOME unless it is named.
+        env.setdefault("PYTHONUSERBASE", os.path.join(os.path.expanduser("~"), ".local"))
         # Mesh builds the gateway with Go; the machine's caches are named before
         # HOME changes, so a build does not start from an empty cache.
         for name in ("GOCACHE", "GOMODCACHE", "GOPATH"):
@@ -903,10 +939,27 @@ def main() -> int:
                 raise AssertionError("a native gateway never started is not shown as stopped: " +
                                      (live_health.read_text() if live_health.exists() else "no health"))
             assert_contains(get(base, "/mesh/agora?project=Live-mesh"),
-                            ["gateway not started", "Build and start the gateway", "action=\"/mesh/gateway/restart\""],
+                            ["gateway not started", "Build and start the gateway", "name=\"only\" value=\"gateway\""],
                             "agora of a mesh whose gateway is not started")
             if "gateway unreachable" in get(base, "/faults"):
                 raise AssertionError("a gateway nobody started was reported unreachable")
+            # The agora's button starts the gateway as a job: the page answers at
+            # once, the job builds and starts it in the background, and once it
+            # has, the gateway runs what is planned.
+            queued = hx(base, "/mesh/p/Live-mesh/apply", {"only": "gateway"})
+            assert_contains(queued, ["Queued."], "the gateway queued as a job")
+            live_jobs = Path(state) / "projects" / "Live-mesh" / "jobs"
+            deadline = time.time() + 300
+            while time.time() < deadline and not any(live_jobs.glob("*.done")):
+                time.sleep(1)
+            exits = [p.read_text().strip() for p in live_jobs.glob("*.exit")]
+            if exits != ["0"]:
+                logs = "".join(p.read_text() for p in live_jobs.glob("*.log"))
+                raise AssertionError(f"the gateway job did not finish well ({exits}):\n{logs[-3000:]}")
+            if "gateway\t" not in (Path(state) / "projects" / "Live-mesh" / "deployed.txt").read_text():
+                raise AssertionError("the gateway job did not record what the gateway runs")
+            job_pid = int((Path(state) / "projects" / "Live-mesh" / "gateway.pid").read_text().strip())
+            LIVE_PIDS.append(job_pid)
             # A restart builds the gateway before it starts it, and returns to
             # the agora it was asked from, showing the gateway online.
             gateway_binary = PROJECTS / "robohub-gateway" / "build" / "robohub-gateway"

@@ -434,7 +434,8 @@ fn agora_node_live(index: u32, readings: string) string {
         return ""
     }
     let source: string = state_value("node." + rho_int_to_str(index) + ".id")
-    return agora_node_deploy(index) + "<div class=\"agora-live\">" + agora_node_state(index, readings) +
+    return jobs_card_line(current_project(), "node." + state_value("node." + rho_int_to_str(index) + ".id")) +
+        agora_node_deploy(index) + "<div class=\"agora-live\">" + agora_node_state(index, readings) +
         "<div class=\"agora-chips\">" + agora_chips(readings, source, 3) + "</div></div>"
 }
 
@@ -479,7 +480,7 @@ fn agora_gateway_card(id: string, readings: string) string {
         deploy = "<div class=\"agora-live\"><span class=\"agora-state planned\">restart to apply</span> " +
             "<span class=\"agora-seen\">" + escape_html(reason) + "</span></div>"
     }
-    let live: string = deploy + "<div class=\"agora-live\">" + state +
+    let live: string = jobs_card_line(id, "gateway") + deploy + "<div class=\"agora-live\">" + state +
         "<div class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</div></div>"
     return "<span class=\"agora-node\" id=\"agora-node-gateway\"><a class=\"node-card gateway agora-card\"" +
         editor_open_gateway(id) + ">" + gateway_card_body() + live + "</a>" +
@@ -580,10 +581,15 @@ fn agora_bar(id: string) string {
     }
     var stale: string = ""
     let count: u32 = agora_out_of_date()
+    var waiting: string = "Apply changes"
     if count == 1 {
-        stale = "<span class=\"agora-pill\">1 board out of date</span>"
+        waiting = "Apply changes · 1 board"
     } else if count > 1 {
-        stale = "<span class=\"agora-pill\">" + rho_int_to_str(count) + " boards out of date</span>"
+        waiting = "Apply changes · " + rho_int_to_str(count) + " boards"
+    }
+    if count > 0 || deployed_gateway_reason(id) != "" {
+        stale = "<a class=\"button\"" + editor_open(editor_base(id) + "/apply", editor_page_url(id, "apply")) + ">" +
+            waiting + "</a>"
     }
     return "<strong class=\"agora-name\">" + escape_html(project_name(id)) + "</strong> " + live +
         " " + agora_gateway_actions(id, health) +
@@ -602,6 +608,11 @@ fn agora_gateway_actions(id: string, health: string) string {
     }
     let project: string = "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
         "<input type=\"hidden\" name=\"return\" value=\"agora\">"
+    let job: string = jobs_open_for(id, "gateway", "")
+    if job != "" {
+        return "<a class=\"button quiet\"" + jobs_open_attrs(id, job) + ">" + escape_html(jobs_meta(id, job, "label")) +
+            " · " + jobs_state(id, job) + "</a>"
+    }
     var label: string = "Build and start the gateway"
     var stop: string = ""
     if health == "online" || health == "offline" {
@@ -609,7 +620,9 @@ fn agora_gateway_actions(id: string, health: string) string {
         stop = "<form class=\"agora-action\" method=\"post\" action=\"/mesh/gateway/stop\">" + project +
             "<button type=\"submit\" class=\"quiet\">Stop</button></form>"
     }
-    return "<form class=\"agora-action\" method=\"post\" action=\"/mesh/gateway/restart\">" + project +
+    // The build runs in the background; the page shows the job and its log.
+    return "<form class=\"agora-action\" method=\"post\" action=\"" + editor_base(id) + "/apply\" hx-post=\"" +
+        editor_base(id) + "/apply\" hx-target=\"#agora-inspector\"><input type=\"hidden\" name=\"only\" value=\"gateway\">" +
         "<button type=\"submit\">" + label + "</button></form>" + stop
 }
 
@@ -642,7 +655,7 @@ fn agora_strip(id: string) string {
         " · network " + default_value("step_network", "pending") +
         " · build " + default_value("step_build", "pending") +
         " · verify " + default_value("step_verify", "pending")
-    return faults + " <span class=\"agora-steps\">" + escape_html(steps) + "</span> <a href=\"/faults\">Faults</a>"
+    return jobs_strip(id) + " " + faults + " <a href=\"/faults\">Faults</a>"
 }
 
 // agora_tab is one tab-separated field of a line.
@@ -721,7 +734,7 @@ fn mesh_agora_page(req: Request) Response {
     return mesh_redirect("/mesh/p/" + id)
 }
 
-const EDITOR_STYLE: string = "<style>.agora-node{display:inline-flex;flex-direction:column;align-items:center;gap:.25rem}.agora-add{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}.agora-node:hover .agora-add,.agora-node:focus-within .agora-add{opacity:1}.agora-add a{font-size:.72rem;border:1px dashed var(--line-strong);border-radius:999px;padding:.05rem .45rem;color:var(--muted)}.agora-add a:hover{color:var(--ink);border-color:var(--gold)}a.link-badge{cursor:pointer}a.link-badge:hover{outline:1px solid var(--gold)}.agora-inspector h3{margin:.1rem 0 .5rem}.inspector-tabs{display:flex;gap:.25rem;margin:.5rem 0 .7rem;border-bottom:1px solid var(--line)}.inspector-tabs a{padding:.3rem .6rem;font-size:.8rem;color:var(--muted);border-bottom:2px solid transparent}.inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.inspector-form{display:grid;gap:.6rem;margin-bottom:.8rem}.inspector-form label{display:grid;gap:.2rem;font-size:.8rem}.inspector-list{margin:.3rem 0 .6rem;padding-left:1.1rem;font-size:.85rem}.inspector-list form.inline{display:inline;margin-left:.4rem}.inspector-deploy{margin:.2rem 0 .4rem;font-size:.82rem}.inspector-add{margin-top:.6rem}.agora-inspector .sensor-groups{max-height:18rem;overflow:auto}</style>"
+const EDITOR_STYLE: string = "<style>.agora-job{border-radius:999px;padding:.1rem .6rem;font-size:.8rem;border:1px solid var(--line)}.agora-job.running{color:var(--gold);border-color:rgba(228,184,102,.5)}.agora-job.waiting{color:var(--warn);border-color:rgba(240,197,106,.6);font-weight:600}.agora-job.failed{color:var(--stop);border-color:rgba(240,138,126,.5)}.job-log{max-height:24rem;overflow:auto;font-size:.72rem;white-space:pre-wrap;background:rgba(0,0,0,.25);padding:.6rem;border-radius:8px}form.inline{display:inline}.agora-node{display:inline-flex;flex-direction:column;align-items:center;gap:.25rem}.agora-add{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}.agora-node:hover .agora-add,.agora-node:focus-within .agora-add{opacity:1}.agora-add a{font-size:.72rem;border:1px dashed var(--line-strong);border-radius:999px;padding:.05rem .45rem;color:var(--muted)}.agora-add a:hover{color:var(--ink);border-color:var(--gold)}a.link-badge{cursor:pointer}a.link-badge:hover{outline:1px solid var(--gold)}.agora-inspector h3{margin:.1rem 0 .5rem}.inspector-tabs{display:flex;gap:.25rem;margin:.5rem 0 .7rem;border-bottom:1px solid var(--line)}.inspector-tabs a{padding:.3rem .6rem;font-size:.8rem;color:var(--muted);border-bottom:2px solid transparent}.inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.inspector-form{display:grid;gap:.6rem;margin-bottom:.8rem}.inspector-form label{display:grid;gap:.2rem;font-size:.8rem}.inspector-list{margin:.3rem 0 .6rem;padding-left:1.1rem;font-size:.85rem}.inspector-list form.inline{display:inline;margin-left:.4rem}.inspector-deploy{margin:.2rem 0 .4rem;font-size:.82rem}.inspector-add{margin-top:.6rem}.agora-inspector .sensor-groups{max-height:18rem;overflow:auto}</style>"
 
 // agora_page_for is a mesh's agora with something selected: the live tree,
 // the bar and the activity strip, and the inspector beside them.

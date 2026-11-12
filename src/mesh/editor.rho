@@ -188,11 +188,26 @@ fn editor_deploy_line(id: string, index: u32) string {
         return ""
     }
     let reason: string = deployed_node_reason(id, index)
+    let job: string = jobs_open_for(id, "node." + editor_node_id(id, index), "")
+    var action: string = ""
+    if job != "" {
+        action = " <a class=\"button quiet\"" + jobs_open_attrs(id, job) + ">" +
+            escape_html(jobs_meta(id, job, "label")) + " · " + jobs_state(id, job) + "</a>"
+    } else {
+        var label: string = "Build and flash"
+        if reason == "" {
+            label = "Build and flash again"
+        }
+        action = " <form class=\"inline\" method=\"post\" action=\"" + editor_base(id) + "/apply\" hx-post=\"" +
+            editor_base(id) + "/apply\" hx-target=\"#agora-inspector\">" +
+            editor_hidden("only", "node:" + editor_node_id(id, index)) +
+            "<button type=\"submit\" class=\"quiet\">" + label + "</button></form>"
+    }
     if reason == "" {
-        return "<p class=\"inspector-deploy\"><span class=\"agora-state online\">runs what is planned</span></p>"
+        return "<p class=\"inspector-deploy\"><span class=\"agora-state online\">runs what is planned</span>" + action + "</p>"
     }
     return "<p class=\"inspector-deploy\"><span class=\"agora-state planned\">out of date</span> " +
-        escape_html(reason) + "</p>"
+        escape_html(reason) + action + "</p>"
 }
 
 /* -------------------------------------------------------------------------- */
@@ -212,6 +227,12 @@ fn editor_inspector(id: string, selection: string, tab: string, kind: string, pa
     }
     if selection == "new" {
         return editor_new_inspector(id, kind, parent, notice)
+    }
+    if selection == "apply" {
+        return jobs_apply_inspector(id, notice)
+    }
+    if rho_str_index_of(selection, "job:") == 0 {
+        return notice + jobs_inspector(id, rho_str_slice(selection, 4, u32(rho_strlen(selection)) - 4))
     }
     if rho_str_index_of(selection, "node:") == 0 || rho_str_index_of(selection, "edge:") == 0 {
         let nid: string = rho_str_slice(selection, 5, u32(rho_strlen(selection)) - 5)

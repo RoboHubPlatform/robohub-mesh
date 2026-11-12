@@ -1,0 +1,680 @@
+//
+// @file jobs.rho
+// @brief Building, flashing and starting in the background, one lane per mesh.
+//
+// "Apply changes" turns what is out of date into jobs: build each board that
+// changed, restart the gateway when it changed, and flash each board once the
+// person is at it. A job is a shell script beside the project with its own log;
+// a runner per mesh works through them in order, so a long build in one mesh
+// never waits on another, and no page waits on a build at all.
+//
+// The scripts are written while the request that asked for them has the
+// project open, which is when everything they need is known. A flash waits on
+// its board's card until the person says the board is in its programming mode.
+// The background worker finishes what the runner finished: it records what a
+// board now runs (deployed.rho), so the board stops showing as out of date.
+//
+// @module mesh.jobs
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.jobs
+
+// While a job's script is being made from the handlers that would run it,
+// run_shell writes its commands to that script instead of running them, and
+// the build handlers work on the job's board. A module has no variables, so
+// both are said in files beside Mesh's state, set and cleared around the making.
+fn jobs_recording() string {
+    return first_line(rho_read_text(wizard_dir() + "/job-recording.txt"))
+}
+
+fn jobs_set_recording(path: string) void {
+    ignore_bool(rho_write_text(wizard_dir() + "/job-recording.txt", path + "\n"))
+}
+
+fn jobs_node() u32 {
+    return u32(rho_int_from_str(first_line(rho_read_text(wizard_dir() + "/job-node.txt"))))
+}
+
+fn jobs_set_node(index: u32) void {
+    var value: string = ""
+    if index > 0 {
+        value = rho_int_to_str(index)
+    }
+    ignore_bool(rho_write_text(wizard_dir() + "/job-node.txt", value + "\n"))
+}
+
+const JOB_RUNNER: string = "#!/bin/sh\n# The job runner of one mesh: each job in order, a flash once the person\n# says the board is ready, and nothing that depended on a job that failed.\ncd \"$(dirname \"$0\")\" || exit 1\nwhile :; do\n  next=\"\"\n  for f in $(ls [0-9]*.sh 2>/dev/null | sort); do\n    n=\"${f%.sh}\"\n    [ -f \"$n.exit\" ] && continue\n    next=\"$n\"\n    break\n  done\n  [ -z \"$next\" ] && exit 0\n  if [ -f \"$next.cancel\" ]; then echo 130 > \"$next.exit\"; continue; fi\n  if [ -f \"$next.after\" ]; then\n    after=\"$(cat \"$next.after\")\"\n    if [ -f \"$after.exit\" ] && [ \"$(cat \"$after.exit\")\" != 0 ]; then echo 125 > \"$next.exit\"; continue; fi\n  fi\n  if [ -f \"$next.wait\" ] && [ ! -f \"$next.go\" ]; then sleep 1; continue; fi\n  date +%s > \"$next.started\"\n  sh \"$next.sh\" > \"$next.log\" 2>&1\n  echo $? > \"$next.exit\"\ndone\n"
+
+fn jobs_dir(project: string) string {
+    return project_location(project) + "/jobs"
+}
+
+fn jobs_path(project: string, seq: string, ext: string) string {
+    return jobs_dir(project) + "/" + seq + "." + ext
+}
+
+fn jobs_exists(project: string, seq: string, ext: string) bool {
+    return rho_path_exists(jobs_path(project, seq, ext))
+}
+
+fn jobs_read(project: string, seq: string, ext: string) string {
+    return first_line(rho_read_text(jobs_path(project, seq, ext)))
+}
+
+fn jobs_report(name: string) string {
+    return wizard_report("jobs-" + name)
+}
+
+// jobs_list is a project's jobs, oldest first, as "seq\n" lines.
+fn jobs_list(project: string) string {
+    if !rho_path_exists(jobs_dir(project)) {
+        return ""
+    }
+    let report: string = jobs_report("list")
+    ignore_u32(rho_exec("sh", "-c \"cd " + shell_quote(jobs_dir(project)) +
+        " && ls [0-9]*.job 2>/dev/null | sort | sed 's/[.]job$//'\"", report))
+    return rho_read_text(report)
+}
+
+// jobs_meta is one line of a job's description, which is key=value lines.
+fn jobs_meta(project: string, seq: string, key: string) string {
+    return plan_value(rho_read_text(jobs_path(project, seq, "job")), key)
+}
+
+// jobs_state is where a job is: queued, waiting (for the person), running,
+// done, failed, skipped or cancelled.
+fn jobs_state(project: string, seq: string) string {
+    if jobs_exists(project, seq, "exit") {
+        let code: string = jobs_read(project, seq, "exit")
+        if code == "0" {
+            return "done"
+        }
+        if code == "125" {
+            return "skipped"
+        }
+        if code == "130" {
+            return "cancelled"
+        }
+        return "failed"
+    }
+    if jobs_exists(project, seq, "started") {
+        return "running"
+    }
+    if jobs_exists(project, seq, "wait") && !jobs_exists(project, seq, "go") {
+        return "waiting"
+    }
+    return "queued"
+}
+
+fn jobs_open(project: string, seq: string) bool {
+    let state: string = jobs_state(project, seq)
+    return state == "queued" || state == "waiting" || state == "running"
+}
+
+// jobs_open_for is the job still to finish for a target ("node.<id>" or
+// "gateway") and kind, or "".
+fn jobs_open_for(project: string, target: string, kind: string) string {
+    var rest: string = jobs_list(project)
+    var found: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq != "" && rho_str_eq(jobs_meta(project, seq, "target"), target) &&
+            (kind == "" || rho_str_eq(jobs_meta(project, seq, "kind"), kind)) && jobs_open(project, seq) {
+            found = seq
+        }
+    }
+    return found
+}
+
+fn jobs_next_seq(project: string) string {
+    let file: string = jobs_dir(project) + "/next.txt"
+    var next: u32 = u32(rho_int_from_str(first_line(rho_read_text(file))))
+    if next == 0 {
+        next = 1
+    }
+    ignore_bool(rho_write_text(file, rho_int_to_str(next + 1) + "\n"))
+    var seq: string = rho_int_to_str(next)
+    while u32(rho_strlen(seq)) < 6 {
+        seq = "0" + seq
+    }
+    return seq
+}
+
+// jobs_add writes a job: its script, what it is, and what it waits on.
+fn jobs_add(project: string, kind: string, target: string, label: string, script: string,
+    signature: string, after: string, wait: string) string {
+    ignore_u32(rho_exec("mkdir", "-p " + jobs_dir(project), jobs_report("mkdir")))
+    rho_lock("mesh.jobs:" + project)
+    let seq: string = jobs_next_seq(project)
+    rho_unlock("mesh.jobs:" + project)
+    // A board's manifest names its dependencies under the workspace, and a job
+    // runs with whatever environment Mesh was started with: it is said here.
+    let workspace: string = canonical_path(robohub_root() + "/..")
+    ignore_bool(rho_write_text(jobs_path(project, seq, "sh"), "set -e\nexport ROBOHUB_WORKSPACE=\"${ROBOHUB_WORKSPACE:-" +
+        workspace + "}\"\n" + script))
+    if after != "" {
+        ignore_bool(rho_write_text(jobs_path(project, seq, "after"), after + "\n"))
+    }
+    if wait != "" {
+        ignore_bool(rho_write_text(jobs_path(project, seq, "wait"), wait + "\n"))
+    }
+    // The job's description is written last: a job is listed by it, so the
+    // runner never meets one half made.
+    ignore_bool(rho_write_text(jobs_path(project, seq, "job"),
+        "kind=" + kind + "\ntarget=" + target + "\nlabel=" + sanitize(label) + "\nsignature=" + signature +
+        "\ncreated=" + rho_int_to_str(mesh_now_seconds()) + "\n"))
+    return seq
+}
+
+// jobs_start makes sure the mesh's runner is working; one at a time runs.
+fn jobs_start(project: string) void {
+    let dir: string = jobs_dir(project)
+    ignore_bool(rho_write_text(dir + "/runner.sh", JOB_RUNNER))
+    ignore_u32(rho_exec("sh", "-c \"cd " + shell_quote(dir) +
+        " && nohup flock -n runner.lock sh runner.sh > runner.log 2>&1 < /dev/null &\"", jobs_report("start")))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  What a job runs                                                           */
+/* -------------------------------------------------------------------------- */
+
+// jobs_record runs a handler's run_shell calls into a script instead of
+// running them, and answers the script.
+fn jobs_script_header(label: string) string {
+    return "printf '\\n== %s ==\\n' " + shell_quote(label) + "\n"
+}
+
+// jobs_board_dir is where a board of the open project is built: beside the
+// project, by its stable number, so two meshes never build into one folder.
+fn jobs_board_dir(index: u32) string {
+    // The build names the image after its folder with `-` as `_`, so the folder
+    // is written the way the image will be: node_3 builds node_3.elf.
+    return project_location(current_project()) + "/boards/node_" +
+        rho_int_to_str(project_node_number(wizard_file(), index))
+}
+
+// jobs_queue_board writes a board's build and flash for the open project. The
+// board's sources are prepared now, from the plan as it is; the build and the
+// flash run in the background, the flash once the person says the board is in
+// its programming mode.
+fn jobs_queue_board(index: u32) string {
+    let id: string = current_project()
+    let nid: string = project_node_id(wizard_file(), index)
+    let target: string = "node." + nid
+    if jobs_open_for(id, target, "") != "" {
+        return editor_name(index) + " already has a job to finish."
+    }
+    jobs_set_node(index)
+    let prepared: u32 = prepare_node()
+    let dir: string = node_dir()
+    let board: string = node_board()
+    let binary: string = node_binary()
+    jobs_set_node(0)
+    if prepared != 0 {
+        return "the sources of " + editor_name(index) + " could not be prepared"
+    }
+    let signature: string = deploy_node_signature(plan_text(wizard_file()), index)
+    let name: string = editor_name(index)
+    let build: string = jobs_add(id, "build", target, "Build " + name,
+        jobs_script_header("build " + name) + "cd " + shell_quote(dir) + "\nrho build -target " + shell_quote(board) + " .\n",
+        signature, "", "")
+    ignore_string(jobs_add(id, "flash", target, "Flash " + name,
+        jobs_script_header("flash " + name) + "rho flash -target " + shell_quote(board) + " -project " +
+        shell_quote(dir) + " " + shell_quote(binary) + "\n",
+        signature, build, programming_instruction(board)))
+    return ""
+}
+
+// jobs_queue_gateway writes the gateway's build and start for the open
+// project, from the same handlers the old pages run.
+fn jobs_queue_gateway() string {
+    let id: string = current_project()
+    if jobs_open_for(id, "gateway", "") != "" {
+        return "the gateway already has a job to finish."
+    }
+    ignore_u32(rho_exec("mkdir", "-p " + jobs_dir(id), jobs_report("mkdir")))
+    let script: string = jobs_dir(id) + "/recording.sh"
+    ignore_bool(rho_write_text(script, ""))
+    jobs_set_recording(script)
+    var code: u32 = handler_build_gateway()
+    if code == 0 {
+        code = handler_start_gateway()
+    }
+    jobs_set_recording("")
+    if code != 0 {
+        return "the gateway's start could not be written (" + rho_int_to_str(code) + ")"
+    }
+    var label: string = "Restart the gateway"
+    if default_value("gateway", "native") != "native" {
+        label = "Program the gateway"
+    }
+    ignore_string(jobs_add(id, "gateway", "gateway", label, rho_read_text(script),
+        deploy_gateway_signature(plan_text(wizard_file())), "", ""))
+    return ""
+}
+
+// jobs_record_shell is run_shell while a script is being recorded.
+fn jobs_record_shell(command: string, label: string) u32 {
+    ignore_bool(rho_write_text(jobs_recording(), rho_read_text(jobs_recording()) + jobs_script_header(label) +
+        "(\n" + command + "\n)\n"))
+    return 0
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Finishing                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// jobs_finish settles the jobs a project's runner has finished: a board that
+// was flashed runs what its job was made from, a gateway that started runs its
+// plan, and anything that failed says so on its card.
+fn jobs_finish(project: string) bool {
+    var changed: bool = false
+    var pending: bool = false
+    var rest: string = jobs_list(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq == "" {
+            continue
+        }
+        if !jobs_exists(project, seq, "exit") {
+            pending = true
+            continue
+        }
+        if jobs_exists(project, seq, "done") {
+            continue
+        }
+        let kind: string = jobs_meta(project, seq, "kind")
+        let target: string = jobs_meta(project, seq, "target")
+        let signature: string = jobs_meta(project, seq, "signature")
+        let ok: bool = jobs_read(project, seq, "exit") == "0"
+        let file: string = project_file(project)
+        if rho_str_index_of(target, "node.") == 0 {
+            let index: u32 = project_node_by_id(file, rho_str_slice(target, 5, u32(rho_strlen(target)) - 5))
+            if index > 0 {
+                let key: string = "status.node." + rho_int_to_str(index)
+                if ok && kind == "build" {
+                    save_setting_at(file, key, "built")
+                } else if ok && kind == "flash" {
+                    save_setting_at(file, key, "programmed")
+                    deployed_set(project, target, signature)
+                } else if !ok && jobs_state(project, seq) == "failed" {
+                    save_setting_at(file, key, "failed")
+                }
+            }
+        } else if target == "gateway" {
+            if ok {
+                var status: string = "programmed"
+                if state_value_in(file, "gateway") == "" || state_value_in(file, "gateway") == "native" {
+                    status = "running"
+                }
+                save_setting_at(file, "status.gateway", status)
+                deployed_set(project, "gateway", signature)
+            } else if jobs_state(project, seq) == "failed" {
+                save_setting_at(file, "status.gateway", "failed")
+                save_setting_at(file, "message.build", "The gateway did not start.")
+            }
+            agora_check_health(project)
+        }
+        if ok {
+            info("mesh", project + ": " + jobs_meta(project, seq, "label") + " done")
+        } else if jobs_state(project, seq) == "failed" {
+            warn("mesh", project + ": " + jobs_meta(project, seq, "label") + " failed")
+        }
+        ignore_bool(rho_write_text(jobs_path(project, seq, "done"), "\n"))
+        changed = true
+    }
+    if pending {
+        // A runner that stopped just as a job was added is started again here.
+        jobs_start(project)
+    }
+    return changed
+}
+
+// jobs_tick finishes every mesh's jobs; the background worker calls it.
+fn jobs_tick() void {
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && rho_path_exists(jobs_dir(id)) && jobs_finish(id) && rho_str_eq(id, current_project()) {
+            agora_publish(agora_events_file(id), project_location(id) + "/agora-last.jsonl", agora_snapshot(id))
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  What the pages show                                                       */
+/* -------------------------------------------------------------------------- */
+
+// jobs_card_line is a board's or the gateway's job, on its card: what it is
+// doing, or what it waits for.
+fn jobs_card_line(project: string, target: string) string {
+    var rest: string = jobs_list(project)
+    var last: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq != "" && rho_str_eq(jobs_meta(project, seq, "target"), target) {
+            if jobs_open(project, seq) {
+                return jobs_badge(project, seq)
+            }
+            last = seq
+        }
+    }
+    // The last job for it, when it failed: a later one that did not would be
+    // the last.
+    if last != "" && jobs_state(project, last) == "failed" {
+        return jobs_badge(project, last)
+    }
+    return ""
+}
+
+fn jobs_badge(project: string, seq: string) string {
+    let state: string = jobs_state(project, seq)
+    let label: string = jobs_meta(project, seq, "label")
+    var css: string = "quiet"
+    var text: string = label + " · queued"
+    if state == "running" {
+        css = "planned"
+        text = label + " · running"
+    } else if state == "waiting" {
+        css = "planned"
+        text = label + " · waiting for you"
+    } else if state == "failed" {
+        css = "down"
+        text = label + " · failed"
+    }
+    return "<div class=\"agora-live\"><span class=\"agora-state " + css + "\">" + escape_html(text) + "</span></div>"
+}
+
+fn jobs_url(project: string, seq: string) string {
+    return editor_base(project) + "/job/" + seq
+}
+
+fn jobs_open_attrs(project: string, seq: string) string {
+    return editor_open(jobs_url(project, seq), editor_page_url(project, "job:" + seq))
+}
+
+// jobs_strip is the activity strip's jobs: the one running, the ones waiting
+// for the person, and the last that failed, each opening its log.
+fn jobs_strip(project: string) string {
+    var out: string = ""
+    var rest: string = jobs_list(project)
+    var queued: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq == "" {
+            continue
+        }
+        let state: string = jobs_state(project, seq)
+        let label: string = escape_html(jobs_meta(project, seq, "label"))
+        if state == "running" {
+            out = out + "<a class=\"agora-job running\"" + jobs_open_attrs(project, seq) + ">" + label + " · running</a>"
+        } else if state == "waiting" {
+            out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label +
+                " · waiting for you</a>"
+        } else if state == "queued" {
+            queued = queued + 1
+        } else if state == "failed" && !jobs_exists(project, seq, "seen") {
+            out = out + "<a class=\"agora-job failed\"" + jobs_open_attrs(project, seq) + ">" + label + " · failed</a>"
+        }
+    }
+    if queued > 0 {
+        out = out + "<span class=\"agora-seen\">" + rho_int_to_str(queued) + " queued</span>"
+    }
+    return out
+}
+
+// jobs_inspector is one job in the inspector: what it is, where it is, its
+// log, and what the person can do about it.
+fn jobs_inspector(project: string, seq: string) string {
+    if !jobs_exists(project, seq, "job") {
+        return "<h3>Job</h3><p class=\"agora-seen\">That job is not there any more.</p>"
+    }
+    let state: string = jobs_state(project, seq)
+    let label: string = jobs_meta(project, seq, "label")
+    let action: string = jobs_url(project, seq)
+    var controls: string = ""
+    if state == "waiting" {
+        controls = "<div class=\"notice\"><p>" + escape_html(jobs_read(project, seq, "wait")) + "</p></div>" +
+            jobs_control(action, "go", "The board is ready: flash it", "") +
+            jobs_control(action, "cancel", "Cancel", "quiet")
+    } else if state == "queued" {
+        controls = jobs_control(action, "cancel", "Cancel", "quiet")
+    } else if state == "failed" || state == "cancelled" || state == "skipped" {
+        controls = jobs_control(action, "retry", "Try again", "")
+        ignore_bool(rho_write_text(jobs_path(project, seq, "seen"), "\n"))
+    }
+    var log: string = rho_read_text(jobs_path(project, seq, "log"))
+    let length: u32 = u32(rho_strlen(log))
+    if length > 6000 {
+        log = "…" + rho_str_slice(log, length - 6000, 6000)
+    }
+    var refresh: string = ""
+    if state == "running" || state == "queued" || state == "waiting" {
+        refresh = " hx-get=\"" + action + "\" hx-trigger=\"every 2s\" hx-target=\"#agora-inspector\""
+    }
+    var shown: string = log
+    if shown == "" {
+        shown = "Nothing yet."
+    }
+    return "<div" + refresh + "><h3>" + escape_html(label) + " <small class=\"agora-seen\">" + state + "</small></h3>" +
+        controls + "<pre class=\"job-log\">" + escape_html(shown) + "</pre></div>"
+}
+
+fn jobs_control(action: string, verb: string, label: string, css: string) string {
+    var klass: string = ""
+    if css != "" {
+        klass = " class=\"" + css + "\""
+    }
+    return "<form class=\"inline\" method=\"post\" action=\"" + action + "/" + verb + "\" hx-post=\"" + action + "/" +
+        verb + "\" hx-target=\"#agora-inspector\"><button type=\"submit\"" + klass + ">" + escape_html(label) +
+        "</button></form> "
+}
+
+// jobs_apply_plan is what "Apply changes" will do, before it is asked to.
+fn jobs_apply_plan(project: string) string {
+    var items: string = ""
+    var rest: string = deployed_out_of_date(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let index: u32 = u32(rho_int_from_str(item))
+        if index == 0 {
+            continue
+        }
+        items = items + "<li><b>" + escape_html(editor_name(index)) + "</b> · " +
+            escape_html(deployed_node_reason(project, index)) + "<br><small>build, then flash when you are at the board</small></li>"
+    }
+    let gateway: string = deployed_gateway_reason(project)
+    if gateway != "" {
+        var what: string = "restart"
+        if default_value("gateway", "native") != "native" {
+            what = "build and program"
+        }
+        items = items + "<li><b>Gateway</b> · " + escape_html(gateway) + "<br><small>" + what + "</small></li>"
+    }
+    return items
+}
+
+fn jobs_apply_inspector(project: string, notice: string) string {
+    let items: string = jobs_apply_plan(project)
+    if items == "" {
+        return "<h3>Apply changes</h3>" + notice +
+            "<p class=\"agora-seen\">Every board and the gateway run what is planned.</p>"
+    }
+    let action: string = editor_base(project) + "/apply"
+    return "<h3>Apply changes</h3>" + notice + "<ul class=\"inspector-list\">" + items + "</ul>" +
+        "<form method=\"post\" action=\"" + action + "\" hx-post=\"" + action + "\" hx-target=\"#agora-inspector\">" +
+        "<button type=\"submit\">Apply</button></form>" +
+        "<p class=\"agora-seen\">Builds run in the background; each flash waits on its board's card until you say the board is in its programming mode.</p>"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Routes                                                                    */
+/* -------------------------------------------------------------------------- */
+
+fn mesh_p_apply_page(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    return editor_fragment(req, id, "apply", "")
+}
+
+// jobs_answer is a job action's answer: the inspector with what it shows now.
+fn jobs_answer(req: Request, id: string, selection: string, notice: string) Response {
+    jobs_start(id)
+    return editor_answer(req, id, selection, "", notice)
+}
+
+fn mesh_p_apply_post(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let only: string = form_value(request_body(req), "only")
+    var problems: string = ""
+    var queued: u32 = 0
+    if only == "" || rho_str_index_of(only, "node:") == 0 {
+        var rest: string = deployed_out_of_date(id)
+        if rho_str_index_of(only, "node:") == 0 {
+            let index: u32 = project_node_by_id(project_file(id), rho_str_slice(only, 5, u32(rho_strlen(only)) - 5))
+            rest = ""
+            if index > 0 && editor_is_board(index) {
+                rest = rho_int_to_str(index) + "\n"
+            }
+        }
+        while rest != "" {
+            let at: i32 = rho_str_index_of(rest, "\n")
+            var item: string = rest
+            if at < 0 {
+                rest = ""
+            } else {
+                item = rho_str_slice(rest, 0, u32(at))
+                rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+            }
+            let index: u32 = u32(rho_int_from_str(item))
+            if index == 0 {
+                continue
+            }
+            let failure: string = jobs_queue_board(index)
+            if failure == "" {
+                queued = queued + 1
+            } else {
+                problems = problems + " " + failure
+            }
+        }
+    }
+    if only == "gateway" || (only == "" && deployed_gateway_reason(id) != "") {
+        let failure: string = jobs_queue_gateway()
+        if failure == "" {
+            queued = queued + 1
+        } else {
+            problems = problems + " " + failure
+        }
+    }
+    var said: string = "Nothing to apply."
+    if queued > 0 {
+        said = "Queued. Builds run now; each flash waits on its board's card for you."
+    }
+    var selection: string = "apply"
+    if only == "gateway" {
+        selection = "gateway"
+    } else if only != "" {
+        selection = only
+    }
+    return jobs_answer(req, id, selection, editor_notice(said + problems, problems != ""))
+}
+
+fn mesh_p_job_page(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    return editor_fragment(req, id, "job:" + param(req, "job"), "")
+}
+
+fn mesh_p_job_post(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let seq: string = sanitize(param(req, "job"))
+    let verb: string = param(req, "verb")
+    if !jobs_exists(id, seq, "job") || rho_str_index_of(seq, "/") >= 0 || rho_str_index_of(seq, ".") >= 0 {
+        return editor_answer(req, id, "", "", editor_notice("That job is not there any more.", true))
+    }
+    let selection: string = "job:" + seq
+    if verb == "go" && jobs_state(id, seq) == "waiting" {
+        ignore_bool(rho_write_text(jobs_path(id, seq, "go"), "\n"))
+        return jobs_answer(req, id, selection, editor_notice("Flashing.", false))
+    }
+    if verb == "cancel" && jobs_open(id, seq) && jobs_state(id, seq) != "running" {
+        ignore_bool(rho_write_text(jobs_path(id, seq, "cancel"), "\n"))
+        return jobs_answer(req, id, selection, editor_notice("Cancelled.", false))
+    }
+    if verb == "retry" && !jobs_open(id, seq) {
+        let target: string = jobs_meta(id, seq, "target")
+        var failure: string = ""
+        if target == "gateway" {
+            failure = jobs_queue_gateway()
+        } else {
+            let index: u32 = project_node_by_id(project_file(id), rho_str_slice(target, 5, u32(rho_strlen(target)) - 5))
+            if index == 0 {
+                failure = "that board is not in this mesh any more"
+            } else {
+                failure = jobs_queue_board(index)
+            }
+        }
+        if failure != "" {
+            return editor_answer(req, id, selection, "", editor_notice(failure, true))
+        }
+        return jobs_answer(req, id, "apply", editor_notice("Queued again.", false))
+    }
+    return editor_answer(req, id, selection, "", "")
+}

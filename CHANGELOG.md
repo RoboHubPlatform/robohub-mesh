@@ -295,3 +295,16 @@ address (/mesh/p/<project>?select=node:<id>). An edit builds nothing and resets
 nothing: each board's signature (what its image is built from) is recorded when
 it is programmed, and a board whose plan differs shows as out of date with the
 reason. A save from a form opened before the node's last save is refused.
+
+## [0.10.0] - 2026-11-13
+
+Apply changes and jobs. The agora's bar offers "Apply changes" when boards or
+the gateway differ from what they run; applying queues jobs: build each changed
+board, restart or program the gateway, then flash each board. Jobs are shell
+scripts beside the project, each with its own log, run in order by one runner
+per mesh, so no page waits on a build and one mesh's build never waits on
+another's. A flash waits on its board's card, with the board's own instruction
+(BOOTSEL for a Pico), until the person says the board is ready; it can be
+cancelled, and a failed job tried again. The background worker records what a
+board runs once it is flashed, and the gateway's plan once it started. Boards
+are built in a folder of their own under each project.

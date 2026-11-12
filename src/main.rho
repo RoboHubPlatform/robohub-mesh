@@ -19,6 +19,7 @@ include "mesh/settings.rho"
 include "mesh/agora.rho"
 include "mesh/deployed.rho"
 include "mesh/editor.rho"
+include "mesh/jobs.rho"
 
 import std.web.http
 import std.web.template
@@ -77,6 +78,10 @@ route POST "/mesh/p/{project}/node" => mesh_p_node_new
 route GET "/mesh/p/{project}/edge/{node}" => mesh_p_edge_page
 route POST "/mesh/p/{project}/edge/{node}" => mesh_p_edge_post
 route GET "/mesh/p/{project}/gateway" => mesh_p_gateway_page
+route GET "/mesh/p/{project}/apply" => mesh_p_apply_page
+route POST "/mesh/p/{project}/apply" => mesh_p_apply_post
+route GET "/mesh/p/{project}/job/{job}" => mesh_p_job_page
+route POST "/mesh/p/{project}/job/{job}/{verb}" => mesh_p_job_post
 route POST "/mesh/p/{project}/gateway" => mesh_p_gateway_post
 route GET "/mesh/agora/events" => mesh_agora_events
 route GET "/mesh/fleet" => mesh_fleet_page

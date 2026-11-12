@@ -529,6 +529,7 @@ fn telemetry_worker() void {
     let prune_every: u32 = mesh_retention_setting("prune_hours", 6) * 1800
     while true {
         telemetry_poll_once()
+        jobs_tick()
         device_ticks = device_ticks + 1
         if device_ticks >= 3 {
             device_ticks = 0

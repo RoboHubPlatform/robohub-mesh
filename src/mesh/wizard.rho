@@ -2131,11 +2131,7 @@ fn path_parent(path: string) string {
 // the example's own name. That is how `deployment.binary` can name it without
 // the keeper knowing what the example is called.
 fn node_dir() string {
-    let index: u32 = selected_node()
-    if index <= 1 {
-        return wizard_dir() + "/telemetry_node"
-    }
-    return wizard_dir() + "/telemetry_node" + rho_int_to_str(index)
+    return jobs_board_dir(selected_node())
 }
 
 fn node_binary() string {
@@ -2252,6 +2248,9 @@ fn mesh_alert(level: string, message: string, metadata: string) u32 {
 }
 
 fn run_shell(command: string, label: string) u32 {
+    if jobs_recording() != "" {
+        return jobs_record_shell(command, label)
+    }
     ensure_wizard_dir()
     let stage: string = default_value("current_step", "build")
     let progress: string = progress_path(stage)
@@ -2861,7 +2860,8 @@ fn handler_start_board() u32 {
     let method: string = yaml.value(manifest, "deployment.method")
     let arch: string = yaml.value(manifest, "deployment.arch")
     let binary: string = wizard_dir() + "/robohub-gateway-" + arch
-    if !rho_path_exists(binary) {
+    // While a job is written the build has not run yet; the job builds first.
+    if jobs_recording() == "" && !rho_path_exists(binary) {
         return 1
     }
     if method == "adb" {
@@ -3052,6 +3052,10 @@ fn node_count() u32 {
 }
 
 fn selected_node() u32 {
+    let job_node: u32 = jobs_node()
+    if job_node > 0 {
+        return job_node
+    }
     let count: u32 = node_count()
     if count < 1 {
         return 1
