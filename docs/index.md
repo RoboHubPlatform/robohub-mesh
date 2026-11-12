@@ -552,3 +552,20 @@ a browser session behind the keeper is exempt. Mint a scoped service token with
 `rho auth ticket --scopes mesh:default`. A token that was revoked is refused
 without consulting the keeper: the middleware reads the same `revoked.txt` the
 `rho auth revoke --jti` command writes.
+
+## Authenticated boards
+
+Every frame between a board and its gateway is authenticated (robohub-transport's
+`secure.h`). Mesh makes the keys and keeps them out of every repository:
+
+- each gateway project has a key, made the first time it is needed and kept in the
+  project's folder (`gateway.key`), readable by Mesh's user only; Mesh installs it
+  with the gateway it starts, pushes or deploys, as `GATEWAY_KEY_FILE`;
+- each planned board has an id (`node.<n>.uid` in the plan), made once;
+- a board's key is derived from the two and written into its build as
+  `src/robohub_secret.h`, which the firmware includes when it is there and no
+  repository tracks.
+
+A board built that way says hello to its gateway, opens a session, and sends only
+sealed frames; its gateway accepts nothing else unless `ALLOW_PLAIN_FRAMES=1`.
+

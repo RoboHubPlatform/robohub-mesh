@@ -5,6 +5,8 @@ extern fn rho_path_exists(path: string) bool
 extern fn rho_read_text(path: string) string
 extern fn rho_write_text(path: string, text: string) bool
 extern fn rho_write_secret(path: string, text: string) bool
+extern fn rho_hmac_sha256_hex(key_hex: string, message_hex: string) string
+extern fn rho_random_hex(bytes: u32) string
 extern fn rho_http_request(method: string, url: string, body: string, content_type: string,
     audience: string, scopes: string, output_path: string) u32
 extern fn rho_exec(program: string, arguments: string, output_path: string) u32
