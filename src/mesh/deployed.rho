@@ -1,0 +1,136 @@
+//
+// @file deployed.rho
+// @brief What each board of a mesh was last programmed with, and whether the plan has moved on.
+//
+// The plan says what a mesh should be; this file says what it is. When a board
+// is programmed, or the gateway started, the signature of what it was built
+// from (domain/deploy.rho) is recorded beside the project, under the board's
+// stable id. A board whose signature now differs is out of date, and the
+// difference says why. Nothing here resets anything: an edit is saved, and the
+// boards it touches are the ones that show as out of date.
+//
+// @module mesh.deployed
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.deployed
+
+fn deployed_file(project: string) string {
+    return project_location(project) + "/deployed.txt"
+}
+
+// deployed_get is the signature recorded under a key: "node.<id>" or
+// "gateway". The file is tab-separated lines, since a signature holds `=`.
+fn deployed_get(project: string, key: string) string {
+    var rest: string = rho_read_text(deployed_file(project))
+    let prefix: string = key + "\t"
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if rho_str_index_of(line, prefix) == 0 {
+            return rho_str_slice(line, u32(rho_strlen(prefix)), u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+        }
+    }
+    return ""
+}
+
+fn deployed_set(project: string, key: string, value: string) void {
+    let path: string = deployed_file(project)
+    rho_lock("mesh.deployed:" + path)
+    var out: string = ""
+    var rest: string = rho_read_text(path)
+    let prefix: string = key + "\t"
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" && rho_str_index_of(line, prefix) != 0 {
+            out = out + line + "\n"
+        }
+    }
+    if value != "" {
+        out = out + key + "\t" + value + "\n"
+    }
+    ignore_bool(write_state_file(path, out))
+    rho_unlock("mesh.deployed:" + path)
+}
+
+fn deployed_plan(project: string) string {
+    return plan_text(project_file(project))
+}
+
+fn deployed_node_key(project: string, index: u32) string {
+    return "node." + project_node_id(project_file(project), index)
+}
+
+// deployed_record_node keeps what a board was just programmed with.
+fn deployed_record_node(project: string, index: u32) void {
+    deployed_set(project, deployed_node_key(project, index),
+        deploy_node_signature(deployed_plan(project), index))
+}
+
+fn deployed_record_gateway(project: string) void {
+    deployed_set(project, "gateway", deploy_gateway_signature(deployed_plan(project)))
+}
+
+// deployed_node_reason says why a board is out of date: "" when it runs what
+// is planned, or when it is not a board. A board programmed before signatures
+// were kept is taken to run what is planned, once.
+fn deployed_node_reason(project: string, index: u32) string {
+    let plan: string = deployed_plan(project)
+    if !deploy_is_board(plan, index) {
+        return ""
+    }
+    let key: string = deployed_node_key(project, index)
+    let recorded: string = deployed_get(project, key)
+    let planned: string = deploy_node_signature(plan, index)
+    if recorded == "" &&
+        rho_str_eq(state_value_in(project_file(project), "status.node." + rho_int_to_str(index)), "programmed") {
+        deployed_set(project, key, planned)
+        return ""
+    }
+    return deploy_reason(recorded, planned)
+}
+
+// deployed_gateway_reason is the same for the gateway. A native gateway that
+// runs is taken to run what is planned the first time it is asked.
+fn deployed_gateway_reason(project: string) string {
+    let plan: string = deployed_plan(project)
+    let recorded: string = deployed_get(project, "gateway")
+    let planned: string = deploy_gateway_signature(plan)
+    if recorded == "" && rho_str_eq(state_value_in(project_file(project), "status.gateway"), "running") {
+        deployed_set(project, "gateway", planned)
+        return ""
+    }
+    return deploy_reason(recorded, planned)
+}
+
+// deployed_out_of_date are the boards of a project that differ from what they
+// run, as "index\n" lines.
+fn deployed_out_of_date(project: string) string {
+    var out: string = ""
+    let count: u32 = project_node_count_at(project_file(project))
+    var index: u32 = 1
+    while index <= count {
+        if deployed_node_reason(project, index) != "" {
+            out = out + rho_int_to_str(index) + "\n"
+        }
+        index = index + 1
+    }
+    return out
+}

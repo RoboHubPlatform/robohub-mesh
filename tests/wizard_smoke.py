@@ -179,6 +179,107 @@ def mint_token(home: str) -> str:
     return result.stdout.strip()
 
 
+def hx(base: str, path: str, fields: dict = None) -> str:
+    """A request as htmx sends it: the inspector answers with its fragment."""
+    data = urllib.parse.urlencode(fields).encode() if fields is not None else None
+    request = urllib.request.Request(base + path, data=data, method="POST" if fields is not None else "GET")
+    request.add_header("Authorization", f"Bearer {TOKEN}")
+    request.add_header("HX-Request", "true")
+    if data is not None:
+        request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def plan_node_id(plan: str, row: int) -> str:
+    """A node's stable id from plan.yml, by its row."""
+    import re
+    block = plan.split("\nnode:\n", 1)[1]
+    match = re.search(r"\n  " + str(row) + r":\n((?:    .*\n)+)", "\n" + block)
+    found = re.search(r'    id: "([0-9a-f]{16})"', match.group(1)) if match else None
+    return found.group(1) if found else ""
+
+
+def check_editor(base: str, project: Path) -> None:
+    import re
+    plan_file = project / "plan.yml"
+    page = get(base, "/mesh/p/default")
+    assert_contains(page, ["id=\"agora-inspector\"", "id=\"agora-canvas\"", "+ module", "+ device",
+                           "hx-get=\"/mesh/p/default/gateway\""], "the agora with its inspector")
+    relay = plan_node_id(plan_file.read_text(), 1)
+    if not relay:
+        raise AssertionError("the relay has no id in the plan")
+    fragment = hx(base, f"/mesh/p/default/node/{relay}")
+    assert_contains(fragment, ["Relay one", "inspector-tabs", "Save node", "name=\"rev\""], "the relay's inspector")
+    if "<html" in fragment:
+        raise AssertionError("htmx was answered with a whole page instead of the inspector")
+    # A board programmed before signatures were kept is taken to run what is
+    # planned: the plan is told so, as a build that programmed it would have.
+    text = plan_file.read_text()
+    text = re.sub(r'(\nstatus:\n(?:  .*\n)*?    1: )"[a-z]*"', r'\1"programmed"', text, count=1)
+    plan_file.write_text(text)
+    page = get(base, f"/mesh/p/default?select=node:{relay}")
+    if "runs what is planned" not in page:
+        raise AssertionError("a programmed board does not show as running what is planned")
+    rev = re.search(r'name="rev" value="(\d+)"', page).group(1)
+    # A new name builds nothing.
+    renamed = hx(base, f"/mesh/p/default/node/{relay}", {
+        "tab": "node", "rev": rev, "name": "Relay prime", "description": "", "role": "relay",
+        "board": "pico2w", "parent": "gateway"})
+    assert_contains(renamed, ["Saved.", "runs what is planned", "hx-swap-oob=\"innerHTML:#agora-canvas\"",
+                              "Relay prime"], "a rename")
+    if "out of date" in renamed.split("hx-swap-oob")[0]:
+        raise AssertionError("a rename marked the board out of date")
+    # A form opened before that save is refused.
+    stale = hx(base, f"/mesh/p/default/node/{relay}", {
+        "tab": "node", "rev": rev, "name": "Somebody else", "role": "relay", "board": "pico2w", "parent": "gateway"})
+    assert_contains(stale, ["changed elsewhere"], "a save from a stale form")
+    if "Somebody else" in plan_file.read_text():
+        raise AssertionError("a stale save was written")
+    rev = str(int(rev) + 1)
+    # A module fitted to it is in its image: it alone is out of date.
+    fitted = hx(base, f"/mesh/p/default/node/{relay}", {
+        "tab": "modules", "rev": rev, "action": "add", "module": "ds18b20-temperature-module"})
+    assert_contains(fitted, ["fitted.", "out of date (modules changed)"], "a module fitted")
+    rev = str(int(rev) + 1)
+    # A device under the gateway is added in place, and deleted again.
+    count = int(re.search(r'\n  count: "(\d+)"', plan_file.read_text()).group(1))
+    added = hx(base, "/mesh/p/default/node", {
+        "tab": "new", "kind": "device", "name": "Bench lamp", "device": "robohub-device-shelly-plug-m-gen3",
+        "transport": "http", "address": "http://192.0.2.77", "device_id": "", "parent": "gateway"})
+    assert_contains(added, ["Bench lamp added."], "a device added")
+    lamp = plan_node_id(plan_file.read_text(), count + 1)
+    if not lamp or "Bench lamp" not in get(base, "/mesh/p/default"):
+        raise AssertionError("the device added is not on the tree")
+    deleted = hx(base, f"/mesh/p/default/node/{lamp}/delete", {"tab": "delete", "rev": "0", "action": "delete"})
+    assert_contains(deleted, ["Bench lamp deleted."], "a device deleted")
+    if "Bench lamp" in plan_file.read_text():
+        raise AssertionError("the deleted device is still in the plan")
+    if plan_node_id(plan_file.read_text(), 1) != relay:
+        raise AssertionError("deleting another node changed the relay's id")
+    # The link is edited on its own: a transport the boards cannot share is
+    # refused, and new settings put the board out of date for its link.
+    refused = hx(base, f"/mesh/p/default/edge/{relay}", {"tab": "transport", "rev": rev, "transport": "spi"})
+    assert_contains(refused, ["Both ends must be able to serve that transport"], "a transport neither end has")
+    linked = hx(base, f"/mesh/p/default/edge/{relay}", {
+        "tab": "settings", "rev": rev, "node.1.parent_endpoint": "/dev/ttyUSB3",
+        "node.1.child_endpoint": "uart1", "node.1.baud": "57600"})
+    assert_contains(linked, ["Link saved."], "a link's settings")
+    if "link, modules changed" not in linked:
+        raise AssertionError("new link settings did not put the board out of date: " + linked[:900])
+    # Without htmx a form is answered with the page it came from.
+    request = urllib.request.Request(base + f"/mesh/p/default/node/{relay}", method="POST",
+        data=urllib.parse.urlencode({"tab": "node", "name": "Relay one", "role": "relay", "board": "pico2w",
+                                     "parent": "gateway"}).encode())
+    request.add_header("Authorization", f"Bearer {TOKEN}")
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    with urllib.request.urlopen(request, timeout=20) as response:
+        landed = response.geturl()
+        body = response.read().decode("utf-8", "replace")
+    if f"select=node:{relay}" not in landed or "Relay one" not in body:
+        raise AssertionError(f"a plain form post did not come back to its node ({landed})")
+
+
 def main() -> int:
     global TOKEN
     validate_wizard_schema()
@@ -583,7 +684,10 @@ def main() -> int:
             assert_contains(agora, ["Relay one", "Gateway", "Inspector", "sse-connect=\"/mesh/agora/events?project=default\"",
                                     "192.0.2.10 · arduino-uno-q"], "agora")
             inspected = get(base, "/mesh/agora?project=default&node=1")
-            assert_contains(inspected, ["Relay one", "Edit this node", "Board", "pico2w", "agora-node-1"], "agora inspector")
+            # The old address of a node in the agora opens the project's own page
+            # with that node in the inspector.
+            assert_contains(inspected, ["Relay one", "Save node", "pico2w", "agora-node-1", "inspector-tabs"],
+                            "agora inspector")
             fleet_page = get(base, "/mesh/fleet")
             assert_contains(fleet_page, ["Fleet", "<title>Relay one</title>", "<svg", "Hosts", "192.0.2.10", "gateways online", "New mesh",
                                          "sse-connect=\"/mesh/fleet/events\""], "fleet view")
@@ -854,6 +958,11 @@ def main() -> int:
                 raise AssertionError("a stopped gateway kept its pid file")
             post(base, "/mesh/project/delete", {"project": "Live-mesh"})
             get(base, "/mesh/project/default")
+
+            # Editing in place: the inspector beside the tree saves what the
+            # wizard's pages did, and an edit marks out of date only the boards
+            # whose image it changes.
+            check_editor(base, Path(state) / "projects" / "default")
 
             # A long action writes its progress to a file and the page follows
             # that file. The page connects first and the action writes after,

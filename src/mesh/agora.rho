@@ -378,12 +378,20 @@ fn agora_age(then: u32) string {
 /*  The agora of the active mesh                                              */
 /* -------------------------------------------------------------------------- */
 
+// agora_url is the address of a mesh's agora, with the gateway or a node (by
+// its row) selected.
 fn agora_url(id: string, node: string) string {
-    var url: string = "/mesh/agora?project=" + escape_html(id)
-    if node != "" {
-        url = url + "&amp;node=" + escape_html(node)
+    if node == "" {
+        return editor_base(id)
     }
-    return url
+    if node == "gateway" {
+        return editor_page_url(id, "gateway")
+    }
+    let index: u32 = u32(rho_int_from_str(node))
+    if index == 0 {
+        return editor_base(id)
+    }
+    return editor_page_url(id, "node:" + project_node_id(project_file(id), index))
 }
 
 // agora_node_state is a card's live line: online, last seen, or why it has not
@@ -402,12 +410,23 @@ fn agora_node_state(index: u32, readings: string) string {
         return "<span class=\"agora-state stale\">quiet</span> <span class=\"agora-seen\">last seen " +
             agora_age(last) + "</span>"
     }
-    let built: string = state_value("status.node." + rho_int_to_str(index))
-    if built == "" || built == "pending" {
-        return "<span class=\"agora-state planned\">needs build</span>"
+    if is_device_node(index) {
+        return "<span class=\"agora-state quiet\">no readings yet</span>"
     }
-    return "<span class=\"agora-state quiet\">no readings</span> <span class=\"agora-seen\">" +
-        escape_html(built) + "</span>"
+    return "<span class=\"agora-state quiet\">no readings</span>"
+}
+
+// agora_node_deploy is a board's line when it does not run what is planned.
+fn agora_node_deploy(index: u32) string {
+    if is_module_node(index) || is_device_node(index) {
+        return ""
+    }
+    let reason: string = deployed_node_reason(current_project(), index)
+    if reason == "" {
+        return ""
+    }
+    return "<div class=\"agora-live\"><span class=\"agora-state planned\">out of date</span> <span class=\"agora-seen\">" +
+        escape_html(reason) + "</span></div>"
 }
 
 fn agora_node_live(index: u32, readings: string) string {
@@ -415,17 +434,29 @@ fn agora_node_live(index: u32, readings: string) string {
         return ""
     }
     let source: string = state_value("node." + rho_int_to_str(index) + ".id")
-    return "<div class=\"agora-live\">" + agora_node_state(index, readings) +
+    return agora_node_deploy(index) + "<div class=\"agora-live\">" + agora_node_state(index, readings) +
         "<div class=\"agora-chips\">" + agora_chips(readings, source, 3) + "</div></div>"
 }
 
 fn agora_node_card(id: string, index: u32, readings: string) string {
     let role: string = node_value(index, "role", "node")
-    return "<span id=\"agora-node-" + rho_int_to_str(index) + "\">" +
-        template_fill(template_get("mesh-card-link"),
-        vars("role", role) + vars("extra", " agora-card") +
-        vars("href", agora_url(id, rho_int_to_str(index))) +
-        vars("body", node_card_body(index) + agora_node_live(index, readings))) + "</span>"
+    var add: string = ""
+    if !is_module_node(index) && !is_device_node(index) {
+        let row: string = "node." + rho_int_to_str(index)
+        add = "<span class=\"agora-add\"><a" + editor_open_new(id, "module", row) + ">+ module</a>" +
+            "<a" + editor_open_new(id, "device", row) + ">+ device</a>" +
+            "<a" + editor_open_new(id, "compute", row) + ">+ node</a></span>"
+    }
+    return "<span class=\"agora-node\" id=\"agora-node-" + rho_int_to_str(index) + "\">" +
+        "<a class=\"node-card " + escape_html(role) + " agora-card\"" + editor_open_node(id, index, "") + ">" +
+        node_card_body(index) + agora_node_live(index, readings) + "</a>" + add + "</span>"
+}
+
+// agora_link_badge is the link a board hangs from, which opens the link's
+// editor.
+fn agora_link_badge(id: string, index: u32) string {
+    return "<a class=\"link-badge\"" + editor_open_edge(id, index) + " title=\"Edit this link\">" +
+        escape_html(link_label(node_value(index, "link", "uart"))) + "</a>"
 }
 
 fn agora_gateway_card(id: string, readings: string) string {
@@ -437,14 +468,23 @@ fn agora_gateway_card(id: string, readings: string) string {
     } else if health == "offline" {
         state = "<span class=\"agora-state down\">not answering</span> <span class=\"agora-seen\">since " +
             agora_age(agora_health_since(id)) + "</span>"
+    } else if health == "stopped" {
+        state = "<span class=\"agora-state quiet\">not started</span>"
     } else if health == "none" {
         state = "<span class=\"agora-state planned\">no gateway planned</span>"
     }
-    let live: string = "<div class=\"agora-live\">" + state +
+    var deploy: string = ""
+    let reason: string = deployed_gateway_reason(id)
+    if reason != "" && reason != "never programmed" {
+        deploy = "<div class=\"agora-live\"><span class=\"agora-state planned\">restart to apply</span> " +
+            "<span class=\"agora-seen\">" + escape_html(reason) + "</span></div>"
+    }
+    let live: string = deploy + "<div class=\"agora-live\">" + state +
         "<div class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</div></div>"
-    return "<span id=\"agora-node-gateway\">" + template_fill(template_get("mesh-card-link"),
-        vars("role", "gateway") + vars("extra", " agora-card") +
-        vars("href", agora_url(id, "gateway")) + vars("body", gateway_card_body() + live)) + "</span>"
+    return "<span class=\"agora-node\" id=\"agora-node-gateway\"><a class=\"node-card gateway agora-card\"" +
+        editor_open_gateway(id) + ">" + gateway_card_body() + live + "</a>" +
+        "<span class=\"agora-add\"><a" + editor_open_new(id, "compute", "gateway") + ">+ node</a>" +
+        "<a" + editor_open_new(id, "device", "gateway") + ">+ device</a></span></span>"
 }
 
 // agora_host_label says where a mesh's gateway runs and on which port.
@@ -473,7 +513,7 @@ fn agora_child_items(id: string, parent: string, readings: string) string {
                 out = out + mesh_branch(mesh_badge(label, true), agora_node_card(id, index, readings), "", "", true)
             } else {
                 out = out + mesh_branch(
-                    mesh_badge(link_label(node_value(index, "link", "uart")), false),
+                    agora_link_badge(id, index),
                     agora_node_card(id, index, readings), "",
                     agora_children(id, "node." + rho_int_to_str(index), readings), false)
             }
@@ -509,7 +549,7 @@ fn agora_tree(id: string) string {
         out = out + template_fill(template_get("mesh-children"), vars("items", items))
     }
     if count == 0 {
-        out = out + template_fill(template_get("mesh-empty"), vars("hint", "The mesh has no nodes yet. Plan them on the plan page."))
+        out = out + template_fill(template_get("mesh-empty"), vars("hint", "The mesh has no nodes yet. Use + node on the gateway to add the first."))
     }
     return out
 }
@@ -517,19 +557,7 @@ fn agora_tree(id: string) string {
 // agora_out_of_date counts the boards that need building: planned or changed
 // since they were last built.
 fn agora_out_of_date() u32 {
-    var stale: u32 = 0
-    var index: u32 = 1
-    let count: u32 = node_count()
-    while index <= count {
-        if !is_module_node(index) && !is_device_node(index) {
-            let built: string = state_value("status.node." + rho_int_to_str(index))
-            if built == "" || built == "pending" {
-                stale = stale + 1
-            }
-        }
-        index = index + 1
-    }
-    return stale
+    return fleet_line_count(deployed_out_of_date(current_project()))
 }
 
 fn agora_bar(id: string) string {
@@ -553,15 +581,15 @@ fn agora_bar(id: string) string {
     var stale: string = ""
     let count: u32 = agora_out_of_date()
     if count == 1 {
-        stale = "<span class=\"agora-pill\">1 board needs building</span>"
+        stale = "<span class=\"agora-pill\">1 board out of date</span>"
     } else if count > 1 {
-        stale = "<span class=\"agora-pill\">" + rho_int_to_str(count) + " boards need building</span>"
+        stale = "<span class=\"agora-pill\">" + rho_int_to_str(count) + " boards out of date</span>"
     }
     return "<strong class=\"agora-name\">" + escape_html(project_name(id)) + "</strong> " + live +
         " " + agora_gateway_actions(id, health) +
         " <span class=\"agora-pill\">area " + escape_html(project_area_id(project_file(id))) + "</span> " + stale +
-        " <span class=\"agora-links\"><a href=\"/mesh/plan?project=" + escape_html(id) + "\">Edit the plan</a> · " +
-        "<a href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a> · <a href=\"/mesh/fleet\">Fleet</a></span>"
+        " <span class=\"agora-links\"><a href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a> · " +
+        "<a href=\"/mesh/fleet\">Fleet</a></span>"
 }
 
 // agora_gateway_actions are the controls of a mesh's gateway. A native one is
@@ -664,57 +692,6 @@ fn agora_plural(count: string, one: string, many: string) string {
     return "<span><b>" + count + "</b> " + many + "</span>"
 }
 
-// agora_inspector is what is known of the selected node or the gateway, with
-// the pages that change it.
-fn agora_inspector(id: string, selected: string) string {
-    if selected == "" {
-        return "<h3>Inspector</h3><p class=\"agora-seen\">Select the gateway or a node to see what it is, how it is linked and what it reads.</p>"
-    }
-    let readings: string = agora_readings(id)
-    if selected == "gateway" {
-        return "<h3>Gateway</h3><dl class=\"agora-facts\">" +
-            agora_fact("Runs", agora_host_label(id)) +
-            agora_fact("State", agora_health(id)) +
-            agora_fact("Area", project_area_id(project_file(id))) +
-            agora_fact("Uplink port", fleet_uplink_port(id)) +
-            "</dl><div class=\"actions\">" + agora_gateway_actions(id, agora_health(id)) + "</div><p><a href=\"/mesh/gateway?project=" + escape_html(id) + "\">Open the gateway's page</a></p>"
-    }
-    let index: u32 = u32(rho_int_from_str(selected))
-    if index < 1 || index > node_count() {
-        return "<h3>Inspector</h3><p class=\"agora-seen\">That node is not in this mesh.</p>"
-    }
-    let prefix: string = "node." + rho_int_to_str(index) + "."
-    let source: string = state_value(prefix + "id")
-    var parent: string = node_value(index, "parent", "gateway")
-    if rho_str_index_of(parent, "node.") == 0 {
-        parent = node_value(u32(rho_int_from_str(rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))), "name", parent)
-    }
-    var facts: string = agora_fact("Kind", node_kind(index)) +
-        agora_fact("Number", state_value(prefix + "number")) +
-        agora_fact("Parent", parent)
-    if is_device_node(index) {
-        facts = facts + agora_fact("Device", node_device_name(index)) +
-            agora_fact("Address", state_value(prefix + "address"))
-    } else if is_module_node(index) {
-        facts = facts + agora_fact("Module", node_module_name(index))
-    } else {
-        facts = facts + agora_fact("Board", state_value(prefix + "board")) +
-            agora_fact("Link", link_label(node_value(index, "link", "uart"))) +
-            agora_fact("Build", state_value("status.node." + rho_int_to_str(index)))
-    }
-    if source != "" {
-        facts = facts + agora_fact("Last seen", agora_age(agora_last_seen(readings, source)))
-    }
-    var chips: string = agora_chips(readings, source, 32)
-    if chips == "" || source == "" {
-        chips = "<span class=\"agora-seen\">No readings.</span>"
-    }
-    return "<h3>" + escape_html(node_value(index, "name", "Node " + rho_int_to_str(index))) + "</h3>" +
-        "<dl class=\"agora-facts\">" + facts + "</dl><div class=\"agora-chips\">" + chips + "</div>" +
-        "<p><a href=\"/mesh/node/" + rho_int_to_str(index) + "?project=" + escape_html(id) + "\">Edit this node</a>" +
-        " · <a href=\"/mesh/network/link/" + rho_int_to_str(index) + "?project=" + escape_html(id) + "\">Its connection</a></p>"
-}
-
 fn agora_fact(label: string, value: string) string {
     var shown: string = value
     if shown == "" {
@@ -725,26 +702,46 @@ fn agora_fact(label: string, value: string) string {
 
 const AGORA_STYLE: string = "<style>.agora-bar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem}.agora-name{font-size:1.15rem}.agora-action{display:inline}.agora-links{margin-left:auto}.agora{display:grid;grid-template-columns:minmax(0,1fr) 20rem;gap:1rem}@media (max-width:900px){.agora{grid-template-columns:1fr}}.agora-inspector{border:1px solid var(--line,#ccc);border-radius:10px;padding:.8rem 1rem;align-self:start}.agora-live{margin-top:.35rem;font-size:.82rem}.agora-state{display:inline-block;border-radius:999px;padding:.05rem .5rem;font-weight:600;font-size:.78rem}.agora-state.online{background:#d9f2e3;color:#145c32}.agora-state.down{background:#fbe0dc;color:#8a1f12}.agora-state.stale,.agora-state.quiet{background:#eceae4;color:#555}.agora-state.planned{background:#fff1cc;color:#7a5200}.agora-seen{color:#777;font-size:.8rem}.agora-chips{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.3rem}.agora-chip{border:1px solid var(--line,#ddd);border-radius:6px;padding:.05rem .4rem;font-size:.8rem}.agora-pill{border:1px solid var(--line,#ccc);border-radius:999px;padding:.05rem .55rem;font-size:.8rem}.agora-strip{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;margin-top:1rem;border-top:1px solid var(--line,#ddd);padding-top:.6rem;font-size:.85rem}.agora-fault{color:#8a1f12}.agora-facts{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;margin:.4rem 0}.agora-facts dt{color:#777}.agora-facts dd{margin:0}</style>"
 
-// mesh_agora_page is the agora of the project the link names.
+// mesh_agora_page is the old address of the agora, which is now the
+// project's own: /mesh/p/<project>.
 fn mesh_agora_page(req: Request) Response {
     mesh_follow_project(req)
     let id: string = current_project()
     if id == "" {
         return mesh_redirect("/mesh/fleet")
     }
-    var selected: string = request_query_param(req, "node")
-    if selected != "" && selected != "gateway" && u32(rho_int_from_str(selected)) == 0 {
-        selected = ""
+    let node: string = request_query_param(req, "node")
+    if node == "gateway" {
+        return mesh_redirect("/mesh/p/" + id + "?select=gateway")
     }
+    let index: u32 = u32(rho_int_from_str(node))
+    if index > 0 && index <= node_count() {
+        return mesh_redirect("/mesh/p/" + id + "?select=node:" + project_node_id(project_file(id), index))
+    }
+    return mesh_redirect("/mesh/p/" + id)
+}
+
+const EDITOR_STYLE: string = "<style>.agora-node{display:inline-flex;flex-direction:column;align-items:center;gap:.25rem}.agora-add{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}.agora-node:hover .agora-add,.agora-node:focus-within .agora-add{opacity:1}.agora-add a{font-size:.72rem;border:1px dashed var(--line-strong);border-radius:999px;padding:.05rem .45rem;color:var(--muted)}.agora-add a:hover{color:var(--ink);border-color:var(--gold)}a.link-badge{cursor:pointer}a.link-badge:hover{outline:1px solid var(--gold)}.agora-inspector h3{margin:.1rem 0 .5rem}.inspector-tabs{display:flex;gap:.25rem;margin:.5rem 0 .7rem;border-bottom:1px solid var(--line)}.inspector-tabs a{padding:.3rem .6rem;font-size:.8rem;color:var(--muted);border-bottom:2px solid transparent}.inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.inspector-form{display:grid;gap:.6rem;margin-bottom:.8rem}.inspector-form label{display:grid;gap:.2rem;font-size:.8rem}.inspector-list{margin:.3rem 0 .6rem;padding-left:1.1rem;font-size:.85rem}.inspector-list form.inline{display:inline;margin-left:.4rem}.inspector-deploy{margin:.2rem 0 .4rem;font-size:.82rem}.inspector-add{margin-top:.6rem}.agora-inspector .sensor-groups{max-height:18rem;overflow:auto}</style>"
+
+// agora_page_for is a mesh's agora with something selected: the live tree,
+// the bar and the activity strip, and the inspector beside them.
+fn agora_page_for(req: Request, id: string, selection: string, tab: string, kind: string, parent: string) Response {
     var highlight: string = ""
-    if selected != "" {
-        highlight = "<style>#agora-node-" + escape_html(selected) + " .node-card{outline:2px solid #2f6fdf;outline-offset:2px}</style>"
+    if selection == "gateway" {
+        highlight = "<style>#agora-node-gateway .node-card{outline:2px solid #2f6fdf;outline-offset:2px}</style>"
+    } else if rho_str_index_of(selection, "node:") == 0 || rho_str_index_of(selection, "edge:") == 0 {
+        let index: u32 = project_node_by_id(project_file(id), rho_str_slice(selection, 5, u32(rho_strlen(selection)) - 5))
+        if index > 0 {
+            highlight = "<style>#agora-node-" + rho_int_to_str(index) +
+                " .node-card{outline:2px solid #2f6fdf;outline-offset:2px}</style>"
+        }
     }
-    let body: string = AGORA_STYLE + highlight +
+    let body: string = AGORA_STYLE + EDITOR_STYLE + highlight +
         "<div hx-ext=\"sse\" sse-connect=\"/mesh/agora/events?project=" + escape_html(id) + "\">" +
-        "<div class=\"agora-bar\" sse-swap=\"agora-bar\" hx-swap=\"innerHTML\">" + agora_bar(id) + "</div>" +
-        "<div class=\"agora\"><section class=\"mesh-tree agora-canvas\" sse-swap=\"agora-tree\" hx-swap=\"innerHTML\">" +
-        agora_tree(id) + "</section><aside class=\"agora-inspector\">" + agora_inspector(id, selected) + "</aside></div>" +
+        "<div class=\"agora-bar\" id=\"agora-bar\" sse-swap=\"agora-bar\" hx-swap=\"innerHTML\">" + agora_bar(id) + "</div>" +
+        "<div class=\"agora\"><section class=\"mesh-tree agora-canvas\" id=\"agora-canvas\" sse-swap=\"agora-tree\" hx-swap=\"innerHTML\">" +
+        agora_tree(id) + "</section><aside class=\"agora-inspector\" id=\"agora-inspector\">" +
+        editor_inspector(id, selection, tab, kind, parent, "") + "</aside></div>" +
         "<div class=\"agora-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div></div>"
     return page(req, project_name(id) + " · live", body)
 }

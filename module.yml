@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.8.1
+  version: 0.9.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"

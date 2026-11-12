@@ -282,3 +282,16 @@ gateway Mesh has not started is shown as not started rather than polled and
 reported unreachable. Faults say what failed in words, with their age. The
 fleet is one panel as proposed: a card per mesh with its tree drawn, the inbox
 and hosts beside, and the fleet's activity below.
+
+## [0.9.0] - 2026-11-13
+
+Editing in place. Selecting the gateway, a card or a link on the agora opens
+the inspector beside the tree, and every edit the wizard's pages offered is made
+there: a board's name, role, board and parent, its link and the link's settings,
+the modules it carries, a device's integration and address, a new node, device
+or module from + on any card, and a delete that lists what goes with it and asks
+where what hangs from it moves. The project and the selection are in the
+address (/mesh/p/<project>?select=node:<id>). An edit builds nothing and resets
+nothing: each board's signature (what its image is built from) is recorded when
+it is programmed, and a board whose plan differs shows as out of date with the
+reason. A save from a form opened before the node's last save is refused.

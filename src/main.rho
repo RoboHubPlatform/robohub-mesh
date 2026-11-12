@@ -6,6 +6,7 @@ module mesh
 include "mesh/storage.rho"
 include "mesh/domain/transport.rho"
 include "mesh/domain/impact.rho"
+include "mesh/domain/deploy.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
 include "mesh/wizard.rho"
@@ -16,6 +17,8 @@ include "mesh/clients.rho"
 include "mesh/firmware.rho"
 include "mesh/settings.rho"
 include "mesh/agora.rho"
+include "mesh/deployed.rho"
+include "mesh/editor.rho"
 
 import std.web.http
 import std.web.template
@@ -66,6 +69,15 @@ route GET "/" => mesh_dashboard
 route GET "/mesh" => mesh_dashboard
 route GET "/mesh/plan" => mesh_page
 route GET "/mesh/agora" => mesh_agora_page
+route GET "/mesh/p/{project}" => mesh_p_page
+route GET "/mesh/p/{project}/node/{node}" => mesh_p_node_page
+route POST "/mesh/p/{project}/node/{node}/delete" => mesh_p_node_delete
+route POST "/mesh/p/{project}/node/{node}" => mesh_p_node_post
+route POST "/mesh/p/{project}/node" => mesh_p_node_new
+route GET "/mesh/p/{project}/edge/{node}" => mesh_p_edge_page
+route POST "/mesh/p/{project}/edge/{node}" => mesh_p_edge_post
+route GET "/mesh/p/{project}/gateway" => mesh_p_gateway_page
+route POST "/mesh/p/{project}/gateway" => mesh_p_gateway_post
 route GET "/mesh/agora/events" => mesh_agora_events
 route GET "/mesh/fleet" => mesh_fleet_page
 route GET "/mesh/fleet/events" => mesh_fleet_events

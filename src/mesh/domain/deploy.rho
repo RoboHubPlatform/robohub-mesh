@@ -1,0 +1,201 @@
+module mesh.domain.deploy
+
+// What a board was built from, and what differs from it now.
+//
+// A board's image depends on part of the plan: its own board, role and parent,
+// the link it reaches its parent over and that link's settings, the modules it
+// carries, the links of the boards it serves, and, for a board that dials the
+// gateway over a network, the gateway's address. That part, written out as one
+// line of labelled segments, is the board's signature. The signature recorded
+// when a board was last programmed is what it runs; a board whose signature
+// differs from it is out of date, and the segments that differ say why.
+//
+// The gateway has a signature too: where it runs, its ports, and the links of
+// the boards hanging from it directly, since it opens their serial ports and
+// accepts their uplinks.
+//
+// A name, a description or a device's settings are in no signature: they live
+// in Mesh, not in firmware, so changing them builds nothing. All of this is pure
+// over the plan's flat text and tested on its own (tests/domain_test.rho).
+
+// DEPLOY_LINK_FIELDS are the settings of a link a build reads.
+const DEPLOY_LINK_FIELDS: string = "parent_endpoint child_endpoint baud bus_address ssid password parent_host child_host port"
+
+fn deploy_words_next(rest: string) string {
+    let at: i32 = str_index_of(rest, " ")
+    if at < 0 {
+        return rest
+    }
+    return str_slice(rest, 0, u32(at))
+}
+
+fn deploy_words_rest(rest: string) string {
+    let at: i32 = str_index_of(rest, " ")
+    if at < 0 {
+        return ""
+    }
+    return str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+}
+
+fn deploy_node_key(index: u32, field: string) string {
+    return "node." + int_to_str(index) + "." + field
+}
+
+fn deploy_kind(text: string, index: u32) string {
+    let kind: string = plan_value(text, deploy_node_key(index, "kind"))
+    if kind == "" {
+        return "compute"
+    }
+    return kind
+}
+
+fn deploy_count(text: string) u32 {
+    return u32(int_from_str(plan_value(text, "node.count")))
+}
+
+// deploy_is_board is whether a row is a board with an image of its own: not a
+// module, which its board's image carries, and not a device, which Mesh polls.
+fn deploy_is_board(text: string, index: u32) bool {
+    let kind: string = deploy_kind(text, index)
+    return !str_eq(kind, "module") && !str_eq(kind, "device")
+}
+
+// deploy_link is a row's link and its settings, as one segment's value.
+fn deploy_link(text: string, index: u32) string {
+    var out: string = plan_value(text, deploy_node_key(index, "link"))
+    var rest: string = DEPLOY_LINK_FIELDS
+    while rest != "" {
+        let field: string = deploy_words_next(rest)
+        rest = deploy_words_rest(rest)
+        let value: string = plan_value(text, deploy_node_key(index, field))
+        if value != "" {
+            out = out + "," + field + ":" + value
+        }
+    }
+    return out
+}
+
+// deploy_dials_gateway is whether a link reaches its parent over a network,
+// so the gateway's address is part of what the board is built with.
+fn deploy_dials_network(link: string) bool {
+    return str_eq(link, "wifi") || str_eq(link, "ethernet") || str_eq(link, "socket")
+}
+
+fn deploy_gateway_address(text: string) string {
+    return plan_value(text, "gateway_host") + ":" + plan_value(text, "uplink_port")
+}
+
+// deploy_node_signature is what a board's image is built from.
+fn deploy_node_signature(text: string, index: u32) string {
+    let row: string = "node." + int_to_str(index)
+    var out: string = "board=" + plan_value(text, deploy_node_key(index, "board")) +
+        ";role=" + plan_value(text, deploy_node_key(index, "role")) +
+        ";parent=" + plan_value(text, deploy_node_key(index, "parent")) +
+        ";link=" + deploy_link(text, index)
+    var modules: string = ""
+    var serves: string = ""
+    let count: u32 = deploy_count(text)
+    var child: u32 = 1
+    while child <= count {
+        if str_eq(plan_value(text, deploy_node_key(child, "parent")), row) {
+            if str_eq(deploy_kind(text, child), "module") {
+                modules = modules + plan_value(text, deploy_node_key(child, "module")) + "@" +
+                    plan_value(text, deploy_node_key(child, "number")) + ","
+            } else if deploy_is_board(text, child) {
+                serves = serves + plan_value(text, deploy_node_key(child, "number")) + ":" +
+                    deploy_link(text, child) + "/"
+            }
+        }
+        child = child + 1
+    }
+    out = out + ";modules=" + modules + ";serves=" + serves
+    if deploy_dials_network(plan_value(text, deploy_node_key(index, "link"))) &&
+        str_eq(plan_value(text, deploy_node_key(index, "parent")), "gateway") {
+        out = out + ";gateway=" + deploy_gateway_address(text)
+    }
+    return out
+}
+
+// deploy_gateway_signature is what the gateway is started with.
+fn deploy_gateway_signature(text: string) string {
+    var out: string = "runs=" + plan_value(text, "gateway") +
+        ";host=" + plan_value(text, "gateway_host") +
+        ";rest=" + plan_value(text, "rest_port") +
+        ";uplink=" + plan_value(text, "uplink_port")
+    var serves: string = ""
+    let count: u32 = deploy_count(text)
+    var child: u32 = 1
+    while child <= count {
+        if deploy_is_board(text, child) && str_eq(plan_value(text, deploy_node_key(child, "parent")), "gateway") {
+            serves = serves + plan_value(text, deploy_node_key(child, "number")) + ":" +
+                deploy_link(text, child) + "/"
+        }
+        child = child + 1
+    }
+    return out + ";serves=" + serves
+}
+
+fn deploy_segment(signature: string, label: string) string {
+    let prefix: string = label + "="
+    var rest: string = signature
+    while rest != "" {
+        let at: i32 = str_index_of(rest, ";")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        if str_index_of(item, prefix) == 0 {
+            return str_slice(item, u32(strlen(prefix)), u32(strlen(item)) - u32(strlen(prefix)))
+        }
+    }
+    return ""
+}
+
+// DEPLOY_SEGMENTS are a signature's parts, each with the words that say it
+// changed.
+const DEPLOY_SEGMENTS: string = "runs host rest uplink board role parent link modules serves gateway"
+
+fn deploy_segment_words(label: string) string {
+    if str_eq(label, "runs") { return "where it runs" }
+    if str_eq(label, "host") { return "its host" }
+    if str_eq(label, "rest") { return "its REST port" }
+    if str_eq(label, "uplink") { return "its uplink port" }
+    if str_eq(label, "board") { return "board" }
+    if str_eq(label, "role") { return "role" }
+    if str_eq(label, "parent") { return "parent" }
+    if str_eq(label, "link") { return "link" }
+    if str_eq(label, "modules") { return "modules" }
+    if str_eq(label, "serves") { return "a link it serves" }
+    if str_eq(label, "gateway") { return "gateway address" }
+    return label
+}
+
+// deploy_reason says what differs between what was deployed and what is
+// planned: "" when nothing does, "never programmed" when nothing was.
+fn deploy_reason(deployed: string, planned: string) string {
+    if deployed == "" {
+        return "never programmed"
+    }
+    if str_eq(deployed, planned) {
+        return ""
+    }
+    var out: string = ""
+    var rest: string = DEPLOY_SEGMENTS
+    while rest != "" {
+        let label: string = deploy_words_next(rest)
+        rest = deploy_words_rest(rest)
+        if !str_eq(deploy_segment(deployed, label), deploy_segment(planned, label)) {
+            if out != "" {
+                out = out + ", "
+            }
+            out = out + deploy_segment_words(label)
+        }
+    }
+    if out == "" {
+        return "changed"
+    }
+    return out + " changed"
+}

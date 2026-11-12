@@ -3439,6 +3439,7 @@ fn mesh_gateway_restart(req: Request) Response {
             save_setting("status.gateway", "programmed")
         }
         update_build_step()
+        deployed_record_gateway(current_project())
         save_setting("message.build", "Gateway restarted.")
         info("mesh", "gateway restarted")
     } else {
@@ -4297,6 +4298,7 @@ fn mesh_build_node_post_inner(req: Request) Response {
             info("mesh", "node " + rho_int_to_str(index) + " built")
         } else {
             save_setting(key, "programmed")
+            deployed_record_node(current_project(), index)
             info("mesh", "node " + rho_int_to_str(index) + " programmed")
         }
     } else {

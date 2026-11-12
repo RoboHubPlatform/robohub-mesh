@@ -3,6 +3,7 @@ module mesh.domain_test
 include "../src/mesh/domain/plan_text.rho"
 include "../src/mesh/domain/transport.rho"
 include "../src/mesh/domain/impact.rho"
+include "../src/mesh/domain/deploy.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -123,6 +124,72 @@ test fn reopening_a_stage_reopens_every_later_one() void {
     print("[PASS] reopening_a_stage_reopens_every_later_one\n")
 }
 
+/* -------------------------------------------------------------------------- */
+/*  What a board was built from                                               */
+/* -------------------------------------------------------------------------- */
+
+// A gateway with a Pico on UART that carries a temperature module, and a plug.
+const DEPLOY_PLAN: string = "gateway=native\nnode.count=3\n" +
+    "node.1.kind=compute\nnode.1.number=1\nnode.1.name=Relay\nnode.1.board=pico2w\nnode.1.role=node\nnode.1.parent=gateway\nnode.1.link=uart\nnode.1.baud=115200\n" +
+    "node.2.kind=module\nnode.2.number=2\nnode.2.module=ds18b20\nnode.2.parent=node.1\n" +
+    "node.3.kind=device\nnode.3.number=3\nnode.3.device=shelly\nnode.3.address=192.0.2.5\nnode.3.parent=gateway\n"
+
+fn deploy_with(text: string, key: string, value: string) string {
+    return plan_without(text, key) + key + "=" + value + "\n"
+}
+
+test fn a_name_or_a_device_builds_nothing() void {
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let renamed: string = deploy_with(DEPLOY_PLAN, "node.1.name", "Greenhouse relay")
+    check(str_eq(deploy_node_signature(renamed, 1), before), "a new name is not in the image")
+    let readdressed: string = deploy_with(DEPLOY_PLAN, "node.3.address", "192.0.2.9")
+    check(str_eq(deploy_node_signature(readdressed, 1), before), "a device's address is not either")
+    check(str_eq(deploy_gateway_signature(readdressed), deploy_gateway_signature(DEPLOY_PLAN)),
+        "nor is it in the gateway's")
+    print("[PASS] a_name_or_a_device_builds_nothing\n")
+}
+
+test fn a_module_or_a_board_rebuilds_that_board() void {
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let new_module: string = deploy_with(DEPLOY_PLAN, "node.2.module", "bme280")
+    check(str_eq(deploy_reason(before, deploy_node_signature(new_module, 1)), "modules changed"), "a new module")
+    let board: string = deploy_with(DEPLOY_PLAN, "node.1.board", "lolin32-lite")
+    check(str_eq(deploy_reason(before, deploy_node_signature(board, 1)), "board changed"), "a new board")
+    check(str_eq(deploy_gateway_signature(board), deploy_gateway_signature(DEPLOY_PLAN)),
+        "the gateway does not care which board is on the other end")
+    print("[PASS] a_module_or_a_board_rebuilds_that_board\n")
+}
+
+test fn a_link_rebuilds_the_board_and_restarts_its_parent() void {
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let baud: string = deploy_with(DEPLOY_PLAN, "node.1.baud", "57600")
+    check(str_eq(deploy_reason(before, deploy_node_signature(baud, 1)), "link changed"), "the board's own link")
+    check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN), deploy_gateway_signature(baud)),
+        "a link it serves changed"), "the gateway serving it restarts")
+    print("[PASS] a_link_rebuilds_the_board_and_restarts_its_parent\n")
+}
+
+test fn a_board_on_wifi_follows_the_gateway_address() void {
+    let wifi: string = deploy_with(DEPLOY_PLAN, "node.1.link", "wifi")
+    let before: string = deploy_node_signature(wifi, 1)
+    let moved: string = deploy_with(wifi, "gateway_host", "192.0.2.20")
+    check(str_eq(deploy_reason(before, deploy_node_signature(moved, 1)), "gateway address changed"),
+        "a board that dials the gateway is rebuilt when it moves")
+    let serial_moved: string = deploy_with(DEPLOY_PLAN, "gateway_host", "192.0.2.20")
+    check(str_eq(deploy_node_signature(serial_moved, 1), deploy_node_signature(DEPLOY_PLAN, 1)),
+        "a board on a serial line is not")
+    print("[PASS] a_board_on_wifi_follows_the_gateway_address\n")
+}
+
+test fn a_board_never_programmed_says_so() void {
+    check(str_eq(deploy_reason("", deploy_node_signature(DEPLOY_PLAN, 1)), "never programmed"), "nothing recorded")
+    check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1), deploy_node_signature(DEPLOY_PLAN, 1)), ""),
+        "what was programmed is what is planned")
+    check(deploy_is_board(DEPLOY_PLAN, 1) && !deploy_is_board(DEPLOY_PLAN, 2) && !deploy_is_board(DEPLOY_PLAN, 3),
+        "modules and devices have no image of their own")
+    print("[PASS] a_board_never_programmed_says_so\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -133,5 +200,10 @@ fn main() void {
     declared_links_are_the_whole_answer()
     a_build_depends_on_structure_not_on_names()
     reopening_a_stage_reopens_every_later_one()
+    a_name_or_a_device_builds_nothing()
+    a_module_or_a_board_rebuilds_that_board()
+    a_link_rebuilds_the_board_and_restarts_its_parent()
+    a_board_on_wifi_follows_the_gateway_address()
+    a_board_never_programmed_says_so()
     print("mesh domain tests ok\n")
 }
