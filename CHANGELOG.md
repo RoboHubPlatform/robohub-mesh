@@ -254,3 +254,21 @@ project active, so a page can be bookmarked or shared and shows the mesh it was
 for. Every form carries its project, and a save drawn for another project than
 the active one — a second tab switched projects since — is refused rather than
 written into the wrong mesh.
+
+## [0.8.0] - 2026-11-12
+
+The live agora and the fleet view, read-only. A mesh's agora (`Live` in the top
+bar, `/mesh/agora?project=<id>`) shows whether its gateway answers, its area and
+the boards that need building; the tree of its gateway, boards and devices, each
+card with its online state, when it was last seen and its newest readings; an
+inspector for the node selected, linking to the page that edits it; and a strip
+with its faults and its steps. The fleet view (`Fleet`, `/mesh/fleet`) shows one
+card per mesh with its miniature tree, health, readings and where its gateway
+runs, one inbox of faults across them, and the hosts they run on. Both update
+over one server-sent stream each.
+
+Every mesh's gateway is checked in the background every six seconds and the
+answer kept beside the project, so drawing a page no longer waits on a gateway.
+A mesh gets its area and ports when it is created. The smoke test has Mesh start
+a native gateway on a port of the test's choosing and checks that the agora and
+the fleet see it online and that stopping it ends that process.

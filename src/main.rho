@@ -15,6 +15,7 @@ include "mesh/telemetry.rho"
 include "mesh/clients.rho"
 include "mesh/firmware.rho"
 include "mesh/settings.rho"
+include "mesh/agora.rho"
 
 import std.web.http
 import std.web.template
@@ -64,6 +65,10 @@ fn resolve_path(path: string) string {
 route GET "/" => mesh_dashboard
 route GET "/mesh" => mesh_dashboard
 route GET "/mesh/plan" => mesh_page
+route GET "/mesh/agora" => mesh_agora_page
+route GET "/mesh/agora/events" => mesh_agora_events
+route GET "/mesh/fleet" => mesh_fleet_page
+route GET "/mesh/fleet/events" => mesh_fleet_events
 route GET "/mesh/project/{id}/settings" => mesh_project_settings_page
 route POST "/mesh/project/{id}/settings" => mesh_project_settings_post
 route POST "/mesh/project/{id}/token" => mesh_project_token_generate

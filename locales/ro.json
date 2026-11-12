@@ -56,5 +56,7 @@
   "settings.alerts.off": "Oprit",
   "settings.alerts.email_enabled": "Alerte prin e-mail",
   "settings.alerts.telegram_enabled": "Alerte prin Telegram",
-  "settings.alerts.telegram_threshold": "Prag Telegram"
+  "settings.alerts.telegram_threshold": "Prag Telegram",
+  "nav.fleet": "Flotă",
+  "nav.live": "Live"
 }

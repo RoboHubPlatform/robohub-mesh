@@ -179,6 +179,9 @@ fn new_project(name: string) string {
     }
     ignore_bool(plan_write(project_file(id), "project.name=" + display + "\n"))
     ignore_bool(rho_write_text(current_project_file(), id + "\n"))
+    // A mesh gets its area and ports on this machine when it is created, so it
+    // never runs on another mesh's.
+    fleet_place(id)
     return id
 }
 

@@ -514,6 +514,9 @@ fn telemetry_worker() void {
         }
         if device_ticks == 0 {
             mesh_fault_emit_once()
+            // Every six seconds: each mesh's gateway health, and the live
+            // regions of the fleet and the open agora.
+            agora_tick()
         }
         check_ticks = check_ticks + 1
         if check_ticks >= checkpoint_every {

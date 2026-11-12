@@ -38,6 +38,10 @@ RHO = PROJECTS / "rho" / "bin" / "rho"
 TOKEN = ""
 
 
+# The processes of the native gateways the test had Mesh start.
+LIVE_PIDS = []
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -63,12 +67,12 @@ def get(base: str, path: str) -> str:
         return response.read().decode("utf-8", "replace")
 
 
-def post(base: str, path: str, fields: dict) -> str:
+def post(base: str, path: str, fields: dict, timeout: float = 20) -> str:
     body = urllib.parse.urlencode(fields).encode()
     request = urllib.request.Request(base + path, data=body, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
     request.add_header("Authorization", f"Bearer {TOKEN}")
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("utf-8", "replace")
 
 
@@ -195,6 +199,12 @@ def main() -> int:
         home = os.path.join(state, "home")
         TOKEN = mint_token(home)
         env.setdefault("RHO_HOME", os.path.join(os.path.expanduser("~"), ".rho"))
+        # Mesh builds the gateway with Go; the machine's caches are named before
+        # HOME changes, so a build does not start from an empty cache.
+        for name in ("GOCACHE", "GOMODCACHE", "GOPATH"):
+            value = subprocess.run(["go", "env", name], capture_output=True, text=True).stdout.strip()
+            if value:
+                env.setdefault(name, value)
         env["HOME"] = home
         env["RHO_HTTP_ADDR"] = f":{port}"
         process = subprocess.Popen(
@@ -567,6 +577,37 @@ def main() -> int:
                 "mesh state",
             )
 
+            # The agora shows the mesh's real nodes, live; the inspector shows
+            # the node selected, and links to the page that edits it.
+            agora = get(base, "/mesh/agora?project=default")
+            assert_contains(agora, ["Relay one", "Gateway", "Inspector", "sse-connect=\"/mesh/agora/events?project=default\"",
+                                    "192.0.2.10 · arduino-uno-q"], "agora")
+            inspected = get(base, "/mesh/agora?project=default&node=1")
+            assert_contains(inspected, ["Relay one", "Edit this node", "Board", "pico2w", "agora-node-1"], "agora inspector")
+            fleet_page = get(base, "/mesh/fleet")
+            assert_contains(fleet_page, ["Fleet", "Relay one", "Hosts", "192.0.2.10", "gateways online",
+                                         "sse-connect=\"/mesh/fleet/events\""], "fleet view")
+            for path, events in (("/mesh/agora/events?project=default", ["event: agora-bar", "event: agora-tree", "event: agora-strip"]),
+                                 ("/mesh/fleet/events", ["event: fleet-bar", "event: fleet-cards", "event: fleet-side"])):
+                request = urllib.request.Request(base + path)
+                request.add_header("Authorization", f"Bearer {TOKEN}")
+                with urllib.request.urlopen(request, timeout=10) as stream:
+                    chunk = b""
+                    while not all(e.encode() in chunk for e in events) and len(chunk) < 400000:
+                        part = stream.read1(65536)
+                        if not part:
+                            break
+                        chunk += part
+                assert_contains(chunk.decode("utf-8", "replace"), events, path)
+            # Gateway health is checked in the background, not when a page is
+            # drawn, and kept beside the project.
+            health = Path(state) / "projects" / "default" / "health.txt"
+            deadline = time.time() + 20
+            while not health.exists() and time.time() < deadline:
+                time.sleep(0.5)
+            if not health.exists() or health.read_text().split("|")[0] not in ("online", "offline", "none"):
+                raise AssertionError("the background did not check the gateway's health")
+
             # Removing a node moves the rows after it up in one write, and each
             # node keeps the number its firmware and its telemetry carry. A
             # parent is stored by its number, so it needs no rewriting.
@@ -716,6 +757,59 @@ def main() -> int:
             post(base, "/mesh/project/delete", {"project": "Device-project"})
             get(base, "/mesh/project/default")
 
+            # A native gateway that Mesh starts for a mesh of its own, on a port
+            # the test chose: the background finds it online, the agora and the
+            # fleet say so, and stopping it ends that process by its pid.
+            post(base, "/mesh/project/new", {"name": "Live mesh"})
+            post(base, "/mesh/gateway", {"name": "Gateway", "description": "This machine.", "gateway": "native"})
+            live_port = free_port()
+            # The network is set after the topology is accepted, as the wizard has
+            # it, and a topology has at least one node: a plug on the network.
+            post(base, "/mesh/node/new", {
+                "action": "save", "kind": "device", "name": "Live plug",
+                "device": "robohub-device-shelly-plug-m-gen3", "transport": "http",
+                "address": "http://192.0.2.51", "device_id": "", "parent": "gateway",
+            })
+            post(base, "/mesh/accept", {"action": "accept"})
+            post(base, "/mesh/network/gateway",
+                 {"action": "save_gateway", "gateway_host": "127.0.0.1", "rest_port": str(live_port)})
+            # A restart builds the gateway before it starts it.
+            post(base, "/mesh/gateway/restart", {}, timeout=300)
+            live_dir = Path(state) / "projects" / "Live-mesh"
+            pid_file = live_dir / "gateway.pid"
+            if "rest_port: \"" + str(live_port) + "\"" not in (live_dir / "plan.yml").read_text():
+                raise AssertionError("the gateway's REST port was not saved")
+            if not pid_file.exists():
+                raise AssertionError("the native gateway was not started with its pid written:\n" +
+                                     ((live_dir / "gateway.log").read_text() if (live_dir / "gateway.log").exists() else ""))
+            pid = int(pid_file.read_text().strip())
+            LIVE_PIDS.append(pid)
+            healthy = live_dir / "health.txt"
+            deadline = time.time() + 30
+            while time.time() < deadline and not (healthy.exists() and healthy.read_text().startswith("online|")):
+                time.sleep(0.5)
+            if not healthy.exists() or not healthy.read_text().startswith("online|"):
+                raise AssertionError("the background did not find the native gateway online")
+            live_agora = get(base, "/mesh/agora?project=Live-mesh")
+            assert_contains(live_agora,
+                            ["Live · gateway online", "this machine · native gateway · :" + str(live_port), "Live plug"],
+                            "agora of a live mesh")
+            assert_contains(get(base, "/mesh/fleet"), ["Live mesh", ":" + str(live_port)], "fleet with a live mesh")
+            post(base, "/mesh/gateway/stop", {})
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break
+                time.sleep(0.2)
+            else:
+                raise AssertionError("stopping the mesh's gateway did not end its process")
+            if pid_file.exists():
+                raise AssertionError("a stopped gateway kept its pid file")
+            post(base, "/mesh/project/delete", {"project": "Live-mesh"})
+            get(base, "/mesh/project/default")
+
             # A long action writes its progress to a file and the page follows
             # that file. The page connects first and the action writes after,
             # as a real one does, so a fast action's lines — its end among them —
@@ -736,6 +830,12 @@ def main() -> int:
             print("mesh smoke test ok")
             return 0
         finally:
+            # A gateway the test had Mesh start does not outlive the test.
+            for pid in LIVE_PIDS:
+                try:
+                    os.kill(pid, 15)
+                except OSError:
+                    pass
             process.terminate()
             try:
                 process.wait(timeout=5)

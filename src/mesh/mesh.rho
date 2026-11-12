@@ -42,10 +42,14 @@ fn gateway_reachable_for(gateway: string, host: string, rest: string) bool {
     return code == 0
 }
 
+// gateway_reachable is whether the active mesh's gateway answers, as the
+// background last found (agora.rho), so drawing a page does not wait on it.
 fn gateway_reachable() bool {
-    return gateway_reachable_for(default_value("gateway", "native"),
-        default_value("gateway_host", "127.0.0.1"),
-        default_value("rest_port", fleet_rest_port(current_project())))
+    let active: string = current_project()
+    if active == "" {
+        return false
+    }
+    return agora_gateway_online(active)
 }
 
 fn gateway_live_badge() string {
@@ -999,7 +1003,7 @@ fn project_card(id: string) string {
     if rest == "" {
         rest = fleet_rest_port(id)
     }
-    let live: bool = gateway != "" && gateway_reachable_for(gateway, host, rest)
+    let live: bool = gateway != "" && agora_gateway_online(id)
     var address: string = ""
     if gateway != "" {
         if gateway == "native" {
@@ -3337,6 +3341,7 @@ fn mesh_context(req: Request) string {
         escape_html(project_name(active)) + "</strong>"
     // Every operation link names the project it acts on.
     let scope: string = "?project=" + escape_html(active)
+    out = out + mesh_menu_link(i18n_t(req, "nav.live"), "/mesh/agora" + scope, "◉")
     out = out + mesh_menu_link(i18n_t(req, "nav.plan"), "/mesh/plan" + scope, "1")
     out = out + mesh_menu_link(i18n_t(req, "nav.network"), "/mesh/step/network" + scope, "2")
     out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build" + scope, "3")
@@ -3364,6 +3369,7 @@ fn mesh_menu(req: Request) string {
         out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     }
     out = out + mesh_menu_link(i18n_t(req, "nav.dashboard"), "/mesh", "⌁")
+    out = out + mesh_menu_link(i18n_t(req, "nav.fleet"), "/mesh/fleet", "▦")
     out = out + mesh_menu_link(i18n_t(req, "nav.faults"), "/faults", "!")
     out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
     out = out + mesh_menu_link(i18n_t(req, "page.settings"), "/settings", "⚙")

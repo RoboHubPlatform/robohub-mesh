@@ -1,0 +1,991 @@
+//
+// @file agora.rho
+// @brief The live agora of one mesh, and the fleet view of every mesh.
+//
+// @module mesh.agora
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.agora
+
+// The agora is one screen per mesh: a bar that says whether the mesh is live,
+// the tree of its gateway, nodes and devices — each card with its online state,
+// when it was last seen and what it reads — an inspector for the node selected,
+// and a strip with its faults and its steps. The fleet view is the level above:
+// one card per mesh with its health, its readings and where its gateway runs,
+// one inbox of faults across them, and the hosts they run on.
+//
+// Both are read-only: editing still happens on the plan's pages, linked from
+// the inspector. Both are live: the background worker checks every mesh's
+// gateway (agora_tick) and keeps the result beside the project, so drawing a
+// page never waits on a gateway, and pushes a region to the page over one
+// server-sent stream when what it shows has changed.
+
+const AGORA_ONLINE_SECONDS: u32 = 60
+const AGORA_HEALTH_FRESH_SECONDS: u32 = 20
+
+/* -------------------------------------------------------------------------- */
+/*  Gateway health, checked in the background                                 */
+/* -------------------------------------------------------------------------- */
+
+fn agora_health_file(id: string) string {
+    return project_location(id) + "/health.txt"
+}
+
+// agora_project_ids are the projects with a plan, read without preparing the
+// state folder (which the background worker must not do on every pass).
+fn agora_project_ids() string {
+    var out: string = ""
+    var rest: string = project_listing()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && rho_path_exists(project_file(id)) {
+            out = out + id + "\n"
+        }
+    }
+    return out
+}
+
+// agora_gateway_kind is where a mesh's gateway runs: "native" on this machine,
+// a board name, or "" when none is planned.
+fn agora_gateway_kind(id: string) string {
+    return state_value_in(project_file(id), "gateway")
+}
+
+fn agora_gateway_host(id: string) string {
+    let host: string = state_value_in(project_file(id), "gateway_host")
+    if host == "" || agora_gateway_kind(id) == "native" {
+        return "127.0.0.1"
+    }
+    return host
+}
+
+fn agora_gateway_port(id: string) string {
+    let rest: string = state_value_in(project_file(id), "rest_port")
+    if rest == "" {
+        return fleet_rest_port(id)
+    }
+    return rest
+}
+
+// agora_check_health asks a mesh's gateway whether it answers, and keeps the
+// answer with the time the state began: "online|<since>|<checked>".
+fn agora_check_health(id: string) void {
+    let kind: string = agora_gateway_kind(id)
+    var state: string = "none"
+    if kind != "" {
+        state = "offline"
+        if gateway_reachable_for(kind, agora_gateway_host(id), agora_gateway_port(id)) {
+            state = "online"
+        }
+    }
+    let now: u32 = mesh_now_seconds()
+    let previous: string = rho_read_text(agora_health_file(id))
+    var since: string = rho_int_to_str(now)
+    if rho_str_eq(field(previous, 0), state) && field(previous, 1) != "" {
+        since = field(previous, 1)
+    }
+    rho_write_text(agora_health_file(id), state + "|" + since + "|" + rho_int_to_str(now))
+}
+
+// agora_health is a mesh's gateway state as last checked: "online", "offline",
+// "none" (no gateway planned) or "unknown" (not checked yet).
+fn agora_health(id: string) string {
+    let state: string = field(rho_read_text(agora_health_file(id)), 0)
+    if state == "" {
+        return "unknown"
+    }
+    return state
+}
+
+fn agora_health_since(id: string) u32 {
+    return u32(rho_int_from_str(field(rho_read_text(agora_health_file(id)), 1)))
+}
+
+// agora_gateway_online is whether a mesh's gateway answered when last checked,
+// asked of it directly when nothing has checked it lately.
+fn agora_gateway_online(id: string) bool {
+    let record: string = rho_read_text(agora_health_file(id))
+    let checked: u32 = u32(rho_int_from_str(field(record, 2)))
+    let now: u32 = mesh_now_seconds()
+    if checked > 0 && now >= checked && now - checked < AGORA_HEALTH_FRESH_SECONDS {
+        return rho_str_eq(field(record, 0), "online")
+    }
+    agora_check_health(id)
+    return agora_health(id) == "online"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Readings                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// agora_readings are a project's newest readings as source|field|value|seconds
+// lines, from the telemetry store.
+fn agora_readings(project: string) string {
+    var out: string = ""
+    var rest: string = telemetry_latest_events(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        // The reading is a JSON document inside the event's data, escaped.
+        let data: string = agora_unescape(line)
+        let source: string = agora_json_text(data, "source")
+        let name: string = agora_json_text(data, "field")
+        let value: string = agora_json_text(data, "value")
+        let received: string = json_number(data, "received_ms")
+        if source == "" || name == "" || json_number(data, "status") != "0" {
+            continue
+        }
+        var seconds: u32 = 0
+        if u32(rho_strlen(received)) > 3 {
+            seconds = u32(rho_int_from_str(rho_str_slice(received, 0, u32(rho_strlen(received)) - 3)))
+        }
+        out = out + source + "|" + name + "|" + value + "|" + rho_int_to_str(seconds) + "\n"
+    }
+    return out
+}
+
+fn agora_unescape(text: string) string {
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\\\"")
+        if at < 0 {
+            out = out + rest
+            rest = ""
+        } else {
+            out = out + rho_str_slice(rest, 0, u32(at)) + "\""
+            rest = rho_str_slice(rest, u32(at) + 2, u32(rho_strlen(rest)) - u32(at) - 2)
+        }
+    }
+    return out
+}
+
+// agora_json_text is a string field of a flat JSON document.
+fn agora_json_text(text: string, key: string) string {
+    let needle: string = "\"" + key + "\":\""
+    let at: i32 = rho_str_index_of(text, needle)
+    if at < 0 {
+        return ""
+    }
+    let start: u32 = u32(at) + u32(rho_strlen(needle))
+    let rest: string = rho_str_slice(text, start, u32(rho_strlen(text)) - start)
+    let end: i32 = rho_str_index_of(rest, "\"")
+    if end < 0 {
+        return ""
+    }
+    return rho_str_slice(rest, 0, u32(end))
+}
+
+// agora_last_seen is when a source last reported, in seconds; 0 for never.
+fn agora_last_seen(readings: string, source: string) u32 {
+    var last: u32 = 0
+    var rest: string = readings
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if source != "" && rho_str_eq(field(line, 0), source) {
+            let seconds: u32 = u32(rho_int_from_str(field(line, 3)))
+            if seconds > last {
+                last = seconds
+            }
+        }
+    }
+    return last
+}
+
+// agora_newest is the time of a project's newest reading.
+fn agora_newest(readings: string) u32 {
+    var last: u32 = 0
+    var rest: string = readings
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let seconds: u32 = u32(rho_int_from_str(field(line, 3)))
+        if seconds > last {
+            last = seconds
+        }
+    }
+    return last
+}
+
+// agora_chips are up to `limit` of a source's readings, as chips; every one
+// when source is "" and limit is 0 is never asked for.
+fn agora_chips(readings: string, source: string, limit: u32) string {
+    var out: string = ""
+    var count: u32 = 0
+    var rest: string = readings
+    while rest != "" && count < limit {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" && (source == "" || rho_str_eq(field(line, 0), source)) {
+            out = out + "<span class=\"agora-chip\"><span>" + escape_html(agora_field_label(field(line, 1))) +
+                "</span> <strong>" + escape_html(agora_value(field(line, 1), field(line, 2))) + "</strong></span>"
+            count = count + 1
+        }
+    }
+    return out
+}
+
+// agora_value is a reading with its unit, which its field's name ends with.
+fn agora_value(name: string, value: string) string {
+    var shown: string = value
+    let dot: i32 = rho_str_index_of(value, ".")
+    if dot >= 0 && u32(rho_strlen(value)) > u32(dot) + 3 {
+        shown = rho_str_slice(value, 0, u32(dot) + 3)
+    }
+    let unit: string = agora_unit(name)
+    if unit == "" {
+        return shown
+    }
+    return shown + " " + unit
+}
+
+fn agora_unit(name: string) string {
+    if agora_ends(name, "_c") { return "°C" }
+    if agora_ends(name, "_pct") || agora_ends(name, "_rh") { return "%" }
+    if agora_ends(name, "_w") { return "W" }
+    if agora_ends(name, "_v") { return "V" }
+    if agora_ends(name, "_a") { return "A" }
+    if agora_ends(name, "_hpa") { return "hPa" }
+    if agora_ends(name, "_lux") { return "lx" }
+    return ""
+}
+
+// agora_field_label is a field's name without its unit and its underscores.
+fn agora_field_label(name: string) string {
+    var label: string = name
+    let units: string = "_c _pct _rh _w _v _a _hpa _lux"
+    var rest: string = units
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var suffix: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            suffix = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if agora_ends(label, suffix) {
+            label = rho_str_slice(label, 0, u32(rho_strlen(label)) - u32(rho_strlen(suffix)))
+            rest = ""
+        }
+    }
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(label)) {
+        let ch: string = rho_str_slice(label, i, 1)
+        if rho_str_eq(ch, "_") {
+            out = out + " "
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn agora_ends(text: string, suffix: string) bool {
+    let length: u32 = u32(rho_strlen(text))
+    let tail: u32 = u32(rho_strlen(suffix))
+    return length > tail && rho_str_eq(rho_str_slice(text, length - tail, tail), suffix)
+}
+
+// agora_age is how long ago a moment was, the way a person says it.
+fn agora_age(then: u32) string {
+    let now: u32 = mesh_now_seconds()
+    if then == 0 {
+        return "never"
+    }
+    if then >= now {
+        return "just now"
+    }
+    let seconds: u32 = now - then
+    if seconds < 60 {
+        return rho_int_to_str(seconds) + " s ago"
+    }
+    if seconds < 3600 {
+        return rho_int_to_str(seconds / 60) + " min ago"
+    }
+    if seconds < 86400 {
+        let minutes: u32 = (seconds % 3600) / 60
+        if minutes == 0 {
+            return rho_int_to_str(seconds / 3600) + " h ago"
+        }
+        return rho_int_to_str(seconds / 3600) + " h " + rho_int_to_str(minutes) + " min ago"
+    }
+    return rho_int_to_str(seconds / 86400) + " d ago"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The agora of the active mesh                                              */
+/* -------------------------------------------------------------------------- */
+
+fn agora_url(id: string, node: string) string {
+    var url: string = "/mesh/agora?project=" + escape_html(id)
+    if node != "" {
+        url = url + "&amp;node=" + escape_html(node)
+    }
+    return url
+}
+
+// agora_node_state is a card's live line: online, last seen, or why it has not
+// reported.
+fn agora_node_state(index: u32, readings: string) string {
+    if is_module_node(index) {
+        return ""
+    }
+    let source: string = state_value("node." + rho_int_to_str(index) + ".id")
+    let last: u32 = agora_last_seen(readings, source)
+    if last > 0 && mesh_now_seconds() - last <= AGORA_ONLINE_SECONDS {
+        return "<span class=\"agora-state online\">online</span> <span class=\"agora-seen\">last seen " +
+            agora_age(last) + "</span>"
+    }
+    if last > 0 {
+        return "<span class=\"agora-state stale\">quiet</span> <span class=\"agora-seen\">last seen " +
+            agora_age(last) + "</span>"
+    }
+    let built: string = state_value("status.node." + rho_int_to_str(index))
+    if built == "" || built == "pending" {
+        return "<span class=\"agora-state planned\">needs build</span>"
+    }
+    return "<span class=\"agora-state quiet\">no readings</span> <span class=\"agora-seen\">" +
+        escape_html(built) + "</span>"
+}
+
+fn agora_node_live(index: u32, readings: string) string {
+    if is_module_node(index) {
+        return ""
+    }
+    let source: string = state_value("node." + rho_int_to_str(index) + ".id")
+    return "<div class=\"agora-live\">" + agora_node_state(index, readings) +
+        "<div class=\"agora-chips\">" + agora_chips(readings, source, 3) + "</div></div>"
+}
+
+fn agora_node_card(id: string, index: u32, readings: string) string {
+    let role: string = node_value(index, "role", "node")
+    return "<span id=\"agora-node-" + rho_int_to_str(index) + "\">" +
+        template_fill(template_get("mesh-card-link"),
+        vars("role", role) + vars("extra", " agora-card") +
+        vars("href", agora_url(id, rho_int_to_str(index))) +
+        vars("body", node_card_body(index) + agora_node_live(index, readings))) + "</span>"
+}
+
+fn agora_gateway_card(id: string, readings: string) string {
+    let health: string = agora_health(id)
+    var state: string = "<span class=\"agora-state quiet\">not checked yet</span>"
+    if health == "online" {
+        state = "<span class=\"agora-state online\">online</span> <span class=\"agora-seen\">since " +
+            agora_age(agora_health_since(id)) + "</span>"
+    } else if health == "offline" {
+        state = "<span class=\"agora-state down\">not answering</span> <span class=\"agora-seen\">since " +
+            agora_age(agora_health_since(id)) + "</span>"
+    } else if health == "none" {
+        state = "<span class=\"agora-state planned\">no gateway planned</span>"
+    }
+    let live: string = "<div class=\"agora-live\">" + state +
+        "<div class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</div></div>"
+    return "<span id=\"agora-node-gateway\">" + template_fill(template_get("mesh-card-link"),
+        vars("role", "gateway") + vars("extra", " agora-card") +
+        vars("href", agora_url(id, "gateway")) + vars("body", gateway_card_body() + live)) + "</span>"
+}
+
+// agora_host_label says where a mesh's gateway runs and on which port.
+fn agora_host_label(id: string) string {
+    let kind: string = agora_gateway_kind(id)
+    if kind == "" {
+        return "no gateway planned"
+    }
+    if kind == "native" {
+        return "this machine · native gateway · :" + agora_gateway_port(id)
+    }
+    return agora_gateway_host(id) + " · " + kind + " · :" + agora_gateway_port(id)
+}
+
+fn agora_child_items(id: string, parent: string, readings: string) string {
+    var out: string = ""
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if node_value(index, "parent", "gateway") == parent && node_attached(index) {
+            if is_module_node(index) || is_device_node(index) {
+                var label: string = "module"
+                if is_device_node(index) {
+                    label = "device"
+                }
+                out = out + mesh_branch(mesh_badge(label, true), agora_node_card(id, index, readings), "", "", true)
+            } else {
+                out = out + mesh_branch(
+                    mesh_badge(link_label(node_value(index, "link", "uart")), false),
+                    agora_node_card(id, index, readings), "",
+                    agora_children(id, "node." + rho_int_to_str(index), readings), false)
+            }
+        }
+        index = index + 1
+    }
+    return out
+}
+
+fn agora_children(id: string, parent: string, readings: string) string {
+    let items: string = agora_child_items(id, parent, readings)
+    if items == "" {
+        return ""
+    }
+    return template_fill(template_get("mesh-children"), vars("items", items))
+}
+
+// agora_tree is the active mesh as a live tree: the same drawing the plan
+// uses, each card with what the mesh reports about it.
+fn agora_tree(id: string) string {
+    let readings: string = agora_readings(id)
+    var items: string = agora_child_items(id, "gateway", readings)
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if is_device_node(index) && node_value(index, "parent", "") == "mesh" && node_attached(index) {
+            items = items + mesh_branch(mesh_badge("device", true), agora_node_card(id, index, readings), "", "", true)
+        }
+        index = index + 1
+    }
+    var out: string = agora_gateway_card(id, readings)
+    if items != "" {
+        out = out + template_fill(template_get("mesh-children"), vars("items", items))
+    }
+    if count == 0 {
+        out = out + template_fill(template_get("mesh-empty"), vars("hint", "The mesh has no nodes yet. Plan them on the plan page."))
+    }
+    return out
+}
+
+// agora_out_of_date counts the boards that need building: planned or changed
+// since they were last built.
+fn agora_out_of_date() u32 {
+    var stale: u32 = 0
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if !is_module_node(index) && !is_device_node(index) {
+            let built: string = state_value("status.node." + rho_int_to_str(index))
+            if built == "" || built == "pending" {
+                stale = stale + 1
+            }
+        }
+        index = index + 1
+    }
+    return stale
+}
+
+fn agora_bar(id: string) string {
+    let health: string = agora_health(id)
+    var live: string = "<span class=\"agora-state quiet\">gateway not checked yet</span>"
+    if health == "online" {
+        live = "<span class=\"agora-state online\">Live · gateway online</span>"
+    } else if health == "offline" {
+        live = "<span class=\"agora-state down\">gateway not answering for " +
+            rho_str_slice(agora_age(agora_health_since(id)), 0, u32(rho_strlen(agora_age(agora_health_since(id)))) - 4) + "</span>"
+    } else if health == "none" {
+        live = "<span class=\"agora-state planned\">no gateway planned</span>"
+    }
+    var stale: string = ""
+    let count: u32 = agora_out_of_date()
+    if count == 1 {
+        stale = "<span class=\"agora-pill\">1 board needs building</span>"
+    } else if count > 1 {
+        stale = "<span class=\"agora-pill\">" + rho_int_to_str(count) + " boards need building</span>"
+    }
+    return "<strong class=\"agora-name\">" + escape_html(project_name(id)) + "</strong> " + live +
+        " <span class=\"agora-pill\">area " + escape_html(project_area_id(project_file(id))) + "</span> " + stale +
+        " <span class=\"agora-links\"><a href=\"/mesh/plan?project=" + escape_html(id) + "\">Edit the plan</a> · " +
+        "<a href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a> · <a href=\"/mesh/fleet\">Fleet</a></span>"
+}
+
+// agora_strip is the mesh's activity: its faults, and where its steps are.
+fn agora_strip(id: string) string {
+    var faults: string = ""
+    var count: u32 = 0
+    var rest: string = telemetry_fault_rows(id, 3)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        faults = faults + "<span class=\"agora-fault\">" + escape_html(agora_tab(line, 1)) + " · " +
+            escape_html(agora_tab(line, 3)) + " · " + escape_html(agora_tab(line, 2)) + "</span>"
+        count = count + 1
+    }
+    if count == 0 {
+        faults = "<span class=\"agora-seen\">No faults.</span>"
+    }
+    let steps: string = "Plan " + default_value("step_topology", "pending") +
+        " · network " + default_value("step_network", "pending") +
+        " · build " + default_value("step_build", "pending") +
+        " · verify " + default_value("step_verify", "pending")
+    return faults + " <span class=\"agora-steps\">" + escape_html(steps) + "</span> <a href=\"/faults\">Faults</a>"
+}
+
+// agora_tab is one tab-separated field of a line.
+fn agora_tab(line: string, index: u32) string {
+    var rest: string = line
+    var at: u32 = 0
+    while at < index {
+        let tab: i32 = rho_str_index_of(rest, "\t")
+        if tab < 0 {
+            return ""
+        }
+        rest = rho_str_slice(rest, u32(tab) + 1, u32(rho_strlen(rest)) - u32(tab) - 1)
+        at = at + 1
+    }
+    let tab: i32 = rho_str_index_of(rest, "\t")
+    if tab < 0 {
+        return rest
+    }
+    return rho_str_slice(rest, 0, u32(tab))
+}
+
+// agora_inspector is what is known of the selected node or the gateway, with
+// the pages that change it.
+fn agora_inspector(id: string, selected: string) string {
+    if selected == "" {
+        return "<h3>Inspector</h3><p class=\"agora-seen\">Select the gateway or a node to see what it is, how it is linked and what it reads.</p>"
+    }
+    let readings: string = agora_readings(id)
+    if selected == "gateway" {
+        return "<h3>Gateway</h3><dl class=\"agora-facts\">" +
+            agora_fact("Runs", agora_host_label(id)) +
+            agora_fact("State", agora_health(id)) +
+            agora_fact("Area", project_area_id(project_file(id))) +
+            agora_fact("Uplink port", fleet_uplink_port(id)) +
+            "</dl><p><a href=\"/mesh/gateway?project=" + escape_html(id) + "\">Open the gateway's page</a></p>"
+    }
+    let index: u32 = u32(rho_int_from_str(selected))
+    if index < 1 || index > node_count() {
+        return "<h3>Inspector</h3><p class=\"agora-seen\">That node is not in this mesh.</p>"
+    }
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    let source: string = state_value(prefix + "id")
+    var parent: string = node_value(index, "parent", "gateway")
+    if rho_str_index_of(parent, "node.") == 0 {
+        parent = node_value(u32(rho_int_from_str(rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))), "name", parent)
+    }
+    var facts: string = agora_fact("Kind", node_kind(index)) +
+        agora_fact("Number", state_value(prefix + "number")) +
+        agora_fact("Parent", parent)
+    if is_device_node(index) {
+        facts = facts + agora_fact("Device", node_device_name(index)) +
+            agora_fact("Address", state_value(prefix + "address"))
+    } else if is_module_node(index) {
+        facts = facts + agora_fact("Module", node_module_name(index))
+    } else {
+        facts = facts + agora_fact("Board", state_value(prefix + "board")) +
+            agora_fact("Link", link_label(node_value(index, "link", "uart"))) +
+            agora_fact("Build", state_value("status.node." + rho_int_to_str(index)))
+    }
+    if source != "" {
+        facts = facts + agora_fact("Last seen", agora_age(agora_last_seen(readings, source)))
+    }
+    var chips: string = agora_chips(readings, source, 32)
+    if chips == "" || source == "" {
+        chips = "<span class=\"agora-seen\">No readings.</span>"
+    }
+    return "<h3>" + escape_html(node_value(index, "name", "Node " + rho_int_to_str(index))) + "</h3>" +
+        "<dl class=\"agora-facts\">" + facts + "</dl><div class=\"agora-chips\">" + chips + "</div>" +
+        "<p><a href=\"/mesh/node/" + rho_int_to_str(index) + "?project=" + escape_html(id) + "\">Edit this node</a>" +
+        " · <a href=\"/mesh/network/link/" + rho_int_to_str(index) + "?project=" + escape_html(id) + "\">Its connection</a></p>"
+}
+
+fn agora_fact(label: string, value: string) string {
+    var shown: string = value
+    if shown == "" {
+        shown = "—"
+    }
+    return "<dt>" + escape_html(label) + "</dt><dd>" + escape_html(shown) + "</dd>"
+}
+
+const AGORA_STYLE: string = "<style>.agora-bar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem}.agora-name{font-size:1.15rem}.agora-links{margin-left:auto}.agora{display:grid;grid-template-columns:minmax(0,1fr) 20rem;gap:1rem}@media (max-width:900px){.agora{grid-template-columns:1fr}}.agora-inspector{border:1px solid var(--line,#ccc);border-radius:10px;padding:.8rem 1rem;align-self:start}.agora-live{margin-top:.35rem;font-size:.82rem}.agora-state{display:inline-block;border-radius:999px;padding:.05rem .5rem;font-weight:600;font-size:.78rem}.agora-state.online{background:#d9f2e3;color:#145c32}.agora-state.down{background:#fbe0dc;color:#8a1f12}.agora-state.stale,.agora-state.quiet{background:#eceae4;color:#555}.agora-state.planned{background:#fff1cc;color:#7a5200}.agora-seen{color:#777;font-size:.8rem}.agora-chips{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.3rem}.agora-chip{border:1px solid var(--line,#ddd);border-radius:6px;padding:.05rem .4rem;font-size:.8rem}.agora-pill{border:1px solid var(--line,#ccc);border-radius:999px;padding:.05rem .55rem;font-size:.8rem}.agora-strip{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;margin-top:1rem;border-top:1px solid var(--line,#ddd);padding-top:.6rem;font-size:.85rem}.agora-fault{color:#8a1f12}.agora-facts{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;margin:.4rem 0}.agora-facts dt{color:#777}.agora-facts dd{margin:0}.fleet{display:grid;grid-template-columns:repeat(auto-fill,minmax(17rem,1fr));gap:1rem}.fleet-card{border:1px solid var(--line,#ccc);border-radius:12px;padding:.8rem 1rem;display:block;color:inherit;text-decoration:none}.fleet-card:hover{border-color:#888}.fleet-mini{list-style:none;padding:0;margin:.4rem 0;font-size:.82rem}.fleet-mini li{padding:.05rem 0}.fleet-side{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}@media (max-width:900px){.fleet-side{grid-template-columns:1fr}}</style>"
+
+// mesh_agora_page is the agora of the project the link names.
+fn mesh_agora_page(req: Request) Response {
+    mesh_follow_project(req)
+    let id: string = current_project()
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    var selected: string = request_query_param(req, "node")
+    if selected != "" && selected != "gateway" && u32(rho_int_from_str(selected)) == 0 {
+        selected = ""
+    }
+    var highlight: string = ""
+    if selected != "" {
+        highlight = "<style>#agora-node-" + escape_html(selected) + " .node-card{outline:2px solid #2f6fdf;outline-offset:2px}</style>"
+    }
+    let body: string = AGORA_STYLE + highlight +
+        "<div hx-ext=\"sse\" sse-connect=\"/mesh/agora/events?project=" + escape_html(id) + "\">" +
+        "<div class=\"agora-bar\" sse-swap=\"agora-bar\" hx-swap=\"innerHTML\">" + agora_bar(id) + "</div>" +
+        "<div class=\"agora\"><section class=\"mesh-tree agora-canvas\" sse-swap=\"agora-tree\" hx-swap=\"innerHTML\">" +
+        agora_tree(id) + "</section><aside class=\"agora-inspector\">" + agora_inspector(id, selected) + "</aside></div>" +
+        "<div class=\"agora-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div></div>"
+    return page(req, project_name(id) + " · live", body)
+}
+
+fn agora_events_file(id: string) string {
+    return project_location(id) + "/agora-events.jsonl"
+}
+
+fn agora_snapshot(id: string) string {
+    return mesh_event_json("agora-bar", agora_bar(id)) +
+        mesh_event_json("agora-tree", agora_tree(id)) +
+        mesh_event_json("agora-strip", agora_strip(id))
+}
+
+// mesh_agora_events is the agora's one stream: the regions as they are now,
+// then each region again whenever what it shows changes.
+fn mesh_agora_events(req: Request) Response {
+    let id: string = request_query_param(req, "project")
+    if id == "" || id != current_project() {
+        return text(status_not_found(), "no such mesh is open\n")
+    }
+    let snapshot: string = project_location(id) + "/agora-snapshot.jsonl"
+    rho_write_text(snapshot, agora_snapshot(id))
+    rho_append_text(agora_events_file(id), "")
+    return sse_events(agora_events_file(id), snapshot, 1000)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The fleet                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// fleet_counts are a mesh's boards and devices: "boards|devices".
+fn fleet_counts(file: string) string {
+    let count: u32 = project_node_count_at(file)
+    var boards: u32 = 0
+    var devices: u32 = 0
+    var index: u32 = 1
+    while index <= count {
+        let kind: string = project_node_value(file, index, "kind", "compute")
+        if kind == "device" {
+            devices = devices + 1
+        } else if kind != "module" {
+            boards = boards + 1
+        }
+        index = index + 1
+    }
+    return rho_int_to_str(boards) + "|" + rho_int_to_str(devices)
+}
+
+// fleet_mini is a mesh's tree in miniature: its boards and devices by name,
+// indented by depth.
+fn fleet_mini(file: string, parent: string, depth: u32) string {
+    if depth > 6 {
+        return ""
+    }
+    var out: string = ""
+    let count: u32 = project_node_count_at(file)
+    var index: u32 = 1
+    while index <= count {
+        let kind: string = project_node_value(file, index, "kind", "compute")
+        if kind != "module" && project_node_value(file, index, "parent", "gateway") == parent {
+            var glyph: string = "▣"
+            if kind == "device" {
+                glyph = "◇"
+            }
+            out = out + "<li style=\"padding-left:" + rho_int_to_str(depth) + "rem\">" + glyph + " " +
+                escape_html(project_node_value(file, index, "name", "Node " + rho_int_to_str(index))) + "</li>" +
+                fleet_mini(file, "node." + rho_int_to_str(index), depth + 1)
+        }
+        index = index + 1
+    }
+    return out
+}
+
+fn fleet_card(id: string) string {
+    let file: string = project_file(id)
+    let counts: string = fleet_counts(file)
+    let readings: string = agora_readings(id)
+    let health: string = agora_health(id)
+    var state: string = "<span class=\"agora-state quiet\">not checked yet</span>"
+    if health == "online" {
+        state = "<span class=\"agora-state online\">online</span>"
+    } else if health == "offline" {
+        state = "<span class=\"agora-state down\">gateway down</span> <span class=\"agora-seen\">since " +
+            agora_age(agora_health_since(id)) + "</span>"
+    } else if health == "none" {
+        state = "<span class=\"agora-state planned\">no gateway</span>"
+    }
+    var last: string = "no readings yet"
+    let newest: u32 = agora_newest(readings)
+    if newest > 0 {
+        last = "last reading " + agora_age(newest)
+    }
+    return "<a class=\"fleet-card\" href=\"" + agora_url(id, "") + "\"><strong>" + escape_html(project_name(id)) +
+        "</strong> <span class=\"agora-pill\">area " + escape_html(project_area_id(file)) + "</span>" +
+        "<div class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</div>" +
+        "<div>" + field(counts, 0) + " boards · " + field(counts, 1) + " devices</div>" +
+        "<ul class=\"fleet-mini\"><li>⌂ Gateway</li>" + fleet_mini(file, "gateway", 1) + "</ul>" +
+        "<div class=\"agora-chips\">" + agora_chips(readings, "", 2) + "</div>" +
+        "<div class=\"agora-live\">" + state + " <span class=\"agora-seen\">" + last + "</span></div></a>"
+}
+
+fn fleet_cards() string {
+    var out: string = ""
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" {
+            out = out + fleet_card(id)
+        }
+    }
+    if out == "" {
+        return "<p>No meshes yet. <a href=\"/mesh#new-project\">Create one</a>.</p>"
+    }
+    return out
+}
+
+// fleet_summary is the fleet's header line: how many meshes, how many hosts,
+// and how many gateways answer.
+fn fleet_summary() string {
+    var meshes: u32 = 0
+    var online: u32 = 0
+    var hosts: string = "|"
+    var host_count: u32 = 0
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        meshes = meshes + 1
+        if agora_health(id) == "online" {
+            online = online + 1
+        }
+        let host: string = agora_gateway_host(id)
+        if rho_str_index_of(hosts, "|" + host + "|") < 0 {
+            hosts = hosts + host + "|"
+            host_count = host_count + 1
+        }
+    }
+    return "<strong class=\"agora-name\">Fleet</strong> <span class=\"agora-seen\">" + rho_int_to_str(meshes) +
+        " meshes · " + rho_int_to_str(host_count) + " hosts</span> <span class=\"agora-pill\">" +
+        rho_int_to_str(online) + " of " + rho_int_to_str(meshes) + " gateways online</span>" +
+        " <span class=\"agora-links\"><a href=\"/mesh#new-project\">New mesh</a></span>"
+}
+
+// fleet_inbox is the faults of every mesh, newest first per mesh, each opening
+// its mesh.
+fn fleet_inbox() string {
+    var out: string = ""
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        if agora_health(id) == "offline" {
+            out = out + "<li><a href=\"" + agora_url(id, "gateway") + "\"><strong>" + escape_html(project_name(id)) +
+                "</strong> · gateway not answering</a> <span class=\"agora-seen\">" + agora_age(agora_health_since(id)) + "</span></li>"
+        }
+        var faults: string = telemetry_fault_rows(id, 3)
+        while faults != "" {
+            let end: i32 = rho_str_index_of(faults, "\n")
+            var line: string = faults
+            if end < 0 {
+                faults = ""
+            } else {
+                line = rho_str_slice(faults, 0, u32(end))
+                faults = rho_str_slice(faults, u32(end) + 1, u32(rho_strlen(faults)) - u32(end) - 1)
+            }
+            if line != "" {
+                out = out + "<li><a href=\"" + agora_url(id, "") + "\"><strong>" + escape_html(project_name(id)) +
+                    "</strong> · " + escape_html(agora_tab(line, 3)) + "</a> <span class=\"agora-seen\">" +
+                    escape_html(agora_tab(line, 2)) + "</span></li>"
+            }
+        }
+    }
+    if out == "" {
+        return "<h3>Across all meshes</h3><p class=\"agora-seen\">Nothing needs attention.</p>"
+    }
+    return "<h3>Across all meshes</h3><ul>" + out + "</ul>"
+}
+
+// fleet_hosts lists the machines the meshes' gateways run on, with each mesh's
+// ports there.
+fn fleet_hosts() string {
+    var hosts: string = ""
+    var lines: string = ""
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" || agora_gateway_kind(id) == "" {
+            continue
+        }
+        var host: string = agora_gateway_host(id)
+        if agora_gateway_kind(id) == "native" {
+            host = "this machine"
+        }
+        lines = lines + host + "\t" + "<li><strong>" + escape_html(host) + "</strong> · " + escape_html(project_name(id)) +
+            " :" + escape_html(agora_gateway_port(id)) + " · uplink :" + escape_html(fleet_uplink_port(id)) + "</li>\n"
+        if rho_str_index_of(hosts, "|" + host + "|") < 0 {
+            hosts = hosts + "|" + host + "|"
+        }
+    }
+    var out: string = ""
+    rest = lines
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let tab: i32 = rho_str_index_of(line, "\t")
+        if tab >= 0 {
+            out = out + rho_str_slice(line, u32(tab) + 1, u32(rho_strlen(line)) - u32(tab) - 1)
+        }
+    }
+    if out == "" {
+        return "<h3>Hosts</h3><p class=\"agora-seen\">No gateway is planned yet.</p>"
+    }
+    return "<h3>Hosts</h3><ul>" + out + "</ul>"
+}
+
+fn fleet_regions() string {
+    return mesh_event_json("fleet-bar", fleet_summary()) +
+        mesh_event_json("fleet-cards", fleet_cards()) +
+        mesh_event_json("fleet-side", fleet_inbox() + fleet_hosts())
+}
+
+fn mesh_fleet_page(req: Request) Response {
+    ensure_wizard_dir()
+    let body: string = AGORA_STYLE +
+        "<div hx-ext=\"sse\" sse-connect=\"/mesh/fleet/events\">" +
+        "<div class=\"agora-bar\" sse-swap=\"fleet-bar\" hx-swap=\"innerHTML\">" + fleet_summary() + "</div>" +
+        "<div class=\"fleet\" sse-swap=\"fleet-cards\" hx-swap=\"innerHTML\">" + fleet_cards() + "</div>" +
+        "<div class=\"fleet-side\" sse-swap=\"fleet-side\" hx-swap=\"innerHTML\">" + fleet_inbox() + fleet_hosts() + "</div></div>"
+    return page(req, "Fleet", body)
+}
+
+fn fleet_events_file() string {
+    return wizard_dir() + "/fleet-events.jsonl"
+}
+
+fn mesh_fleet_events(req: Request) Response {
+    let snapshot: string = wizard_dir() + "/fleet-snapshot.jsonl"
+    rho_write_text(snapshot, fleet_regions())
+    rho_append_text(fleet_events_file(), "")
+    return sse_events(fleet_events_file(), snapshot, 1000)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The background pass                                                       */
+/* -------------------------------------------------------------------------- */
+
+// agora_publish appends a stream's regions to its events file when they differ
+// from what it last sent, keeping the file short.
+fn agora_publish(events: string, last_file: string, regions: string) void {
+    if rho_str_eq(rho_read_text(last_file), regions) {
+        return
+    }
+    rho_write_text(last_file, regions)
+    if u32(rho_strlen(rho_read_text(events))) > 262144 {
+        rho_write_text(events, "")
+    }
+    rho_append_text(events, regions)
+}
+
+// agora_tick checks every mesh's gateway and sends the fleet, and the active
+// mesh's agora, whatever has changed. The background worker calls it.
+fn agora_tick() void {
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" {
+            agora_check_health(id)
+        }
+    }
+    agora_publish(fleet_events_file(), wizard_dir() + "/fleet-last.jsonl", fleet_regions())
+    let active: string = current_project()
+    if active != "" && rho_path_exists(project_file(active)) {
+        agora_publish(agora_events_file(active), project_location(active) + "/agora-last.jsonl", agora_snapshot(active))
+    }
+}
