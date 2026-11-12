@@ -1,14 +1,9 @@
-version: 1
-
-output_dir: build/generated
-build_dir: build
+# What Mesh's go-server target has that the toolchain's built-in one does not.
+# Everything else — the files, the kind, the router, the output folders — is the
+# built-in target's.
 
 targets:
   - id: go-server
-    emitter: go
-    kind: server
-    description: RoboHub Mesh HTTP service
-    router: serveMux
     ports:
       - logemit
       - docstore
@@ -27,91 +22,14 @@ targets:
           # The overview and the documentation are the shop window; the API
           # that reads telemetry, devices and sensors is not.
           skip_paths: "/healthz,/auth/login,/assets,/assets/,/i18n,/auth/callback,/static,/mesh/docs"
+    # Every file under templates/ is a template, named by its file name.
+    templates:
+      - dir: templates
+    # A language is carried only once it is listed, so a catalog still being
+    # translated stays out of the build.
     default_locale: en
     locales:
       - locale: en
         file: locales/en.json
       - locale: ro
         file: locales/ro.json
-    templates:
-      - name: layout
-        file: templates/layouts/layout.html
-      - name: mesh
-        file: templates/pages/mesh.html
-      - name: mesh-dashboard
-        file: templates/pages/mesh-dashboard.html
-      - name: mesh-build
-        file: templates/pages/mesh-build.html
-      - name: mesh-network
-        file: templates/pages/mesh-network.html
-      - name: mesh-project-settings
-        file: templates/pages/mesh-project-settings.html
-      - name: wizard
-        file: templates/pages/wizard.html
-      - name: wizard-step
-        file: templates/pages/wizard-step.html
-      - name: settings
-        file: templates/pages/settings.html
-      - name: faults
-        file: templates/pages/faults.html
-      - name: fault-row
-        file: templates/rows/fault-row.html
-      - name: mesh-status
-        file: templates/parts/mesh-status.html
-      - name: mesh-card-device
-        file: templates/cards/mesh-card-device.html
-      - name: mesh-card-module
-        file: templates/cards/mesh-card-module.html
-      - name: mesh-card-node
-        file: templates/cards/mesh-card-node.html
-      - name: mesh-card-gateway
-        file: templates/cards/mesh-card-gateway.html
-      - name: mesh-card-link
-        file: templates/cards/mesh-card-link.html
-      - name: mesh-card-readonly
-        file: templates/cards/mesh-card-readonly.html
-      - name: mesh-badge
-        file: templates/tree/mesh-badge.html
-      - name: mesh-branch
-        file: templates/tree/mesh-branch.html
-      - name: mesh-children
-        file: templates/tree/mesh-children.html
-      - name: mesh-orphans
-        file: templates/tree/mesh-orphans.html
-      - name: mesh-empty
-        file: templates/tree/mesh-empty.html
-      - name: mesh-quick-add
-        file: templates/tree/mesh-quick-add.html
-      - name: mesh-tree
-        file: templates/tree/mesh-tree.html
-      - name: mesh-option
-        file: templates/parts/mesh-option.html
-      - name: mesh-step-card
-        file: templates/parts/mesh-step-card.html
-      - name: mesh-steps
-        file: templates/parts/mesh-steps.html
-      - name: mesh-message
-        file: templates/parts/mesh-message.html
-      - name: mesh-console
-        file: templates/parts/mesh-console.html
-      - name: mesh-panel
-        file: templates/parts/mesh-panel.html
-      - name: mesh-settings
-        file: templates/parts/mesh-settings.html
-      - name: mesh-setting
-        file: templates/parts/mesh-setting.html
-      - name: mesh-unknown-step
-        file: templates/parts/mesh-unknown-step.html
-    files:
-      - path: app.go
-        role: implementation
-      - path: runtime.go
-        role: runtime
-      - path: server.go
-        role: server
-      - path: main.go
-        role: entrypoint
-      - path: go.mod
-        role: build
-      - path: static
-        kind: dir
