@@ -1,0 +1,170 @@
+module mesh.plan
+
+// The plan store.
+//
+// A project's plan is plan.yml in its folder: the nodes, links, modules and
+// steps a person planned, as a YAML document of nested maps a person can read,
+// diff and correct by hand. Code reads and writes it as flat key=value lines —
+// `node.1.parent=gateway` is `node: 1: parent:` in the file — which is what the
+// pages have always used, so they run on it unchanged.
+//
+// Every write raises the plan's revision and keeps the plan it replaces under
+// revisions/, the last PLAN_REVISIONS_KEPT of them, so a bad edit costs one
+// revision rather than the plan. A write is a read, a change and a write; the
+// plan's lock makes the three one step, so two saves at once cannot lose a key.
+// A project written before plan.yml (project.txt) is imported the first time it
+// is read, and the old file is kept beside it as project.txt.imported.
+
+extern fn rho_yaml_flat(path: string) string
+extern fn rho_yaml_write_flat(path: string, flat: string, header: string) bool
+extern fn rho_lock(name: string)
+extern fn rho_unlock(name: string)
+
+const PLAN_FILE: string = "plan.yml"
+const PLAN_LEGACY_FILE: string = "project.txt"
+const PLAN_REVISIONS_KEPT: u32 = 20
+const PLAN_HEADER: string = "The plan of one RoboHub Mesh project, written by Mesh.\nEdit it by hand only while Mesh is stopped; every save raises the revision\nand keeps the plan it replaced under revisions/."
+
+// plan_text is a plan as flat key=value lines. A project that still has only a
+// project.txt is imported first.
+fn plan_text(path: string) string {
+    if path == "" {
+        return ""
+    }
+    plan_import(path)
+    return rho_yaml_flat(path)
+}
+
+// plan_import writes plan.yml from a project's project.txt, once.
+fn plan_import(path: string) void {
+    if rho_path_exists(path) || !rho_str_ends_with_plan(path) {
+        return
+    }
+    let dir: string = plan_dir(path)
+    let legacy: string = dir + "/" + PLAN_LEGACY_FILE
+    if !rho_path_exists(legacy) {
+        return
+    }
+    rho_lock("mesh.plan:" + path)
+    if !rho_path_exists(path) && plan_write_held(path, rho_read_text(legacy)) {
+        rho_exec("mv", "-f " + legacy + " " + legacy + ".imported", wizard_report("plan-import"))
+        info("mesh", "imported " + legacy + " into " + path)
+    }
+    rho_unlock("mesh.plan:" + path)
+}
+
+fn rho_str_ends_with_plan(path: string) bool {
+    let length: u32 = u32(rho_strlen(path))
+    let name: u32 = u32(rho_strlen(PLAN_FILE))
+    return length >= name && rho_str_eq(rho_str_slice(path, length - name, name), PLAN_FILE)
+}
+
+fn plan_dir(path: string) string {
+    var last: i32 = -1
+    var i: u32 = 0
+    while i < u32(rho_strlen(path)) {
+        if rho_str_eq(rho_str_slice(path, i, 1), "/") {
+            last = i32(i)
+        }
+        i = i + 1
+    }
+    if last <= 0 {
+        return "."
+    }
+    return rho_str_slice(path, 0, u32(last))
+}
+
+// plan_revision is the revision a plan is at; 0 for none.
+fn plan_revision(path: string) u32 {
+    return u32(rho_int_from_str(plan_value(rho_yaml_flat(path), "revision")))
+}
+
+// plan_value is one key's value in flat plan text.
+fn plan_value(text: string, key: string) string {
+    let prefix: string = key + "="
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if rho_str_index_of(line, prefix) == 0 {
+            return rho_str_slice(line, u32(rho_strlen(prefix)), u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+        }
+    }
+    return ""
+}
+
+// plan_without is flat plan text without the lines of one key, and without
+// empty lines.
+fn plan_without(text: string, key: string) string {
+    let prefix: string = key + "="
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" || rho_str_index_of(line, prefix) == 0 {
+            continue
+        }
+        out = out + line + "\n"
+    }
+    return out
+}
+
+// plan_write replaces a plan with flat text, as the next revision.
+fn plan_write(path: string, text: string) bool {
+    if path == "" {
+        return false
+    }
+    rho_lock("mesh.plan:" + path)
+    let written: bool = plan_write_held(path, text)
+    rho_unlock("mesh.plan:" + path)
+    return written
+}
+
+// plan_set changes one key of a plan, as the next revision.
+fn plan_set(path: string, key: string, value: string) bool {
+    if path == "" {
+        return false
+    }
+    plan_import(path)
+    rho_lock("mesh.plan:" + path)
+    let text: string = plan_without(rho_yaml_flat(path), key) + key + "=" + value + "\n"
+    let written: bool = plan_write_held(path, text)
+    rho_unlock("mesh.plan:" + path)
+    return written
+}
+
+// plan_write_held writes the next revision; the caller holds the plan's lock.
+fn plan_write_held(path: string, text: string) bool {
+    let revision: u32 = plan_revision(path)
+    if revision > 0 {
+        plan_keep_revision(path, revision)
+    }
+    let body: string = plan_without(plan_without(text, "revision"), "updated")
+    return rho_yaml_write_flat(path, "revision=" + rho_int_to_str(revision + 1) + "\n" +
+        "updated=" + rho_int_to_str(mesh_now_seconds()) + "\n" + body, PLAN_HEADER)
+}
+
+// plan_keep_revision copies the plan a write replaces into revisions/ and drops
+// the oldest beyond PLAN_REVISIONS_KEPT.
+fn plan_keep_revision(path: string, revision: u32) void {
+    let dir: string = plan_dir(path) + "/revisions"
+    let report: string = wizard_report("plan-revisions")
+    rho_exec("mkdir", "-p " + dir, report)
+    rho_exec("cp", "-f " + path + " " + dir + "/" + rho_int_to_str(revision) + ".yml", report)
+    if revision > PLAN_REVISIONS_KEPT {
+        rho_exec("rm", "-f " + dir + "/" + rho_int_to_str(revision - PLAN_REVISIONS_KEPT) + ".yml", report)
+    }
+}

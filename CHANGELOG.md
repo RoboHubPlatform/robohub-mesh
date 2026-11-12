@@ -212,3 +212,13 @@ Settings page's Alerts tab saves each channel's settings through the binding,
 including whether e-mail and Telegram are on, and the Configuration tab lists
 the bound channels. The alert rule tests moved to the interface, and the smoke
 test saves the Alerts tab and reads the setting back.
+
+## [0.7.0] - 2026-11-12
+
+A project's plan is plan.yml in its folder: the nodes, links, modules and steps
+as a YAML document a person can read, diff and correct by hand, written by Mesh
+in one step. Every save raises the plan's revision and keeps the plan it
+replaced under revisions/ (the last twenty), and a save changes the plan under
+its lock, so two saves at once no longer lose a key. A project written before
+plan.yml is imported the first time Mesh starts, and its project.txt is kept as
+project.txt.imported. The pages read and write the plan as before.

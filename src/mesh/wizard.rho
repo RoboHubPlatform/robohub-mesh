@@ -85,8 +85,10 @@ fn current_project() string {
     return first_line(rho_read_text(current_project_file()))
 }
 
+// project_file is a project's plan. Every read of it goes through plan_text and
+// every write through plan_write or plan_set (plan.rho).
 fn project_file(id: string) string {
-    return projects_dir() + "/" + id + "/project.txt"
+    return projects_dir() + "/" + id + "/" + PLAN_FILE
 }
 
 fn project_location(id: string) string {
@@ -175,7 +177,7 @@ fn new_project(name: string) string {
     if display == "" {
         display = "Mesh project"
     }
-    ignore_bool(rho_write_text(project_file(id), "project.name=" + display + "\n"))
+    ignore_bool(plan_write(project_file(id), "project.name=" + display + "\n"))
     ignore_bool(rho_write_text(current_project_file(), id + "\n"))
     return id
 }
@@ -195,6 +197,25 @@ fn ensure_wizard_dir() void {
     let dir: string = wizard_dir()
     ignore_u32(rho_exec("mkdir", "-p " + projects_dir(), dir + "/mkdir.txt"))
     let current: string = current_project_file()
+
+    // A project written before plan.yml is imported before anything asks
+    // whether it exists, so it is listed, opened and kept active as it was.
+    let listing_report: string = wizard_report("plan-listing")
+    rho_exec("ls", projects_dir(), listing_report)
+    var listed: string = rho_read_text(listing_report)
+    while listed != "" {
+        let at: i32 = rho_str_index_of(listed, "\n")
+        var name: string = listed
+        if at < 0 {
+            listed = ""
+        } else {
+            name = rho_str_slice(listed, 0, u32(at))
+            listed = rho_str_slice(listed, u32(at) + 1, u32(rho_strlen(listed)) - u32(at) - 1)
+        }
+        if name != "" {
+            plan_import(project_file(name))
+        }
+    }
 
     // Sessions written by an older layout became projects. They are migrated
     // whenever the directory is prepared, because a project that is not one
@@ -220,7 +241,7 @@ fn ensure_wizard_dir() void {
         if !rho_path_exists(project_file(id)) {
             ignore_u32(rho_exec("mkdir", "-p " + project_location(id), legacy_report))
             let old: string = rho_read_text(dir + "/sessions/" + file)
-            ignore_bool(rho_write_text(project_file(id), "project.name=" + id + "\n" + old))
+            ignore_bool(plan_write(project_file(id), "project.name=" + id + "\n" + old))
         }
     }
 
@@ -243,9 +264,9 @@ fn ensure_wizard_dir() void {
         if !rho_path_exists(file) {
             let legacy: string = dir + "/wizard.txt"
             if rho_path_exists(legacy) {
-                ignore_bool(rho_write_text(file, rho_read_text(legacy)))
+                ignore_bool(plan_write(file, rho_read_text(legacy)))
             } else {
-                ignore_bool(rho_write_text(file, "project.name=" + active + "\n"))
+                ignore_bool(plan_write(file, "project.name=" + active + "\n"))
             }
         }
     }
@@ -256,7 +277,7 @@ fn ensure_wizard_dir() void {
 }
 
 fn state_value_in(path: string, key: string) string {
-    let text: string = rho_read_text(path)
+    let text: string = plan_text(path)
     let prefix: string = key + "="
     var rest: string = text
     while rest != "" {
@@ -278,7 +299,7 @@ fn state_value_in(path: string, key: string) string {
 }
 
 fn state_value(key: string) string {
-    let text: string = rho_read_text(wizard_file())
+    let text: string = plan_text(wizard_file())
     let prefix: string = key + "="
     var rest: string = text
     while rest != "" {
@@ -323,92 +344,22 @@ fn write_state_file(path: string, text: string) bool {
 // migration that runs while preparing it writes many settings; asking to
 // prepare the directory from inside that would come back here forever.
 fn save_setting_raw(key: string, value: string) void {
-    let file: string = wizard_file()
-    if file == "" {
-        return
-    }
-    let text: string = rho_read_text(file)
-    let prefix: string = key + "="
-    var out: string = ""
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
-        if at < 0 {
-            line = rest
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        if line == "" || rho_str_index_of(line, prefix) == 0 {
-            continue
-        }
-        out = out + line + "\n"
-    }
-    out = out + key + "=" + sanitize(value) + "\n"
-    ignore_bool(write_state_file(file, out))
+    ignore_bool(plan_set(wizard_file(), key, sanitize(value)))
 }
 
 fn save_setting_at(path: string, key: string, value: string) void {
-    if path == "" {
-        return
-    }
-    let text: string = rho_read_text(path)
-    let prefix: string = key + "="
-    var out: string = ""
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
-        if at < 0 {
-            line = rest
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        if line == "" || rho_str_index_of(line, prefix) == 0 {
-            continue
-        }
-        out = out + line + "\n"
-    }
-    out = out + key + "=" + sanitize(value) + "\n"
-    ignore_bool(write_state_file(path, out))
+    ignore_bool(plan_set(path, key, sanitize(value)))
 }
 
 fn save_setting(key: string, value: string) void {
     // The caller has already prepared the project; a write must not run the
-    // migration or touch any other key. The file is read once and replaced in
-    // one step so a concurrent reader never sees a half-written state.
+    // migration or touch any other key. The plan is changed under its lock and
+    // replaced in one step, so a concurrent reader never sees a half-written one.
     let file: string = wizard_file()
     if file == "" {
         return
     }
-    let text: string = rho_read_text(file)
-    let prefix: string = key + "="
-    var out: string = ""
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
-        if at < 0 {
-            line = rest
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        if line == "" {
-            continue
-        }
-        if rho_str_index_of(line, prefix) == 0 {
-            continue
-        }
-        out = out + line + "\n"
-    }
-    out = out + key + "=" + sanitize(value) + "\n"
-    if !write_state_file(file, out) {
+    if !plan_set(file, key, sanitize(value)) {
         error("mesh", "could not write " + file)
     }
 }
@@ -3448,7 +3399,7 @@ fn step_cards() string {
 }
 
 fn state_table() string {
-    let text: string = rho_read_text(wizard_file())
+    let text: string = plan_text(wizard_file())
     var out: string = ""
     var rest: string = text
     while rest != "" {

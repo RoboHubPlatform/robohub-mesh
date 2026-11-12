@@ -84,6 +84,34 @@ def get_until(base: str, path: str, needle: str, timeout: float = 5.0) -> str:
     return body
 
 
+def plan_flat(path: Path) -> str:
+    """A project's plan.yml as the flat key=value lines Mesh reads it as.
+
+    The plan is a YAML document of nested maps with quoted values; a key "_"
+    holds the value of the map it is in.
+    """
+    out = []
+    stack = []
+    for raw in path.read_text().splitlines():
+        stripped = raw.lstrip(" ")
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw) - len(stripped)
+        key, _, value = stripped.partition(":")
+        key = key.strip().strip('"')
+        value = value.strip()
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if not value:
+            stack.append((indent, key))
+            continue
+        if value.startswith('"'):
+            value = json.loads(value)
+        parts = [name for _, name in stack] + ([] if key == "_" else [key])
+        out.append(".".join(parts) + "=" + value)
+    return "\n".join(out) + "\n"
+
+
 def assert_contains(haystack: str, needles: list, label: str) -> None:
     for needle in needles:
         if needle not in haystack:
@@ -154,6 +182,11 @@ def main() -> int:
         env["ROBOHUB_WORKSPACE"] = str(PROJECTS)
         env["RHO_MESH_STATE_DIR"] = state
         env["ROBOHUB_MESH_PROJECTS"] = os.path.join(state, "projects")
+        # A project written before plan.yml is imported when Mesh first reads it.
+        legacy = Path(state) / "projects" / "Old-mesh"
+        legacy.mkdir(parents=True)
+        (legacy / "project.txt").write_text(
+            "project.name=Old mesh\nnode.count=1\nnode.1.name=Pump: main\nnode.1.parent=gateway\n")
         home = os.path.join(state, "home")
         TOKEN = mint_token(home)
         env["HOME"] = home
@@ -170,6 +203,13 @@ def main() -> int:
             wait_for(base)
 
             mesh = get(base, "/mesh")
+            old_plan = Path(state) / "projects" / "Old-mesh" / "plan.yml"
+            if not old_plan.exists() or not (old_plan.parent / "project.txt.imported").exists():
+                raise AssertionError("the project written before plan.yml was not imported")
+            assert_contains(plan_flat(old_plan),
+                            ["project.name=Old mesh", "node.1.name=Pump: main", "node.1.parent=gateway", "revision="],
+                            "imported plan")
+            assert_contains(mesh, ["Old mesh"], "imported project listed")
             assert_contains(
                 mesh,
                 ["RoboHub Mesh", "Projects", "Create project", "Documentation"],
@@ -479,8 +519,15 @@ def main() -> int:
                 "gateway build page",
             )
 
-            wizard_state = Path(state) / "projects" / "default" / "project.txt"
-            saved = wizard_state.read_text()
+            wizard_state = Path(state) / "projects" / "default" / "plan.yml"
+            saved = plan_flat(wizard_state)
+            # Every save is a revision, and the plan it replaced is kept.
+            revision = int(dict(line.split("=", 1) for line in saved.splitlines() if "=" in line)["revision"])
+            if revision < 10:
+                raise AssertionError(f"the plan has had many saves but is at revision {revision}")
+            kept = sorted(int(p.stem) for p in (wizard_state.parent / "revisions").glob("*.yml"))
+            if not kept or kept[-1] != revision - 1 or len(kept) > 20:
+                raise AssertionError(f"the revisions kept are {kept} at revision {revision}")
             assert_contains(
                 saved,
                 [
@@ -539,7 +586,7 @@ def main() -> int:
             current_project = (Path(state) / "current-project.txt").read_text().strip()
             if current_project == "default":
                 raise AssertionError("a new project must get its own folder")
-            second_state = Path(state) / "projects" / "Second-project" / "project.txt"
+            second_state = Path(state) / "projects" / "Second-project" / "plan.yml"
             if not second_state.exists():
                 raise AssertionError("the new project folder must exist")
 
@@ -554,7 +601,7 @@ def main() -> int:
                 "/mesh/project/Second-project/settings",
                 {"name": "Renamed project", "description": "A second test mesh"},
             )
-            saved_project = second_state.read_text()
+            saved_project = plan_flat(second_state)
             assert_contains(
                 saved_project,
                 ["project.name=Renamed project", "project.description=A second test mesh"],
