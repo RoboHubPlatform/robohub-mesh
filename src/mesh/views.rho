@@ -277,7 +277,12 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
         "<div class=\"table-wrap\">" + mesh_tokens_html(id) + "</div></section>"
     let form: string = form0 + token_section
     // The mesh is opened by its address; the settings page links back to it.
-    let active_form: string = "<p><a class=\"button\" href=\"/mesh/p/" + escape_html(id) + "\">Open the mesh</a></p>"
+    let active_form: string = "<p><a class=\"button\" href=\"/mesh/p/" + escape_html(id) + "\">Open the mesh</a></p>" +
+        "<form class=\"grid\" method=\"post\" action=\"/mesh/project/copy\">" +
+        "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
+        "<label>Copy as a template<input name=\"name\" placeholder=\"" + escape_html(project_name(id)) + " copy\">" +
+        "<small>A new mesh with this one's plan — its gateway, boards, modules and links — and its own area and " +
+        "ports; nothing of what was deployed.</small></label><button type=\"submit\" class=\"quiet\">Copy</button></form>"
     let content: string = template_fill(template_get("mesh-project-settings"),
         vars("project", escape_html(id)) +
         vars("location", project_location(id)) +

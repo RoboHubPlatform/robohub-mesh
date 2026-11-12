@@ -132,7 +132,8 @@ fn deploy_gateway_signature(text: string) string {
         }
         child = child + 1
     }
-    return out + ";serves=" + serves
+    return out + ";serves=" + serves + ";above=" + plan_value(text, "mesh_parent") +
+        ";below=" + plan_value(text, "mesh_children")
 }
 
 fn deploy_segment(signature: string, label: string) string {
@@ -156,7 +157,7 @@ fn deploy_segment(signature: string, label: string) string {
 
 // DEPLOY_SEGMENTS are a signature's parts, each with the words that say it
 // changed.
-const DEPLOY_SEGMENTS: string = "runs host rest uplink board role parent link modules serves gateway"
+const DEPLOY_SEGMENTS: string = "runs host rest uplink board role parent link modules serves gateway above below"
 
 fn deploy_segment_words(label: string) string {
     if str_eq(label, "runs") { return "where it runs" }
@@ -170,6 +171,8 @@ fn deploy_segment_words(label: string) string {
     if str_eq(label, "modules") { return "modules" }
     if str_eq(label, "serves") { return "a link it serves" }
     if str_eq(label, "gateway") { return "gateway address" }
+    if str_eq(label, "above") { return "the mesh it reports through" }
+    if str_eq(label, "below") { return "the meshes that report through it" }
     return label
 }
 

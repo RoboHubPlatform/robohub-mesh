@@ -568,7 +568,10 @@ fn mesh_gateway_mode() string {
     return "master"
 }
 
-fn gateway_env(key_file: string) string {
+// gateway_env is what a gateway is started with: key_file is its own key and
+// relay_key the key it reports through its parent with, each where the gateway
+// will read it ("" for none).
+fn gateway_env(key_file: string, relay_key: string) string {
     let link: string = node_link()
     let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     let prefix: string = "node." + rho_int_to_str(selected_node()) + "."
@@ -605,12 +608,18 @@ fn gateway_env(key_file: string) string {
     if key_file != "" {
         env = env + " GATEWAY_KEY_FILE=" + key_file
     }
+    // It listens on its uplink when a board dials in over the network, or a
+    // mesh reports through it.
     if link == "wifi" || link == "socket" {
         env = env + " SERIAL_PORT=/nonexistent UPLINK_PORT=" + uplink
+    } else if link_listens(current_project()) {
+        env = env + " SERIAL_PORT=" + port + " UPLINK_PORT=" +
+            default_value("uplink_port", fleet_uplink_port(current_project()))
     } else {
         env = env + " SERIAL_PORT=" + port + " UPLINK_PORT=0"
     }
-    return env
+    // A mesh that reports through another runs its gateway as a relay.
+    return env + link_env(current_project(), relay_key)
 }
 
 fn handler_program_gateway() u32 {
@@ -651,7 +660,7 @@ fn handler_start_native() u32 {
         // This mesh's gateway is replaced; another mesh's keeps running. The
         // process id is written beside the project, which is what stops it.
         fleet_stop_command(current_project()) + "; cd " +
-        shell_quote(project) + " || exit 1; nohup env " + gateway_env(mesh_gateway_key_path(current_project())) +
+        shell_quote(project) + " || exit 1; nohup env " + gateway_env(mesh_gateway_key_path(current_project()), jobs_local_relay_key()) +
         " ./build/robohub-gateway > " + shell_quote(log) + " 2>&1 < /dev/null & echo $! > " +
         shell_quote(fleet_pid_file(current_project()))
     let started: u32 = run_shell(command, "start-gateway")
@@ -711,9 +720,20 @@ fn handler_start_board() u32 {
             }
             device_key = apps_dir + "/gateway.key"
         }
+        // The key it reports through its parent with, beside its own.
+        var device_relay: string = ""
+        if link_parent(current_project()) != "" && link_relay_key(current_project()) != "" {
+            let relay_push: u32 = run_shell(adb + " push " + shell_quote(link_relay_key_file(current_project())) +
+                " " + shell_quote(apps_dir + "/relay.key") + " && " + adb + " shell chmod 600 " +
+                shell_quote(apps_dir + "/relay.key"), "push-relay-secret")
+            if relay_push != 0 {
+                return relay_push
+            }
+            device_relay = apps_dir + "/relay.key"
+        }
         let command: string = adb + " shell 'pkill -x robohub-gateway 2>/dev/null || true; " +
             "chmod +x " + apps_dir + "/robohub-gateway; cd " + apps_dir + " && " +
-            "nohup env " + gateway_env(device_key) +
+            "nohup env " + gateway_env(device_key, device_relay) +
             " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &'"
         return run_shell(command, "start-gateway")
     }
@@ -751,10 +771,20 @@ fn handler_start_board() u32 {
             }
             remote_key = remote + "/gateway.key"
         }
+        var remote_relay: string = ""
+        if link_parent(current_project()) != "" && link_relay_key(current_project()) != "" {
+            let relay_code: u32 = run_shell("scp " + shell_quote(link_relay_key_file(current_project())) + " " +
+                shell_quote(target + ":" + remote + "/relay.key") + " && ssh " + shell_quote(target) + " " +
+                shell_quote("chmod 600 " + remote + "/relay.key"), "push-relay-secret")
+            if relay_code != 0 {
+                return relay_code
+            }
+            remote_relay = remote + "/relay.key"
+        }
         let command: string = "ssh " + shell_quote(target) + " " +
             shell_quote("pkill -x robohub-gateway 2>/dev/null || true; chmod +x " +
                 remote + "/robohub-gateway; cd " + remote + " && nohup env " +
-                gateway_env(remote_key) + " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &")
+                gateway_env(remote_key, remote_relay) + " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &")
         let started: u32 = run_shell(command, "start-gateway")
         if started == 0 {
             let active: string = current_project()

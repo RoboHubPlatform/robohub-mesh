@@ -320,3 +320,14 @@ of the steps. On a narrow screen the inspector is a sheet at the bottom. The
 wizard's pages, its step documents and the code only they used are gone; what
 remains of mesh.rho and wizard.rho is split into store, catalog, build, views
 and api.
+
+## [0.12.0] - 2026-11-13
+
+Linked meshes and work across meshes. A mesh reports through another when its
+gateway's inspector says so: its gateway runs as a relay of the parent's, with
+an id of its own and the key the parent derives for it, and the parent listens
+on its uplink. The parent's agora shows the linked mesh as a node that opens to
+its tree, and the fleet says who reports through whom. A board moves to another
+mesh with its id, modules and history; a mesh is copied as a template; the
+fleet applies every mesh's changes at once and searches nodes in every mesh, and
+its inbox lists running and waiting jobs. Needs rho-robohub 0.4.2.

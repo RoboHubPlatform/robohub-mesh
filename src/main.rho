@@ -24,6 +24,8 @@ include "mesh/deployed.rho"
 include "mesh/editor.rho"
 include "mesh/jobs.rho"
 include "mesh/home.rho"
+include "mesh/links.rho"
+include "mesh/cross.rho"
 
 import std.web.http
 import std.web.template
@@ -77,6 +79,7 @@ route GET "/mesh/agora" => mesh_agora_page
 route GET "/mesh/p/{project}" => mesh_p_page
 route GET "/mesh/p/{project}/node/{node}" => mesh_p_node_page
 route POST "/mesh/p/{project}/node/{node}/delete" => mesh_p_node_delete
+route POST "/mesh/p/{project}/node/{node}/move-to" => mesh_p_node_move
 route POST "/mesh/p/{project}/node/{node}" => mesh_p_node_post
 route POST "/mesh/p/{project}/node" => mesh_p_node_new
 route GET "/mesh/p/{project}/edge/{node}" => mesh_p_edge_page
@@ -97,6 +100,9 @@ route POST "/mesh/project/{id}/token/revoke" => mesh_project_token_revoke
 route GET "/mesh/project/{id}" => mesh_project_open_page
 route POST "/mesh/project/delete" => mesh_project_delete
 route POST "/mesh/project/new" => mesh_project_new
+route POST "/mesh/project/copy" => mesh_project_copy
+route POST "/mesh/apply-all" => mesh_apply_all
+route GET "/mesh/search" => mesh_search
 route POST "/mesh/gateway/restart" => mesh_gateway_restart
 route POST "/mesh/gateway/stop" => mesh_gateway_stop
 route GET "/faults" => mesh_faults_page

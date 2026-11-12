@@ -270,7 +270,7 @@ fn editor_node_inspector(id: string, index: u32, tab: string, notice: string) st
         body = editor_delete_tab(id, index)
     } else {
         current = "node"
-        body = editor_node_form(id, index)
+        body = editor_node_form(id, index) + cross_move_form(id, index)
     }
     return "<h3>" + escape_html(editor_name(index)) + " <small class=\"agora-seen\">" + kind + " · under " +
         escape_html(editor_parent_name(node_value(index, "parent", "gateway"))) + "</small></h3>" +
@@ -483,7 +483,9 @@ fn editor_gateway_inspector(id: string, notice: string) string {
             "This machine, or a board whose manifest says it can be a gateway.") + host +
         mesh_input("rest_port", "REST port", agora_gateway_port(id), "Mesh reads the gateway here.") +
         mesh_input("uplink_port", "Uplink port", default_value("uplink_port", fleet_uplink_port(id)),
-            "Boards on Wi-Fi dial this port."),
+            "Boards on Wi-Fi, and the gateways of meshes that report through this one, dial this port.") +
+        mesh_select("mesh_parent", "Reports through", link_options(id),
+            "Another mesh's gateway this one reports through, as a board of that mesh."),
         "Save gateway")
     return "<h3>Gateway <small class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</small></h3>" +
         deploy + notice + "<div class=\"actions\">" + agora_gateway_actions(id, agora_health(id)) + "</div>" + form +
@@ -970,6 +972,10 @@ fn mesh_p_gateway_post(req: Request) Response {
         lines = lines + editor_line("gateway_host", form_value(body, "gateway_host"))
     }
     ignore_bool(plan_set_many(wizard_file(), lines))
+    let linked: string = link_set(id, form_value(body, "mesh_parent"))
+    if linked != "" {
+        return editor_answer(req, id, "gateway", "", editor_notice("Gateway saved, but " + linked + ".", true))
+    }
     info("mesh", "gateway saved: " + gateway)
     var said: string = "Gateway saved."
     let reason: string = deployed_gateway_reason(id)

@@ -244,6 +244,35 @@ RST, release RST, then BOOT. The platform's flash entry then:
 When a flash succeeds the board runs what is planned and stops showing as out
 of date; a started gateway likewise.
 
+## Linked meshes
+
+A mesh can report through another: in its gateway's inspector, **Reports
+through** names the mesh whose gateway carries it. Its gateway then runs as a
+relay (robohub-gateway's relay mode): it dials the parent gateway's uplink as a
+board of the parent's mesh, with an id of its own (`relay_uid` in its plan) and
+the key the parent derives for that id from its own gateway key, written beside
+the child as `relay.key`. The parent listens on its uplink while a mesh reports
+through it. Linking or unlinking changes both gateways' signatures, so both show
+that a restart applies it.
+
+The parent's agora shows each linked mesh as a node under its gateway that
+opens to its own tree; the fleet says which mesh reports through which. A mesh
+cannot report through itself or through a mesh that reports through it.
+
+## Across meshes
+
+- **Move to another mesh**, on a board's or device's Node tab, moves it with its
+  id, its modules and its history; what hangs from it stays, under its parent.
+  It hangs from the other mesh's gateway and is out of date until it is built
+  with that mesh's key.
+- **Copy as a template**, on a mesh's settings page, starts a new mesh with the
+  plan — gateway, boards, modules, links — and its own area and ports, and
+  nothing of what was deployed.
+- **Apply in all meshes**, on the fleet's bar while changes are waiting, queues
+  each mesh's jobs at once.
+- The fleet's search finds a node by its name, id, board, module or device in
+  every mesh, and opens it.
+
 ## Where the lists come from
 
 Nothing in the planner names a board or a driver that a manifest does not.

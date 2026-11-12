@@ -1,0 +1,210 @@
+//
+// @file links.rho
+// @brief Linked meshes: a mesh whose gateway reports through another mesh's.
+//
+// A mesh can report through another: its gateway runs as a relay and dials the
+// parent's uplink as a board of the parent's mesh (robohub-gateway's relay
+// mode). The link is recorded in both plans — `mesh_parent` in the child's,
+// `mesh_children` in the parent's — so both gateways' signatures change and both
+// show that a restart applies it. The child's id under the parent is its
+// `relay_uid`, made once; its key is the one the parent derives for that id from
+// its own gateway key, written beside the child as relay.key and never sent
+// anywhere but to the child's gateway.
+//
+// @module mesh.links
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.links
+
+fn link_parent(project: string) string {
+    return state_value_in(project_file(project), "mesh_parent")
+}
+
+fn link_children_list(project: string) string {
+    return state_value_in(project_file(project), "mesh_children")
+}
+
+// link_children are the meshes that report through a mesh, as "id\n" lines,
+// read from the children themselves so a link is never claimed by one side only.
+fn link_children(project: string) string {
+    var out: string = ""
+    var rest: string = project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && rho_str_eq(link_parent(id), project) {
+            out = out + id + "\n"
+        }
+    }
+    return out
+}
+
+// link_above is whether `ancestor` is a mesh `project` reports through, at any
+// depth: what keeps a link from making a ring.
+fn link_above(project: string, ancestor: string) bool {
+    var at: string = link_parent(project)
+    var depth: u32 = 0
+    while at != "" && depth < 32 {
+        if rho_str_eq(at, ancestor) {
+            return true
+        }
+        at = link_parent(at)
+        depth = depth + 1
+    }
+    return false
+}
+
+// link_relay_uid is the child's id as a board of its parent's mesh, made once.
+fn link_relay_uid(project: string) string {
+    let file: string = project_file(project)
+    var uid: string = state_value_in(file, "relay_uid")
+    if rho_strlen(uid) == 16 {
+        return uid
+    }
+    uid = rho_random_hex(8)
+    if rho_strlen(uid) != 16 {
+        return ""
+    }
+    save_setting_at(file, "relay_uid", uid)
+    return uid
+}
+
+fn link_relay_key_file(project: string) string {
+    return project_location(project) + "/relay.key"
+}
+
+// link_relay_key writes the key the parent derives for the child's id, and
+// answers the file, or "" when either half is missing.
+fn link_relay_key(project: string) string {
+    let parent: string = link_parent(project)
+    let uid: string = link_relay_uid(project)
+    let parent_key: string = mesh_gateway_key(parent)
+    if parent == "" || uid == "" || parent_key == "" {
+        return ""
+    }
+    let key: string = rho_str_slice(rho_hmac_sha256_hex(parent_key, "72682d64657631" + uid), 0, 32)
+    if !rho_write_secret(link_relay_key_file(project), key + "\n") {
+        return ""
+    }
+    return link_relay_key_file(project)
+}
+
+// link_parent_uplink is where the child's gateway dials: the parent gateway's
+// host and its uplink port.
+fn link_parent_uplink(project: string) string {
+    let parent: string = link_parent(project)
+    let file: string = project_file(parent)
+    var host: string = state_value_in(file, "gateway_host")
+    let parent_native: bool = state_value_in(file, "gateway") == "" || state_value_in(file, "gateway") == "native"
+    let child_native: bool = state_value_in(project_file(project), "gateway") == "" ||
+        state_value_in(project_file(project), "gateway") == "native"
+    if parent_native {
+        host = "127.0.0.1"
+        if !child_native {
+            host = host_address()
+        }
+    }
+    var port: string = state_value_in(file, "uplink_port")
+    if port == "" {
+        port = fleet_uplink_port(parent)
+    }
+    return host + ":" + port
+}
+
+// link_env is what the child's gateway is started with to report through its
+// parent; key_path is the relay key where the gateway will read it.
+fn link_env(project: string, key_path: string) string {
+    if link_parent(project) == "" || key_path == "" {
+        return ""
+    }
+    return " GATEWAY_MODE=relay PARENT_UPLINK=" + link_parent_uplink(project) +
+        " RELAY_UID=" + link_relay_uid(project) + " RELAY_KEY_FILE=" + key_path
+}
+
+// link_listens is whether a mesh's gateway must listen on its uplink: a board
+// of its own dials in over the network, or a mesh reports through it.
+fn link_listens(project: string) bool {
+    return link_children(project) != ""
+}
+
+// link_set makes `project` report through `parent` ("" for nobody), in both
+// plans, and answers why it could not.
+fn link_set(project: string, parent: string) string {
+    let previous: string = link_parent(project)
+    if rho_str_eq(previous, parent) {
+        return ""
+    }
+    if parent != "" {
+        if rho_str_eq(parent, project) || link_above(parent, project) {
+            return "a mesh cannot report through itself or a mesh that reports through it"
+        }
+        if !rho_path_exists(project_file(parent)) {
+            return "that mesh is not there"
+        }
+        if link_relay_uid(project) == "" {
+            return "no id could be made for its gateway"
+        }
+    }
+    save_setting_at(project_file(project), "mesh_parent", parent)
+    if previous != "" {
+        save_setting_at(project_file(previous), "mesh_children", link_children_words(previous))
+    }
+    if parent != "" {
+        save_setting_at(project_file(parent), "mesh_children", link_children_words(parent))
+    }
+    return ""
+}
+
+fn link_children_words(project: string) string {
+    var out: string = ""
+    var rest: string = link_children(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" {
+            if out != "" {
+                out = out + " "
+            }
+            out = out + id
+        }
+    }
+    return out
+}
+
+// link_options are the meshes a mesh may report through.
+fn link_options(project: string) string {
+    let current: string = link_parent(project)
+    var options: string = option("", "Nobody: this gateway is the top of its mesh", "", current)
+    var rest: string = project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && !rho_str_eq(id, project) && !link_above(id, project) {
+            options = options + option(id, project_name(id) + " (area " + project_area_id(project_file(id)) + ")", "", current)
+        }
+    }
+    return options
+}

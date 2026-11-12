@@ -234,8 +234,8 @@ def check_editor(base: str, project: Path) -> None:
         "board": "pico2w", "parent": "gateway"})
     assert_contains(renamed, ["Saved.", "runs what is planned", "hx-swap-oob=\"innerHTML:#agora-canvas\"",
                               "Relay prime"], "a rename")
-    if "out of date" in renamed.split("hx-swap-oob")[0]:
-        raise AssertionError("a rename marked the board out of date")
+    if 'agora-state planned">out of date' in renamed.split("hx-swap-oob")[0]:
+        raise AssertionError("a rename marked the board out of date: " + renamed.split("hx-swap-oob")[0][:700])
     # A form opened before that save is refused.
     stale = hx(base, f"/mesh/p/default/node/{relay}", {
         "tab": "node", "rev": rev, "name": "Somebody else", "role": "relay", "board": "pico2w", "parent": "gateway"})
@@ -317,6 +317,77 @@ def check_editor(base: str, project: Path) -> None:
     after = hx(base, f"/mesh/p/default/node/{relay}")
     if "out of date" not in after or "runs what is planned" in after:
         raise AssertionError("a flash that never ran recorded what the board runs")
+
+
+def check_cross(base: str, state: Path) -> None:
+    """Linked meshes and work across meshes."""
+    import hmac, hashlib, re
+    projects = state / "projects"
+    post(base, "/mesh/project/new", {"name": "Site B"})
+    # Site B reports through default: both plans say so, and the relay's key is
+    # the one default's gateway derives for Site B's id.
+    linked = hx(base, "/mesh/p/Site-B/gateway", {"tab": "gateway", "gateway": "native", "rest_port": str(free_port()),
+                                                 "uplink_port": str(free_port()), "mesh_parent": "default"})
+    assert_contains(linked, ["Gateway saved."], "a mesh linked under another")
+    child = plan_flat(projects / "Site-B" / "plan.yml")
+    parent = plan_flat(projects / "default" / "plan.yml")
+    assert_contains(child, ["mesh_parent=default"], "the child's plan")
+    assert_contains(parent, ["mesh_children=Site-B"], "the parent's plan")
+    uid = re.search(r"relay_uid=([0-9a-f]{16})", child).group(1)
+    refused = hx(base, "/mesh/p/default/gateway", {"tab": "gateway", "gateway": "arduino-uno-q",
+                                                   "gateway_host": "192.0.2.10", "rest_port": "8080",
+                                                   "uplink_port": "5001", "mesh_parent": "Site-B"})
+    assert_contains(refused, ["cannot report through itself"], "a ring of meshes")
+    assert_contains(get(base, "/mesh/p/default"), ["Site B", "reports through this gateway"], "the parent's agora")
+    fleet = get(base, "/mesh")
+    assert_contains(fleet, ["under default", "Site B reports through default"], "the fleet's links")
+    # Its gateway is started as a relay of default's.
+    hx(base, "/mesh/p/Site-B/apply", {"only": "gateway"})
+    jobs = projects / "Site-B" / "jobs"
+    script = next(jobs.glob("*.sh")).read_text() if any(jobs.glob("*.sh")) else ""
+    for p in sorted(jobs.glob("[0-9]*.sh")):
+        script = p.read_text()
+    assert_contains(script, ["GATEWAY_MODE=relay", "PARENT_UPLINK=192.0.2.10:5001", "RELAY_UID=" + uid, "RELAY_KEY_FILE="],
+                    "the relay's start")
+    parent_key = (projects / "default" / "gateway.key").read_text().strip()
+    expected = hmac.new(bytes.fromhex(parent_key), bytes.fromhex("72682d64657631" + uid), hashlib.sha256).hexdigest()[:32]
+    if (projects / "Site-B" / "relay.key").read_text().strip() != expected:
+        raise AssertionError("the relay key is not the one the parent derives for the relay's id")
+    deadline = time.time() + 300
+    while time.time() < deadline and not any(jobs.glob("*.done")):
+        time.sleep(1)
+    pid_file = projects / "Site-B" / "gateway.pid"
+    if pid_file.exists():
+        LIVE_PIDS.append(int(pid_file.read_text().strip()))
+
+    # A board moves to Site B with its id, its modules, and no deployment.
+    plan_text = (projects / "default" / "plan.yml").read_text()
+    leaf = plan_node_id(plan_text, 2)
+    moved = hx(base, f"/mesh/p/default/node/{leaf}/move-to", {"target": "Site-B"})
+    assert_contains(moved, ["moved to Site B"], "a board moved")
+    child = plan_flat(projects / "Site-B" / "plan.yml")
+    assert_contains(child, [f"node.1.id={leaf}", "node.1.name=Leaf two", "node.2.kind=module",
+                            "node.2.parent_node=", "node.1.parent=gateway"], "the board in its new mesh")
+    if leaf in (projects / "default" / "plan.yml").read_text():
+        raise AssertionError("the moved board is still in its old mesh")
+    assert_contains(hx(base, f"/mesh/p/Site-B/node/{leaf}"), ["out of date", "never programmed"], "the moved board")
+
+    # A mesh copied as a template has its plan and none of its deployment.
+    post(base, "/mesh/project/copy", {"project": "default", "name": "Default copy"})
+    copy = plan_flat(projects / "Default-copy" / "plan.yml")
+    assert_contains(copy, ["node.1.name=Relay one", "gateway=arduino-uno-q"], "the copied plan")
+    for absent in ("relay_uid=", "mesh_children=", "status.", f"={plan_node_id(plan_text, 1)}"):
+        if absent in copy:
+            raise AssertionError(f"the template kept {absent!r}")
+
+    # Search finds a node in any mesh, and the fleet offers to apply everywhere.
+    found = get(base, "/mesh/search?q=leaf")
+    assert_contains(found, ["Leaf two", "Leaf thermistor", "Site B", "3 found"], "search across meshes")
+    assert_contains(get(base, "/mesh"), ["Apply in all meshes", "changes waiting"], "apply in all meshes")
+
+    for project in ("Default-copy", "Site-B"):
+        post(base, "/mesh/project/delete", {"project": project})
+    get(base, "/mesh/p/default")
 
 
 def main() -> int:
@@ -740,6 +811,8 @@ def main() -> int:
             # wizard's pages did, and an edit marks out of date only the boards
             # whose image it changes.
             check_editor(base, Path(state) / "projects" / "default")
+
+            check_cross(base, Path(state))
 
             print("mesh smoke test ok")
             return 0

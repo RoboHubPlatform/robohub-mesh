@@ -265,6 +265,19 @@ fn jobs_queue_gateway() string {
     return ""
 }
 
+// jobs_local_relay_key is the relay key of the open mesh for a gateway started
+// on this machine, shell-quoted, or "" when the mesh reports through nobody.
+fn jobs_local_relay_key() string {
+    if link_parent(current_project()) == "" {
+        return ""
+    }
+    let path: string = link_relay_key(current_project())
+    if path == "" {
+        return ""
+    }
+    return shell_quote(path)
+}
+
 // jobs_record_shell is run_shell while a script is being recorded.
 fn jobs_record_shell(command: string, label: string) u32 {
     ignore_bool(rho_write_text(jobs_recording(), rho_read_text(jobs_recording()) + jobs_script_header(label) +
@@ -572,12 +585,9 @@ fn jobs_answer(req: Request, id: string, selection: string, notice: string) Resp
     return editor_answer(req, id, selection, "", notice)
 }
 
-fn mesh_p_apply_post(req: Request) Response {
-    let id: string = editor_open_project(req)
-    if id == "" {
-        return mesh_redirect("/mesh/fleet")
-    }
-    let only: string = form_value(request_body(req), "only")
+// jobs_apply queues what is out of date in the open mesh — everything, one
+// board ("node:<id>") or the gateway — and answers "<queued>|<problems>".
+fn jobs_apply(id: string, only: string) string {
     var problems: string = ""
     var queued: u32 = 0
     if only == "" || rho_str_index_of(only, "node:") == 0 {
@@ -618,8 +628,22 @@ fn mesh_p_apply_post(req: Request) Response {
             problems = problems + " " + failure
         }
     }
-    var said: string = "Nothing to apply."
     if queued > 0 {
+        jobs_start(id)
+    }
+    return rho_int_to_str(queued) + "|" + problems
+}
+
+fn mesh_p_apply_post(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let only: string = form_value(request_body(req), "only")
+    let result: string = jobs_apply(id, only)
+    let problems: string = field(result, 1)
+    var said: string = "Nothing to apply."
+    if field(result, 0) != "0" {
         said = "Queued. Builds run now; each flash waits on its board's card for you."
     }
     var selection: string = "apply"

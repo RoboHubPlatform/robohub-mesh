@@ -1,0 +1,358 @@
+//
+// @file cross.rho
+// @brief Work across meshes: moving a node, copying a mesh, applying everywhere, searching.
+//
+// A board that moves to another site moves to another mesh with its id and its
+// history, and is out of date until it is built with the new mesh's key. A mesh
+// that works is a template for the next: its plan without its deployment. The
+// fleet applies what is out of date in every mesh at once, and finds a node by
+// name, id, board or device in any of them.
+//
+// @module mesh.cross
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.cross
+
+extern fn telemetry_move_source(from: string, to: string, source: string) string
+
+// cross_row_lines are a row's fields from a plan's flat text, as `field=value`
+// lines, without the ones that belong to the row's place in its plan.
+fn cross_row_lines(text: string, index: u32) string {
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if rho_str_index_of(line, prefix) != 0 {
+            continue
+        }
+        let field_line: string = rho_str_slice(line, u32(rho_strlen(prefix)), u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+        let equals: i32 = rho_str_index_of(field_line, "=")
+        if equals <= 0 {
+            continue
+        }
+        let name: string = rho_str_slice(field_line, 0, u32(equals))
+        if name == "number" || name == "rev" || name == "parent" || name == "parent_node" {
+            continue
+        }
+        out = out + field_line + "\n"
+    }
+    return out
+}
+
+// cross_rows_as writes row fields under a new row of another plan.
+fn cross_rows_as(fields: string, index: u32, parent: string) string {
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    var out: string = editor_line(prefix + "parent", parent)
+    var rest: string = fields
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" {
+            out = out + prefix + line + "\n"
+        }
+    }
+    return out
+}
+
+// cross_mesh_options are the meshes a node can move to.
+fn cross_mesh_options(id: string) string {
+    var options: string = ""
+    var rest: string = project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var other: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            other = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if other != "" && !rho_str_eq(other, id) {
+            options = options + option(other, project_name(other), "", "")
+        }
+    }
+    return options
+}
+
+// cross_move_form is the inspector's part that moves a node to another mesh.
+fn cross_move_form(id: string, index: u32) string {
+    let options: string = cross_mesh_options(id)
+    if options == "" || is_module_node(index) {
+        return ""
+    }
+    let action: string = editor_base(id) + "/node/" + editor_node_id(id, index) + "/move-to"
+    return "<details class=\"inspector-move\"><summary>Move to another mesh</summary>" +
+        "<p class=\"agora-seen\">It keeps its id and its history, takes its modules with it, and hangs from the other " +
+        "mesh's gateway; what hangs from it here stays, under its parent. It is out of date until it is built " +
+        "with the other mesh's key.</p>" +
+        "<form class=\"inspector-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
+        "\" hx-target=\"#agora-inspector\">" + editor_hidden("rev", editor_rev(index)) +
+        mesh_select("target", "Mesh", options, "") +
+        "<div class=\"form-actions\"><button type=\"submit\">Move</button></div></form></details>"
+}
+
+fn mesh_p_node_move(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let nid: string = param(req, "node")
+    let index: u32 = project_node_by_id(project_file(id), nid)
+    let body: string = request_body(req)
+    let target: string = form_value(body, "target")
+    if index == 0 || is_module_node(index) {
+        return editor_answer(req, id, "", "", editor_notice("That node is not in this mesh any more.", true))
+    }
+    if editor_stale(body, index) {
+        return editor_answer(req, id, "node:" + nid, "", editor_notice("This node was changed elsewhere since you opened it.", true))
+    }
+    if target == "" || rho_str_eq(target, id) || !rho_path_exists(project_file(target)) {
+        return editor_answer(req, id, "node:" + nid, "", editor_notice("Choose another mesh to move it to.", true))
+    }
+    let name: string = editor_name(index)
+    let source_file: string = project_file(id)
+    let target_file: string = project_file(target)
+    project_node_numbers(source_file)
+    let text: string = plan_text(source_file)
+    let row: string = "node." + rho_int_to_str(index)
+    // The node, then its modules, each a new row of the target.
+    var start: u32 = project_node_count_at(target_file) + 1
+    var lines: string = cross_rows_as(cross_row_lines(text, index), start, "gateway")
+    var count: u32 = start
+    var gone: string = rho_int_to_str(index)
+    var moves: string = ""
+    var child: u32 = 1
+    let rows: u32 = project_node_count_at(source_file)
+    while child <= rows {
+        if rho_str_eq(plan_value(text, "node." + rho_int_to_str(child) + ".parent"), row) {
+            if rho_str_eq(plan_value(text, "node." + rho_int_to_str(child) + ".kind"), "module") {
+                count = count + 1
+                lines = lines + cross_rows_as(cross_row_lines(text, child), count, "node." + rho_int_to_str(start))
+                gone = rho_int_to_str(child) + " " + gone
+            } else {
+                moves = moves + editor_line("node." + rho_int_to_str(child) + ".parent",
+                    plan_value(text, row + ".parent"))
+            }
+        }
+        child = child + 1
+    }
+    lines = lines + editor_line("node.count", rho_int_to_str(count))
+    if !plan_set_many(target_file, lines) {
+        return editor_answer(req, id, "node:" + nid, "", editor_notice("The other mesh's plan could not be written.", true))
+    }
+    if moves != "" {
+        ignore_bool(plan_set_many(source_file, moves))
+    }
+    var at: u32 = rows
+    while at >= 1 {
+        if words_contain(gone, rho_int_to_str(at)) {
+            ignore_bool(plan_remove_node(source_file, at))
+        }
+        at = at - 1
+    }
+    deployed_set(id, "node." + nid, "")
+    // Its history follows its id.
+    ignore_string(telemetry_move_source(id, target, nid))
+    info("mesh", "node " + nid + " moved from " + id + " to " + target)
+    editor_publish(target)
+    return editor_answer(req, id, "", "", "<p class=\"notice\">" + escape_html(name) + " moved to " +
+        escape_html(project_name(target)) + ". <a href=\"/mesh/p/" + escape_html(target) + "?select=node:" +
+        escape_html(nid) + "\">Open it there</a></p>")
+}
+
+// cross_template_lines are a plan as the start of another: what is planned,
+// without what was deployed, the ids boards were flashed with, its ports and
+// its place in the fleet.
+fn cross_template_lines(text: string) string {
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let equals: i32 = rho_str_index_of(line, "=")
+        if equals <= 0 {
+            continue
+        }
+        let key: string = rho_str_slice(line, 0, u32(equals))
+        let field: string = plan_row_field(key)
+        if rho_str_index_of(key, "status.") == 0 || rho_str_index_of(key, "message.") == 0 ||
+            rho_str_index_of(key, "project.") == 0 || key == "revision" || key == "updated" ||
+            key == "gateway_url" || key == "rest_port" || key == "uplink_port" || key == "area_id" ||
+            key == "relay_uid" || key == "mesh_parent" || key == "mesh_children" || key == "gateway_serial" ||
+            key == "node.next_number" || field == "id" || field == "uid" || field == "rev" || field == "number" {
+            continue
+        }
+        out = out + line + "\n"
+    }
+    return out
+}
+
+fn mesh_project_copy(req: Request) Response {
+    let body: string = request_body(req)
+    let source: string = form_value(body, "project")
+    if !rho_path_exists(project_file(source)) {
+        return mesh_redirect("/mesh")
+    }
+    var name: string = form_value(body, "name")
+    if name == "" {
+        name = project_name(source) + " copy"
+    }
+    let id: string = new_project(name)
+    let lines: string = cross_template_lines(plan_text(project_file(source)))
+    if lines != "" {
+        ignore_bool(plan_set_many(project_file(id), lines))
+    }
+    info("mesh", "copied " + source + " as " + id)
+    return mesh_redirect("/mesh/p/" + id)
+}
+
+// mesh_apply_all applies what is out of date in every mesh.
+fn mesh_apply_all(req: Request) Response {
+    var rest: string = project_ids()
+    var queued: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" || !load_project(id) {
+            continue
+        }
+        if deployed_out_of_date(id) == "" && deployed_gateway_reason(id) == "" {
+            continue
+        }
+        queued = queued + u32(rho_int_from_str(field(jobs_apply(id, ""), 0)))
+    }
+    info("mesh", "applied in every mesh: " + rho_int_to_str(queued) + " jobs")
+    return mesh_redirect("/mesh")
+}
+
+// cross_changes_waiting is how many boards and gateways differ from what they
+// run, across every mesh.
+fn cross_changes_waiting() u32 {
+    var count: u32 = 0
+    var rest: string = project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" {
+            count = count + fleet_line_count(deployed_out_of_date(id))
+            if deployed_gateway_reason(id) != "" {
+                count = count + 1
+            }
+        }
+    }
+    return count
+}
+
+// cross_lower is text with A to Z as a to z, so a search ignores case.
+fn cross_lower(text: string) string {
+    let upper: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    let lower: string = "abcdefghijklmnopqrstuvwxyz"
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(text)) {
+        let ch: string = rho_str_slice(text, i, 1)
+        let at: i32 = rho_str_index_of(upper, ch)
+        if at >= 0 {
+            out = out + rho_str_slice(lower, u32(at), 1)
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn cross_matches(text: string, wanted: string) bool {
+    return wanted != "" && rho_str_index_of(cross_lower(text), cross_lower(wanted)) >= 0
+}
+
+// mesh_search finds nodes by name, id, board, module or device in every mesh.
+fn mesh_search(req: Request) Response {
+    let wanted: string = device_trim(request_query_param(req, "q"))
+    var out: string = ""
+    var found: u32 = 0
+    var rest: string = project_ids()
+    while rest != "" && wanted != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        let file: string = project_file(id)
+        let count: u32 = project_node_count_at(file)
+        var index: u32 = 1
+        while index <= count {
+            let name: string = project_node_value(file, index, "name", "")
+            let nid: string = project_node_value(file, index, "id", "")
+            let what: string = project_node_value(file, index, "board", "") + " " +
+                project_node_value(file, index, "module", "") + " " + project_node_value(file, index, "device", "")
+            if cross_matches(name, wanted) || cross_matches(nid, wanted) || cross_matches(what, wanted) {
+                var href: string = "/mesh/p/" + escape_html(id)
+                if nid != "" {
+                    href = href + "?select=node:" + escape_html(nid)
+                }
+                out = out + "<a class=\"item\" href=\"" + href + "\"><b>" + escape_html(name) + "</b><span>" +
+                    escape_html(project_name(id)) + " · " + escape_html(project_node_value(file, index, "kind", "compute")) +
+                    " · " + escape_html(device_trim(what)) + "</span></a>"
+                found = found + 1
+            }
+            index = index + 1
+        }
+    }
+    var summary: string = "<p class=\"agora-seen\">Search every mesh by a node's name, its id, its board, module or device.</p>"
+    if wanted != "" {
+        summary = "<p class=\"agora-seen\">" + rho_int_to_str(found) + " found for “" + escape_html(wanted) + "”.</p>"
+    }
+    let body: string = AGORA_STYLE + FLEET_STYLE + "<div class=\"fleet-panel\"><div class=\"fbar\">" + fleet_search_form(wanted) +
+        "<span class=\"spacer\"></span><a href=\"/mesh\">Fleet</a></div><aside class=\"inbox\" style=\"border-left:0\">" +
+        summary + out + "</aside></div>"
+    return page(req, "Search · Fleet", body)
+}
+
+fn fleet_search_form(wanted: string) string {
+    return "<form class=\"fleet-search\" method=\"get\" action=\"/mesh/search\"><input type=\"search\" name=\"q\" value=\"" +
+        escape_html(wanted) + "\" placeholder=\"Search nodes in every mesh\" aria-label=\"Search nodes in every mesh\"></form>"
+}

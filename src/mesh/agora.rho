@@ -545,12 +545,45 @@ fn agora_tree(id: string) string {
         }
         index = index + 1
     }
+    items = items + agora_linked_items(id)
     var out: string = agora_gateway_card(id, readings)
     if items != "" {
         out = out + template_fill(template_get("mesh-children"), vars("items", items))
     }
     if count == 0 {
         out = out + agora_first_run(id)
+    }
+    return out
+}
+
+// agora_linked_items are the meshes that report through this one's gateway,
+// each a node that opens to show its own tree, and opens its own agora.
+fn agora_linked_items(id: string) string {
+    var out: string = ""
+    var rest: string = link_children(id)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var child: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            child = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if child == "" {
+            continue
+        }
+        let health: string = agora_health(child)
+        var state: string = "<span class=\"agora-state quiet\">" + escape_html(health) + "</span>"
+        if health == "online" {
+            state = "<span class=\"agora-state online\">online</span>"
+        }
+        let card: string = "<details class=\"node-card gateway agora-linked\"><summary><b>" + escape_html(project_name(child)) +
+            "</b> <small class=\"agora-seen\">mesh · area " + escape_html(project_area_id(project_file(child))) +
+            " · reports through this gateway</small> " + state + "</summary><div class=\"mini-tree\">" +
+            fleet_tree_svg(child, health != "online") + "</div><p><a href=\"/mesh/p/" + escape_html(child) +
+            "\">Open its agora</a></p></details>"
+        out = out + mesh_branch("<span class=\"link-badge\">relay</span>", card, "", "", false)
     }
     return out
 }
@@ -751,7 +784,7 @@ fn mesh_agora_page(req: Request) Response {
     return mesh_redirect("/mesh/p/" + id)
 }
 
-const EDITOR_STYLE: string = "<style>.agora-job{border-radius:999px;padding:.1rem .6rem;font-size:.8rem;border:1px solid var(--line)}.agora-job.running{color:var(--gold);border-color:rgba(228,184,102,.5)}.agora-job.waiting{color:var(--warn);border-color:rgba(240,197,106,.6);font-weight:600}.agora-job.failed{color:var(--stop);border-color:rgba(240,138,126,.5)}.job-log{max-height:24rem;overflow:auto;font-size:.72rem;white-space:pre-wrap;background:rgba(0,0,0,.25);padding:.6rem;border-radius:8px}form.inline{display:inline}.agora-node{display:inline-flex;flex-direction:column;align-items:center;gap:.25rem}.agora-add{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}.agora-node:hover .agora-add,.agora-node:focus-within .agora-add{opacity:1}.agora-add a{font-size:.72rem;border:1px dashed var(--line-strong);border-radius:999px;padding:.05rem .45rem;color:var(--muted)}.agora-add a:hover{color:var(--ink);border-color:var(--gold)}a.link-badge{cursor:pointer}a.link-badge:hover{outline:1px solid var(--gold)}.agora-inspector h3{margin:.1rem 0 .5rem}.inspector-tabs{display:flex;gap:.25rem;margin:.5rem 0 .7rem;border-bottom:1px solid var(--line)}.inspector-tabs a{padding:.3rem .6rem;font-size:.8rem;color:var(--muted);border-bottom:2px solid transparent}.inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.inspector-form{display:grid;gap:.6rem;margin-bottom:.8rem}.inspector-form label{display:grid;gap:.2rem;font-size:.8rem}.inspector-list{margin:.3rem 0 .6rem;padding-left:1.1rem;font-size:.85rem}.inspector-list form.inline{display:inline;margin-left:.4rem}.inspector-deploy{margin:.2rem 0 .4rem;font-size:.82rem}.inspector-add{margin-top:.6rem}.agora-inspector .sensor-groups{max-height:18rem;overflow:auto}.agora-guide{list-style:none;counter-reset:step;display:grid;gap:.6rem;max-width:30rem;margin:1.2rem auto 0;padding:0}.agora-step{counter-increment:step}.agora-step a{display:grid;grid-template-columns:2rem 1fr;gap:.1rem .6rem;padding:.7rem .9rem;border:1px dashed var(--line-strong);border-radius:12px;color:var(--ink)}.agora-step a::before{content:counter(step);grid-row:span 2;display:grid;place-items:center;width:1.7rem;height:1.7rem;border-radius:50%;border:1px solid var(--gold);color:var(--gold);font-weight:700}.agora-step a span{color:var(--muted);font-size:.82rem}.agora-step a:hover,.agora-step a:focus{border-color:var(--gold)}.agora-step.done a{opacity:.55;border-style:solid}.agora-step.done a::before{content:'✓'}@media (max-width:700px){.agora-inspector{position:fixed;left:0;right:0;bottom:0;max-height:55vh;overflow:auto;z-index:30;border-radius:14px 14px 0 0;background:var(--panel-strong);box-shadow:0 -12px 30px rgba(0,0,0,.45)}.agora-canvas{padding-bottom:40vh}}</style>"
+const EDITOR_STYLE: string = "<style>.agora-linked{min-width:16rem;cursor:pointer}.agora-linked summary{list-style:none}.agora-linked .mini-tree{margin:.5rem 0;height:74px;border-radius:9px;background:rgba(244,239,228,.03)}.agora-linked svg{width:100%;height:74px}.agora-job{border-radius:999px;padding:.1rem .6rem;font-size:.8rem;border:1px solid var(--line)}.agora-job.running{color:var(--gold);border-color:rgba(228,184,102,.5)}.agora-job.waiting{color:var(--warn);border-color:rgba(240,197,106,.6);font-weight:600}.agora-job.failed{color:var(--stop);border-color:rgba(240,138,126,.5)}.job-log{max-height:24rem;overflow:auto;font-size:.72rem;white-space:pre-wrap;background:rgba(0,0,0,.25);padding:.6rem;border-radius:8px}form.inline{display:inline}.agora-node{display:inline-flex;flex-direction:column;align-items:center;gap:.25rem}.agora-add{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}.agora-node:hover .agora-add,.agora-node:focus-within .agora-add{opacity:1}.agora-add a{font-size:.72rem;border:1px dashed var(--line-strong);border-radius:999px;padding:.05rem .45rem;color:var(--muted)}.agora-add a:hover{color:var(--ink);border-color:var(--gold)}a.link-badge{cursor:pointer}a.link-badge:hover{outline:1px solid var(--gold)}.agora-inspector h3{margin:.1rem 0 .5rem}.inspector-tabs{display:flex;gap:.25rem;margin:.5rem 0 .7rem;border-bottom:1px solid var(--line)}.inspector-tabs a{padding:.3rem .6rem;font-size:.8rem;color:var(--muted);border-bottom:2px solid transparent}.inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.inspector-form{display:grid;gap:.6rem;margin-bottom:.8rem}.inspector-form label{display:grid;gap:.2rem;font-size:.8rem}.inspector-list{margin:.3rem 0 .6rem;padding-left:1.1rem;font-size:.85rem}.inspector-list form.inline{display:inline;margin-left:.4rem}.inspector-deploy{margin:.2rem 0 .4rem;font-size:.82rem}.inspector-add{margin-top:.6rem}.agora-inspector .sensor-groups{max-height:18rem;overflow:auto}.agora-guide{list-style:none;counter-reset:step;display:grid;gap:.6rem;max-width:30rem;margin:1.2rem auto 0;padding:0}.agora-step{counter-increment:step}.agora-step a{display:grid;grid-template-columns:2rem 1fr;gap:.1rem .6rem;padding:.7rem .9rem;border:1px dashed var(--line-strong);border-radius:12px;color:var(--ink)}.agora-step a::before{content:counter(step);grid-row:span 2;display:grid;place-items:center;width:1.7rem;height:1.7rem;border-radius:50%;border:1px solid var(--gold);color:var(--gold);font-weight:700}.agora-step a span{color:var(--muted);font-size:.82rem}.agora-step a:hover,.agora-step a:focus{border-color:var(--gold)}.agora-step.done a{opacity:.55;border-style:solid}.agora-step.done a::before{content:'✓'}@media (max-width:700px){.agora-inspector{position:fixed;left:0;right:0;bottom:0;max-height:55vh;overflow:auto;z-index:30;border-radius:14px 14px 0 0;background:var(--panel-strong);box-shadow:0 -12px 30px rgba(0,0,0,.45)}.agora-canvas{padding-bottom:40vh}}</style>"
 
 // agora_page_for is a mesh's agora with something selected: the live tree,
 // the bar and the activity strip, and the inspector beside them.
@@ -937,6 +970,38 @@ fn fleet_tree_svg(id: string, down: bool) string {
         dots + "</svg>"
 }
 
+// fleet_under is a linked mesh's card saying which mesh it reports through.
+fn fleet_under(id: string) string {
+    let parent: string = link_parent(id)
+    if parent == "" {
+        return ""
+    }
+    return " · under " + escape_html(project_name(parent))
+}
+
+// fleet_link_notes say which mesh reports through which, under the cards.
+fn fleet_link_notes() string {
+    var out: string = ""
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let parent: string = link_parent(id)
+        if id != "" && parent != "" {
+            out = out + "<span class=\"link-note\"><i></i> " + escape_html(project_name(id)) + " reports through " +
+                escape_html(project_name(parent)) + "'s gateway as area " + escape_html(project_area_id(project_file(id))) +
+                ", over the authenticated uplink</span>"
+        }
+    }
+    return out
+}
+
 fn fleet_card(id: string) string {
     let file: string = project_file(id)
     let counts: string = fleet_counts(file)
@@ -978,7 +1043,7 @@ fn fleet_card(id: string) string {
     }
     return "<a class=\"mesh-card" + css + "\" href=\"" + agora_url(id, "") + "\">" +
         "<div class=\"row\"><span class=\"name\">" + escape_html(project_name(id)) + "</span>" +
-        "<span class=\"area\">area " + escape_html(project_area_id(file)) + "</span></div>" +
+        "<span class=\"area\">area " + escape_html(project_area_id(file)) + fleet_under(id) + "</span></div>" +
         "<div class=\"sub\">" + escape_html(agora_host_label(id)) + "</div>" +
         "<div class=\"mini-tree\">" + fleet_tree_svg(id, down) + "</div>" +
         "<div class=\"stats\">" + boards + stale + agora_chips(readings, "", 2) + "</div>" +
@@ -1001,7 +1066,7 @@ fn fleet_cards() string {
             out = out + fleet_card(id)
         }
     }
-    return out + mesh_new_mesh_form()
+    return out + fleet_link_notes() + mesh_new_mesh_form()
 }
 
 // fleet_summary is the fleet's header line: how many meshes, how many hosts,
@@ -1049,8 +1114,45 @@ fn fleet_summary() string {
     return "<span class=\"crumbs\"><b>Fleet</b> · " + rho_int_to_str(meshes) + mesh_word +
         rho_int_to_str(host_count) + host_word + "</span>" +
         "<span class=\"chip " + live + "\">" + rho_int_to_str(online) + " of " + rho_int_to_str(meshes) +
-        " gateways online</span><span class=\"spacer\"></span>" +
+        " gateways online</span><span class=\"spacer\"></span>" + fleet_search_form("") + fleet_apply_all() +
         "<a class=\"button quiet\" href=\"#new-mesh\">New mesh</a>"
+}
+
+// fleet_apply_all is the bar's button that applies every mesh's changes, when
+// there are any.
+fn fleet_apply_all() string {
+    let waiting: u32 = cross_changes_waiting()
+    if waiting == 0 {
+        return ""
+    }
+    var words: string = rho_int_to_str(waiting) + " changes waiting"
+    if waiting == 1 {
+        words = "1 change waiting"
+    }
+    return "<span class=\"chip\">" + words + "</span><form method=\"post\" action=\"/mesh/apply-all\" class=\"inline\">" +
+        "<button type=\"submit\">Apply in all meshes</button></form>"
+}
+
+// fleet_jobs are a mesh's running and waiting jobs, as inbox items.
+fn fleet_jobs(id: string) string {
+    var out: string = ""
+    var rest: string = jobs_list(id)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let state: string = jobs_state(id, seq)
+        if seq != "" && (state == "running" || state == "waiting") {
+            out = out + "<a class=\"item job\" href=\"" + editor_page_url(id, "job:" + seq) + "\"><b>" +
+                escape_html(project_name(id)) + " · " + escape_html(jobs_meta(id, seq, "label")) + "</b><span>" + state + "</span></a>"
+        }
+    }
+    return out
 }
 
 // fleet_inbox is the faults of every mesh, newest first per mesh, each opening
@@ -1070,6 +1172,7 @@ fn fleet_inbox() string {
         if id == "" {
             continue
         }
+        out = out + fleet_jobs(id)
         if agora_health(id) == "offline" {
             out = out + "<a class=\"item bad\" href=\"" + agora_url(id, "gateway") + "\"><b>" + escape_html(project_name(id)) +
                 " · gateway not answering</b><span>" + agora_age(agora_health_since(id)) +
@@ -1195,7 +1298,7 @@ fn fleet_regions() string {
         mesh_event_json("fleet-activity", fleet_activity())
 }
 
-const FLEET_STYLE: string = "<style>.fleet-panel{display:grid;grid-template-rows:auto 1fr auto;min-height:calc(100vh - 9rem);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--panel-strong)}.fleet-panel .fbar{display:flex;gap:.8rem;align-items:center;padding:.7rem 1.1rem;border-bottom:1px solid var(--line);background:rgba(7,15,19,.6)}.fleet-panel .crumbs{font-size:.9rem;color:var(--muted)}.fleet-panel .crumbs b{color:var(--ink)}.fleet-panel .chip{font-size:.76rem;border-radius:999px;padding:.12rem .6rem;border:1px solid var(--line)}.fleet-panel .chip.live{color:var(--teal);border-color:rgba(121,199,189,.45);background:var(--accent-soft)}.fleet-panel .chip.quiet{color:var(--muted)}.fleet-panel .spacer{flex:1}.fleet-body{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}@media (max-width:900px){.fleet-body{grid-template-columns:1fr}}.fleet-grid{padding:22px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px;align-content:start;background-image:radial-gradient(rgba(244,239,228,.06) 1px,transparent 1px);background-size:22px 22px}.mesh-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px;display:grid;gap:9px;color:inherit;text-decoration:none}.mesh-card:hover{border-color:var(--line-strong)}.mesh-card.warn{border-color:rgba(240,197,106,.45)}.mesh-card.down{border-color:rgba(240,138,126,.5)}.mesh-card .row{display:flex;justify-content:space-between;align-items:center;gap:8px}.mesh-card .name{font:500 1.08rem/1.2 var(--serif);color:var(--ink)}.mesh-card .sub{font-size:.74rem;color:var(--faint)}.mini-tree{height:74px;border-radius:9px;background:rgba(244,239,228,.03);border:1px solid rgba(244,239,228,.08);display:grid;place-items:center}.mini-tree svg{width:100%;height:74px}.mesh-card .stats{display:flex;gap:12px;font-size:.74rem;color:var(--muted);flex-wrap:wrap;align-items:center}.mesh-card .stats b{color:var(--ink);font-weight:600}.mesh-card .area{font:700 .62rem/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--blue);border:1px solid rgba(138,180,232,.35);padding:3px 6px;border-radius:5px}.new-mesh{border:1.5px dashed rgba(244,239,228,.22);border-radius:14px;display:grid;gap:.5rem;align-content:center;justify-items:center;color:var(--faint);font-size:.84rem;min-height:150px;text-align:center;padding:12px}.new-mesh:focus-within{border-color:var(--gold);color:var(--ink)}.new-mesh input{width:100%}.inbox{border-left:1px solid var(--line);background:rgba(7,15,19,.78);padding:14px 16px;display:grid;gap:10px;align-content:start}.inbox h5{margin:.2rem 0 0;font:700 .66rem/1 var(--sans);letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}.inbox .item{display:grid;gap:2px;font-size:.78rem;padding:8px 10px;border-radius:9px;background:rgba(244,239,228,.04);color:var(--ink)}.inbox .item span{color:var(--faint);font-size:.72rem}.inbox .item.bad{border-left:3px solid var(--stop)}.inbox .item.job{border-left:3px solid var(--gold)}.inbox .item.ok{border-left:3px solid var(--teal)}.fleet-panel .activity{display:flex;gap:22px;align-items:center;padding:9px 18px;border-top:1px solid var(--line);background:rgba(7,15,19,.82);font-size:.78rem;color:var(--muted)}.fleet-panel .activity .fault{color:var(--stop)}.fleet-panel .activity .spacer{flex:1}</style>"
+const FLEET_STYLE: string = "<style>.fleet-panel{display:grid;grid-template-rows:auto 1fr auto;min-height:calc(100vh - 9rem);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--panel-strong)}.fleet-panel .fbar{display:flex;gap:.8rem;align-items:center;padding:.7rem 1.1rem;border-bottom:1px solid var(--line);background:rgba(7,15,19,.6)}.fleet-panel .crumbs{font-size:.9rem;color:var(--muted)}.fleet-panel .crumbs b{color:var(--ink)}.fleet-panel .chip{font-size:.76rem;border-radius:999px;padding:.12rem .6rem;border:1px solid var(--line)}.fleet-panel .chip.live{color:var(--teal);border-color:rgba(121,199,189,.45);background:var(--accent-soft)}.fleet-panel .chip.quiet{color:var(--muted)}.fleet-panel .spacer{flex:1}.fleet-body{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}@media (max-width:900px){.fleet-body{grid-template-columns:1fr}}.fleet-grid{padding:22px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px;align-content:start;background-image:radial-gradient(rgba(244,239,228,.06) 1px,transparent 1px);background-size:22px 22px}.mesh-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px;display:grid;gap:9px;color:inherit;text-decoration:none}.mesh-card:hover{border-color:var(--line-strong)}.mesh-card.warn{border-color:rgba(240,197,106,.45)}.mesh-card.down{border-color:rgba(240,138,126,.5)}.mesh-card .row{display:flex;justify-content:space-between;align-items:center;gap:8px}.mesh-card .name{font:500 1.08rem/1.2 var(--serif);color:var(--ink)}.mesh-card .sub{font-size:.74rem;color:var(--faint)}.mini-tree{height:74px;border-radius:9px;background:rgba(244,239,228,.03);border:1px solid rgba(244,239,228,.08);display:grid;place-items:center}.mini-tree svg{width:100%;height:74px}.mesh-card .stats{display:flex;gap:12px;font-size:.74rem;color:var(--muted);flex-wrap:wrap;align-items:center}.mesh-card .stats b{color:var(--ink);font-weight:600}.mesh-card .area{font:700 .62rem/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--blue);border:1px solid rgba(138,180,232,.35);padding:3px 6px;border-radius:5px}.link-note{grid-column:1/-1;font-size:.74rem;color:var(--faint);display:flex;gap:8px;align-items:center}.link-note i{display:inline-block;width:36px;border-top:1.5px dashed var(--blue)}.agora-linked{min-width:16rem;cursor:pointer}.agora-linked summary{list-style:none}.agora-linked .mini-tree{margin:.5rem 0;height:74px}.agora-linked svg{width:100%;height:74px}.new-mesh{border:1.5px dashed rgba(244,239,228,.22);border-radius:14px;display:grid;gap:.5rem;align-content:center;justify-items:center;color:var(--faint);font-size:.84rem;min-height:150px;text-align:center;padding:12px}.new-mesh:focus-within{border-color:var(--gold);color:var(--ink)}.new-mesh input{width:100%}.fleet-search input{min-width:14rem;font-size:.82rem}.fleet-panel form.inline{display:inline}.inbox{border-left:1px solid var(--line);background:rgba(7,15,19,.78);padding:14px 16px;display:grid;gap:10px;align-content:start}.inbox h5{margin:.2rem 0 0;font:700 .66rem/1 var(--sans);letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}.inbox .item{display:grid;gap:2px;font-size:.78rem;padding:8px 10px;border-radius:9px;background:rgba(244,239,228,.04);color:var(--ink)}.inbox .item span{color:var(--faint);font-size:.72rem}.inbox .item.bad{border-left:3px solid var(--stop)}.inbox .item.job{border-left:3px solid var(--gold)}.inbox .item.ok{border-left:3px solid var(--teal)}.fleet-panel .activity{display:flex;gap:22px;align-items:center;padding:9px 18px;border-top:1px solid var(--line);background:rgba(7,15,19,.82);font-size:.78rem;color:var(--muted)}.fleet-panel .activity .fault{color:var(--stop)}.fleet-panel .activity .spacer{flex:1}</style>"
 
 fn mesh_fleet_page(req: Request) Response {
     ensure_wizard_dir()
