@@ -3366,7 +3366,7 @@ fn output_block(stage: string) string {
 /* -------------------------------------------------------------------------- */
 
 fn page(req: Request, title: string, body: string) Response {
-    let panel: string = template_fill(template_get("mesh-panel"), vars("body", body))
+    let panel: string = template_fill(template_get("mesh-panel"), vars("body", mesh_with_project(body)))
     return html(status_ok(), mesh_shell(req, title, panel))
 }
 
@@ -3512,6 +3512,9 @@ fn clear_console_stage(stage: string) void {
 }
 
 fn mesh_console_clear(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3604,6 +3607,9 @@ fn run_step_action(stage: string, action: string) u32 {
 }
 
 fn wizard_step_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }

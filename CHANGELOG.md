@@ -248,3 +248,9 @@ The planning rules have a home of their own, src/mesh/domain/, with unit tests:
 the plan as text (the stored and the row form, numbering, removing a node), the
 rule for which link joins two boards, and the impact table that says which node
 fields a build depends on and which steps reopen after which.
+
+An operation link names its project (`?project=`), and opening it makes that
+project active, so a page can be bookmarked or shared and shows the mesh it was
+for. Every form carries its project, and a save drawn for another project than
+the active one — a second tab switched projects since — is refused rather than
+written into the wrong mesh.

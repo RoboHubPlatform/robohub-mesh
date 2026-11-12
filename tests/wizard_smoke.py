@@ -652,6 +652,23 @@ def main() -> int:
             if len({fleet[k] for k in fleet if k.endswith(".rest_port")}) != len([k for k in fleet if k.endswith(".rest_port")]):
                 raise AssertionError(f"two meshes share a REST port: {fleet}")
 
+            # An operation link names its project, and opening it makes that
+            # project the active one; a form drawn for another project is
+            # refused rather than written into this one.
+            plan_page = get(base, "/mesh/plan?project=Second-project")
+            if (Path(state) / "current-project.txt").read_text().strip() != "Second-project":
+                raise AssertionError("a link naming a project did not open it")
+            if 'name="project" value="Second-project"' not in plan_page:
+                raise AssertionError("a page's forms do not carry their project")
+            before_default = plan_flat(Path(state) / "projects" / "default" / "plan.yml")
+            post(base, "/mesh/reopen", {"project": "default"})
+            if plan_flat(Path(state) / "projects" / "default" / "plan.yml") != before_default:
+                raise AssertionError("a form for another project changed it")
+            refused = plan_flat(second_state)
+            if "another project" not in refused:
+                raise AssertionError("a form for another project was not refused")
+            get(base, "/mesh/project/default")
+
             post(base, "/mesh/project/delete", {"project": "Second-project"})
             if second_state.parent.exists():
                 raise AssertionError("deleting a project must remove its folder")

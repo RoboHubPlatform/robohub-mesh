@@ -1640,6 +1640,9 @@ fn mesh_device_node_page(req: Request, index: u32, is_new: bool) Response {
 }
 
 fn mesh_device_poll(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let body: string = request_body(req)
     let index: u32 = rho_int_from_str(form_value(body, "id"))
     if index < 1 || index > node_count() || !is_device_node(index) {
@@ -1697,6 +1700,9 @@ fn mesh_device_switch(index: u32, state: string) bool {
 }
 
 fn mesh_device_set(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let body: string = request_body(req)
     let index: u32 = rho_int_from_str(form_value(body, "id"))
     let state: string = form_value(body, "state")
@@ -2778,6 +2784,7 @@ fn mesh_api_device_switch(req: Request) Response {
 }
 
 fn mesh_node_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3074,6 +3081,7 @@ fn mesh_node_post_inner(req: Request) Response {
 }
 
 fn mesh_gateway_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3111,6 +3119,9 @@ fn mesh_gateway_page(req: Request) Response {
 }
 
 fn mesh_gateway_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }
@@ -3270,6 +3281,53 @@ fn mesh_project_menu(req: Request) string {
     return items
 }
 
+// mesh_follow_project makes the project a link names the active one. An
+// operation link carries its project (`?project=`), so a page can be bookmarked,
+// shared, or opened from another mesh's card, and shows the mesh it was for.
+fn mesh_follow_project(req: Request) void {
+    let wanted: string = request_query_param(req, "project")
+    if wanted != "" && wanted != current_project() {
+        ignore_bool(load_project(wanted))
+    }
+}
+
+// mesh_project_mismatch reports whether a form was drawn for another project
+// than the active one: a second tab switched projects since. Such a save is
+// refused rather than written into the wrong mesh. A form without the field —
+// an htmx fragment, an API client — is not refused.
+fn mesh_project_mismatch(req: Request) bool {
+    let sent: string = form_value(request_body(req), "project")
+    return sent != "" && sent != current_project()
+}
+
+fn mesh_project_refused() Response {
+    save_setting("mesh_message", "That form was for another project, opened in another tab since. Nothing was saved; this is the active project now.")
+    return mesh_redirect("/mesh")
+}
+
+// mesh_with_project adds the active project to every form of a page, which is
+// what mesh_project_mismatch checks.
+fn mesh_with_project(body: string) string {
+    let active: string = current_project()
+    if active == "" {
+        return body
+    }
+    let field: string = "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(active) + "\">"
+    var out: string = ""
+    var rest: string = body
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "</form>")
+        if at < 0 {
+            out = out + rest
+            rest = ""
+        } else {
+            out = out + rho_str_slice(rest, 0, u32(at)) + field + "</form>"
+            rest = rho_str_slice(rest, u32(at) + 7, u32(rho_strlen(rest)) - u32(at) - 7)
+        }
+    }
+    return out
+}
+
 fn mesh_context(req: Request) string {
     let active: string = current_project()
     if active == "" {
@@ -3277,11 +3335,13 @@ fn mesh_context(req: Request) string {
     }
     var out: string = "<span class=\"foot-label\">Operations for</span> <strong>" +
         escape_html(project_name(active)) + "</strong>"
-    out = out + mesh_menu_link(i18n_t(req, "nav.plan"), "/mesh/plan", "1")
-    out = out + mesh_menu_link(i18n_t(req, "nav.network"), "/mesh/step/network", "2")
-    out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build", "3")
-    out = out + mesh_menu_link(i18n_t(req, "nav.verify"), "/mesh/step/verify", "4")
-    out = out + mesh_menu_link(i18n_t(req, "nav.gateway"), "/mesh/gateway", "⌂")
+    // Every operation link names the project it acts on.
+    let scope: string = "?project=" + escape_html(active)
+    out = out + mesh_menu_link(i18n_t(req, "nav.plan"), "/mesh/plan" + scope, "1")
+    out = out + mesh_menu_link(i18n_t(req, "nav.network"), "/mesh/step/network" + scope, "2")
+    out = out + mesh_menu_link(i18n_t(req, "nav.build"), "/mesh/step/build" + scope, "3")
+    out = out + mesh_menu_link(i18n_t(req, "nav.verify"), "/mesh/step/verify" + scope, "4")
+    out = out + mesh_menu_link(i18n_t(req, "nav.gateway"), "/mesh/gateway" + scope, "⌂")
     out = out + mesh_menu_link(i18n_t(req, "page.settings"),
         "/mesh/project/" + escape_html(active) + "/settings", "⚙")
     return out
@@ -3337,6 +3397,9 @@ fn mesh_dashboard(req: Request) Response {
 }
 
 fn mesh_gateway_restart(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }
@@ -3363,6 +3426,9 @@ fn mesh_gateway_restart(req: Request) Response {
 }
 
 fn mesh_gateway_stop(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }
@@ -3393,6 +3459,7 @@ fn mesh_gateway_stop(req: Request) Response {
 }
 
 fn mesh_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3458,30 +3525,45 @@ fn mesh_reopen_inner(req: Request) Response {
 }
 
 fn mesh_node_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let response: Response = mesh_node_post_inner(req)
     mesh_event_tree()
     return response
 }
 
 fn mesh_accept(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let response: Response = mesh_accept_inner(req)
     mesh_event_tree()
     return response
 }
 
 fn mesh_reopen(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let response: Response = mesh_reopen_inner(req)
     mesh_event_tree()
     return response
 }
 
 fn mesh_network_accept(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let response: Response = mesh_network_accept_inner(req)
     mesh_event_tree()
     return response
 }
 
 fn mesh_build_node_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     let response: Response = mesh_build_node_post_inner(req)
     mesh_event_tree()
     return response
@@ -3701,6 +3783,7 @@ fn connection_settings_form(index: u32) string {
 }
 
 fn mesh_connection_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3741,6 +3824,9 @@ fn mesh_connection_page(req: Request) Response {
 }
 
 fn mesh_connection_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }
@@ -3803,6 +3889,7 @@ fn mesh_connection_post(req: Request) Response {
 }
 
 fn mesh_network_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3868,6 +3955,7 @@ fn mesh_network_accept_inner(req: Request) Response {
 }
 
 fn mesh_network_node_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -3924,6 +4012,9 @@ fn mesh_gateway_network_form() string {
 }
 
 fn mesh_network_gateway_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }
@@ -3945,6 +4036,7 @@ fn mesh_network_gateway_post(req: Request) Response {
 }
 
 fn mesh_network_gateway_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -4101,6 +4193,7 @@ fn mesh_program_confirm_page(req: Request, index: u32) Response {
 }
 
 fn mesh_build_node_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -4363,6 +4456,7 @@ fn mesh_gateway_build_actions() string {
 }
 
 fn mesh_build_gateway_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -4385,6 +4479,9 @@ fn mesh_build_gateway_page(req: Request) Response {
 }
 
 fn mesh_build_gateway_post(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
     if current_project() == "" {
         return mesh_redirect("/mesh")
     }
@@ -4431,6 +4528,7 @@ fn mesh_build_gateway_post(req: Request) Response {
 }
 
 fn mesh_build_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
@@ -4509,6 +4607,7 @@ fn mesh_step_lock(stage: string) string {
 }
 
 fn mesh_step_page(req: Request) Response {
+    mesh_follow_project(req)
     if current_project() == "" {
         return mesh_dashboard(req)
     }
