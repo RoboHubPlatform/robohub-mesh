@@ -1235,6 +1235,8 @@ fn append_module_node(module_name: string, parent: string) u32 {
     }
     let prefix: string = "node." + rho_int_to_str(index) + "."
     save_setting_raw("node.count", rho_int_to_str(index))
+    save_setting_raw(prefix + "id", "")
+    save_setting_raw(prefix + "uid", "")
     save_setting_raw(prefix + "kind", "module")
     save_setting_raw(prefix + "name", module_label(module_name))
     save_setting_raw(prefix + "description", module_summary(module_name))
@@ -3036,12 +3038,16 @@ fn handler_build_all() u32 {
 }
 
 fn handler_add_node() u32 {
-    var count: u32 = node_count() + 1
-    if count > 16 {
-        count = 16
+    // A full plan is left as it is: rewriting its last row would replace that
+    // node, identity and all, with an empty one.
+    if node_count() >= 16 {
+        return 0
     }
+    let count: u32 = node_count() + 1
     save_setting("node.count", rho_int_to_str(count))
     let prefix: string = "node." + rho_int_to_str(count) + "."
+    save_setting(prefix + "id", "")
+    save_setting(prefix + "uid", "")
     save_setting(prefix + "role", "node")
     save_setting(prefix + "board", "")
     save_setting(prefix + "parent", "gateway")
@@ -3053,6 +3059,10 @@ fn handler_add_node() u32 {
 fn handler_remove_last() u32 {
     let count: u32 = node_count()
     if count > 1 {
+        // The removed node's identity goes with it, so a node added in its
+        // place is a new device with series of its own.
+        save_setting("node." + rho_int_to_str(count) + ".id", "")
+        save_setting("node." + rho_int_to_str(count) + ".uid", "")
         save_setting("node.count", rho_int_to_str(count - 1))
     }
     return 0

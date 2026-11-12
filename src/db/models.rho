@@ -27,7 +27,20 @@ struct TelemetryGateway {
     updatedMs: i64
 }
 
-// One reading: one signal of one device at one moment. received_ms is the gateway's wall clock, which is what a series is queried on; a node's own timestamp is its uptime and is not a calendar.
+// Every source a project has: the plan's placement of it and when it last reported. A source the plan has not placed has area and node -1; a board that reports from a place the plan gives another is a fault, never a merge.
+struct TelemetrySource {
+    project: string
+    source: string
+    gatewayId: string
+    areaId: i64
+    nodeId: i64
+    label: string
+    moduleId: string
+    firstMs: i64
+    lastMs: i64
+}
+
+// One reading: one signal of one source at one moment. area_id and node_id are where the reading said it came from, kept as reported. received_ms is the gateway's wall clock, which is what a series is queried on; a node's own timestamp is its uptime and is not a calendar.
 struct TelemetryReading {
     id: i64
     project: string
@@ -39,13 +52,13 @@ struct TelemetryReading {
     value: f64
     status: i64
     receivedMs: i64
+    source: string
 }
 
 // The newest value of every signal, so a latest read does not scan the series.
 struct TelemetryLatest {
     project: string
-    areaId: i64
-    nodeId: i64
+    source: string
     field: string
     value: f64
     status: i64
@@ -55,8 +68,7 @@ struct TelemetryLatest {
 // One-minute rollups. They are written from raw readings once a bucket is complete, and they are what a series reads after the raw window has passed.
 struct TelemetryRollup1m {
     project: string
-    areaId: i64
-    nodeId: i64
+    source: string
     field: string
     bucketMs: i64
     valueMin: f64
@@ -68,8 +80,7 @@ struct TelemetryRollup1m {
 // Hourly rollups, written from the minute rollups. They outlive raw readings and minute rollups, so a chart over a season still has a series.
 struct TelemetryRollup1h {
     project: string
-    areaId: i64
-    nodeId: i64
+    source: string
     field: string
     bucketMs: i64
     valueMin: f64
@@ -90,5 +101,6 @@ struct TelemetryFault {
     severity: string
     message: string
     createdMs: i64
+    source: string
 }
 

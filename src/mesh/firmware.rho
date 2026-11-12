@@ -187,7 +187,12 @@ fn firmware_sources(sensors: string) string {
         if name == "" || plan_index == "" {
             continue
         }
-        let prefix: string = "m" + plan_index + "."
+        // A module's fields carry its own id, not its place in the plan.
+        var prefix: string = "m" + plan_index + "."
+        let tag: string = project_module_tag(project_file(current_project()), u32(rho_int_from_str(plan_index)))
+        if tag != "" {
+            prefix = tag + "."
+        }
         let board: string = module_manifest(name)
         let driver: string = module_driver(name)
         let driver_file: string = driver_manifest(driver)
@@ -308,19 +313,10 @@ fn mesh_gateway_key_path(project: string) string {
     return shell_quote(mesh_gateway_key_file(project))
 }
 
-// mesh_node_uid is a planned board's id, made once and kept in the plan.
+// mesh_node_uid is the id a planned board opens its session with: the node's
+// own identity, which is also what its series are kept under.
 fn mesh_node_uid(project: string, node: u32) string {
-    let setting: string = "node." + rho_int_to_str(node) + ".uid"
-    var uid: string = state_value_in(project_file(project), setting)
-    if rho_strlen(uid) == 16 {
-        return uid
-    }
-    uid = rho_random_hex(8)
-    if rho_strlen(uid) != 16 {
-        return ""
-    }
-    save_setting_at(project_file(project), setting, uid)
-    return uid
+    return project_node_id(project_file(project), node)
 }
 
 fn firmware_c_bytes(hex: string) string {

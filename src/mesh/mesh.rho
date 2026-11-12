@@ -1572,8 +1572,8 @@ fn mesh_device_poll(req: Request) Response {
     }
     // The page shows the values the store now holds, so it reads the same
     // series a chart would rather than a second, separate request.
-    let area: u32 = u32(rho_int_from_str(project_area_id(file)))
-    let state: string = telemetry_latest_text(project, area, index, "state")
+    let source: string = project_node_id(file, index)
+    let state: string = telemetry_latest_text(project, source, "state")
     if state != "" {
         if state == "1" {
             save_setting("node." + rho_int_to_str(index) + ".state", "on")
@@ -1581,7 +1581,7 @@ fn mesh_device_poll(req: Request) Response {
             save_setting("node." + rho_int_to_str(index) + ".state", "off")
         }
     }
-    let power: string = telemetry_latest_text(project, area, index, "power_w")
+    let power: string = telemetry_latest_text(project, source, "power_w")
     if power != "" {
         save_setting("node." + rho_int_to_str(index) + ".last_value", power)
     }
@@ -1937,6 +1937,60 @@ fn project_node_value(file: string, index: u32, key: string, fallback: string) s
     return value
 }
 
+// project_node_id is a planned node's identity, made the first time it is asked
+// for and kept in the plan: a board opens its session with it, and every series
+// the node reports is kept under it. It is never derived from the node's place
+// in the plan, so a series stays the device's whatever the plan does around it.
+// A board provisioned before nodes had ids keeps the id it was flashed with.
+fn project_node_id(file: string, index: u32) string {
+    if index == 0 {
+        return ""
+    }
+    let key: string = "node." + rho_int_to_str(index) + ".id"
+    var id: string = state_value_in(file, key)
+    if rho_strlen(id) == 16 {
+        return id
+    }
+    id = state_value_in(file, "node." + rho_int_to_str(index) + ".uid")
+    if rho_strlen(id) != 16 {
+        id = rho_random_hex(8)
+    }
+    if rho_strlen(id) != 16 {
+        return ""
+    }
+    save_setting_at(file, key, id)
+    return id
+}
+
+// project_node_by_id is the plan index of the node with an id, or 0. It only
+// reads: an id nobody has asked for yet is not one a caller can know.
+fn project_node_by_id(file: string, id: string) u32 {
+    if rho_strlen(id) != 16 {
+        return 0
+    }
+    let count: u32 = project_node_count_at(file)
+    var index: u32 = 1
+    while index <= count {
+        if state_value_in(file, "node." + rho_int_to_str(index) + ".id") == id {
+            return index
+        }
+        index = index + 1
+    }
+    return 0
+}
+
+// project_module_tag is how a module's readings are told apart on the board
+// that carries it: the start of the module's id, so two sensors measuring the
+// same quantity are two series, and a module added in a removed one's place is
+// a new series rather than the old one continued.
+fn project_module_tag(file: string, index: u32) string {
+    let id: string = project_node_id(file, index)
+    if id == "" {
+        return ""
+    }
+    return rho_str_slice(id, 0, 8)
+}
+
 fn project_area_id(file: string) string {
     let value: string = state_value_in(file, "area_id")
     if value == "" {
@@ -1948,7 +2002,15 @@ fn project_area_id(file: string) string {
 fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
     module_id: string, driver_id: string, row: string, origin: string) string {
     let signal: string = field(row, 0)
-    let id: string = kind + "." + rho_int_to_str(index) + "." + signal
+    // A source is addressed by its node's id, which outlives any change to the
+    // plan. The index form is what clients saved before, and still resolves.
+    let file: string = project_file(project)
+    let node_id: string = project_node_id(file, index)
+    let legacy_id: string = kind + "." + rho_int_to_str(index) + "." + signal
+    var id: string = legacy_id
+    if node_id != "" {
+        id = node_id + "." + signal
+    }
     var source_module: string = module_id
     if driver_id != "" {
         source_module = driver_id
@@ -1957,7 +2019,7 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
     if source_module != "" {
         source = source_module + "." + signal
     }
-    let instance: string = project_area_id(project_file(project)) + ":" + rho_int_to_str(index)
+    let instance: string = node_id
     let base: string = "/mesh/api/projects/" + project + "/sources/" + id
     let timeline: string = "/mesh/api/projects/" + project +
         "/telemetry/series?source=" + id
@@ -1968,6 +2030,7 @@ fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
             ",\"history_url\":" + json_string(origin + timeline)
     }
     return ",{\"id\":" + json_string(id) +
+        ",\"legacy_id\":" + json_string(legacy_id) +
         ",\"name\":" + json_string(owner + " · " + field(row, 1)) +
         ",\"owner\":" + json_string(owner) +
         ",\"module_id\":" + json_string(module_id) +
@@ -2163,19 +2226,31 @@ fn mesh_source_spec(project: string, source: string) string {
     if first < 0 {
         return ""
     }
-    let kind: string = rho_str_slice(source, 0, u32(first))
+    var kind: string = rho_str_slice(source, 0, u32(first))
     let rest: string = rho_str_slice(source, u32(first) + 1,
         u32(rho_strlen(source)) - u32(first) - 1)
-    let second: i32 = rho_str_index_of(rest, ".")
-    if second < 0 {
-        return ""
-    }
-    let index_text: string = rho_str_slice(rest, 0, u32(second))
-    let signal: string = rho_str_slice(rest, u32(second) + 1,
-        u32(rho_strlen(rest)) - u32(second) - 1)
-    let index: u32 = rho_int_from_str(index_text)
-    if project_node_value(file, index, "kind", "compute") != kind {
-        return ""
+    var index_text: string = ""
+    var signal: string = ""
+    var index: u32 = 0
+    // `<node id>.<signal>` names the node by its identity; `<kind>.<index>.<signal>`
+    // is the older form, which names it by place.
+    let by_id: u32 = project_node_by_id(file, kind)
+    if by_id > 0 {
+        index = by_id
+        index_text = rho_int_to_str(by_id)
+        signal = rest
+        kind = project_node_value(file, index, "kind", "compute")
+    } else {
+        let second: i32 = rho_str_index_of(rest, ".")
+        if second < 0 {
+            return ""
+        }
+        index_text = rho_str_slice(rest, 0, u32(second))
+        signal = rho_str_slice(rest, u32(second) + 1, u32(rho_strlen(rest)) - u32(second) - 1)
+        index = rho_int_from_str(index_text)
+        if project_node_value(file, index, "kind", "compute") != kind {
+            return ""
+        }
     }
     var manifest: string = ""
     var is_device: bool = false
@@ -2220,28 +2295,18 @@ fn mesh_stored_text(spec: string, stored: string) string {
 }
 
 fn mesh_device_stored_value(project: string, spec: string, field_name: string) string {
+    let file: string = project_file(project)
     let stored: string = telemetry_latest_text(project,
-        u32(rho_int_from_str(project_area_id(project_file(project)))),
-        u32(rho_int_from_str(field(spec, 1))),
-        field_name)
+        project_node_id(file, u32(rho_int_from_str(field(spec, 1)))), field_name)
     return mesh_stored_text(spec, stored)
 }
 
 fn mesh_module_stored_value(project: string, spec: string, field_name: string) string {
-    let parent: string = field(spec, 9)
-    if !rho_str_starts_with(parent, "node.") {
+    let coords: string = mesh_spec_coordinates(project, spec)
+    if coords == "" {
         return ""
     }
-    let parent_index: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
-    let area: u32 = u32(rho_int_from_str(project_area_id(project_file(project))))
-    let node: u32 = u32(rho_int_from_str(parent_index))
-    var stored: string = telemetry_latest_text(project, area, node,
-        "m" + field(spec, 1) + "." + field_name)
-    if stored == "" {
-        // A node flashed before the module prefix published the bare field.
-        stored = telemetry_latest_text(project, area, node, field_name)
-    }
-    return mesh_stored_text(spec, stored)
+    return mesh_stored_text(spec, telemetry_latest_text(project, field(coords, 0), field(coords, 1)))
 }
 
 fn mesh_source_value(project: string, source: string) string {
@@ -2624,6 +2689,8 @@ fn mesh_node_post_inner(req: Request) Response {
                 return mesh_node_page(req)
             }
             save_setting("node.count", rho_int_to_str(index))
+            save_setting(prefix + "id", "")
+            save_setting(prefix + "uid", "")
             save_setting(prefix + "kind", "device")
             save_setting(prefix + "name", form_value(body, "name"))
             save_setting(prefix + "description", form_value(body, "description"))
@@ -2650,6 +2717,8 @@ fn mesh_node_post_inner(req: Request) Response {
                 return mesh_node_page(req)
             }
             save_setting("node.count", rho_int_to_str(index))
+            save_setting(prefix + "id", "")
+            save_setting(prefix + "uid", "")
             save_setting(prefix + "kind", "module")
             save_setting(prefix + "name", form_value(body, "name"))
             save_setting(prefix + "description", form_value(body, "description"))
@@ -2673,6 +2742,8 @@ fn mesh_node_post_inner(req: Request) Response {
             return mesh_page(req)
         }
         save_setting("node.count", rho_int_to_str(index))
+        save_setting(prefix + "id", "")
+        save_setting(prefix + "uid", "")
         save_setting(prefix + "kind", "compute")
         save_setting(prefix + "name", form_value(body, "name"))
         save_setting(prefix + "description", form_value(body, "description"))
@@ -2706,6 +2777,10 @@ fn mesh_node_post_inner(req: Request) Response {
         while j < count {
             let from: string = "node." + rho_int_to_str(j + 1) + "."
             let to: string = "node." + rho_int_to_str(j) + "."
+            // A node's identity moves with it: the device in this row is the
+            // one that was in the next, and its series and session are its own.
+            save_setting(to + "id", state_value(from + "id"))
+            save_setting(to + "uid", state_value(from + "uid"))
             save_setting(to + "kind", state_value(from + "kind"))
             save_setting(to + "name", state_value(from + "name"))
             save_setting(to + "description", state_value(from + "description"))
@@ -2747,6 +2822,8 @@ fn mesh_node_post_inner(req: Request) Response {
             j = j + 1
         }
         let last: string = "node." + rho_int_to_str(count) + "."
+        save_setting(last + "id", "")
+        save_setting(last + "uid", "")
         save_setting(last + "kind", "")
         save_setting(last + "name", "")
         save_setting(last + "description", "")

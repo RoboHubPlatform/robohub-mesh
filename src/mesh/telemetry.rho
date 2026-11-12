@@ -14,17 +14,19 @@ module mesh.telemetry
 
 extern fn telemetry_open(path: string) bool
 extern fn telemetry_poll(project: string, gateway_id: string, gateway_url: string, token: string, events_path: string) string
-extern fn telemetry_feed_record(path: string, project: string, area_id: u32, node_id: u32, field_name: string, value: string, status: u32) bool
+extern fn telemetry_feed_record(path: string, project: string, source: string, field_name: string, value: string, status: u32) bool
 extern fn telemetry_latest_events(project: string) string
 extern fn rho_service_token(audience: string, scopes: string) string
 extern fn telemetry_status(project: string) string
-extern fn telemetry_latest(project: string, area_id: u32, node_id: u32, field_name: string) string
-extern fn telemetry_latest_text(project: string, area_id: u32, node_id: u32, field_name: string) string
-extern fn telemetry_series(project: string, area_id: u32, node_id: u32, field_name: string, from_ms: string, to_ms: string, step_ms: string) string
+extern fn telemetry_latest(project: string, source: string, field_name: string) string
+extern fn telemetry_latest_text(project: string, source: string, field_name: string) string
+extern fn telemetry_series(project: string, source: string, field_name: string, from_ms: string, to_ms: string, step_ms: string) string
+extern fn telemetry_source_bind(project: string, source: string, gateway: string, area_id: u32, node_id: u32, label: string, module_id: string) string
+extern fn telemetry_sources(project: string) string
 extern fn telemetry_sleep(ms: u32) void
 extern fn telemetry_prune(project: string, raw_days: u32, minute_days: u32, hour_days: u32) string
 extern fn telemetry_rollup(project: string) string
-extern fn telemetry_record(project: string, area_id: u32, node_id: u32, field_name: string, value: string, status: u32) u32
+extern fn telemetry_record(project: string, source: string, field_name: string, value: string, status: u32) u32
 extern fn telemetry_json_number(document: string, path: string, scale: string) string
 extern fn telemetry_json_bool(document: string, path: string) string
 extern fn telemetry_checkpoint(mode: string) string
@@ -126,11 +128,11 @@ fn telemetry_snapshot_file(project: string) string {
     return project_location(project) + "/telemetry-snapshot.jsonl"
 }
 
-fn telemetry_record_event(project: string, area: u32, node: u32, field_name: string,
+fn telemetry_record_event(project: string, source: string, field_name: string,
     value: string, status: u32) u32 {
-    let code: u32 = telemetry_record(project, area, node, field_name, value, status)
-    if code == 0 {
-        ignore_bool(telemetry_feed_record(telemetry_event_stream(project), project, area, node,
+    let code: u32 = telemetry_record(project, source, field_name, value, status)
+    if code != 0 {
+        ignore_bool(telemetry_feed_record(telemetry_event_stream(project), project, source,
             field_name, value, status))
     }
     return code
@@ -355,7 +357,10 @@ fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
     if body == "" {
         return 0
     }
-    let area: u32 = u32(rho_int_from_str(project_area_id(file)))
+    let source: string = project_node_id(file, index)
+    if source == "" {
+        return 0
+    }
     var rest: string = fields
     var recorded: u32 = 0
     while rest != "" {
@@ -383,16 +388,16 @@ fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
         if kind == "bool" {
             let value: string = telemetry_json_bool(body, json_path)
             if value == "true" {
-                ignore_u32(telemetry_record_event(project, area, index, field_name, "1", 0))
+                ignore_u32(telemetry_record_event(project, source, field_name, "1", 0))
                 recorded = recorded + 1
             } else if value == "false" {
-                ignore_u32(telemetry_record_event(project, area, index, field_name, "0", 0))
+                ignore_u32(telemetry_record_event(project, source, field_name, "0", 0))
                 recorded = recorded + 1
             }
         } else {
             let value: string = telemetry_json_number(body, json_path, scale)
             if value != "" {
-                ignore_u32(telemetry_record_event(project, area, index, field_name, value, 0))
+                ignore_u32(telemetry_record_event(project, source, field_name, value, 0))
                 recorded = recorded + 1
             }
         }
@@ -401,6 +406,54 @@ fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
         ignore_string(telemetry_rollup(project))
     }
     return recorded
+}
+
+// telemetry_bind_plan tells the store where each of a project's reporting nodes
+// sits: a board and a device report from their area and node, and a reading that
+// arrives without its board's identity is placed by that. It writes only when
+// the placement changed since it last did, so a steady plan costs a file read.
+fn telemetry_bind_plan(project: string, file: string) void {
+    let area: string = project_area_id(file)
+    let gateway: string = project + "@" + mesh_project_gateway(project)
+    let count: u32 = project_node_count_at(file)
+    var placement: string = gateway + "\n"
+    var index: u32 = 1
+    while index <= count {
+        let kind: string = project_node_value(file, index, "kind", "compute")
+        if kind == "compute" || kind == "device" {
+            placement = placement + project_node_id(file, index) + "|" + area + "|" +
+                rho_int_to_str(index) + "|" + project_node_value(file, index, "name", "") + "|" +
+                project_node_value(file, index, "device", project_node_value(file, index, "board", "")) + "\n"
+        }
+        index = index + 1
+    }
+    let marker: string = project_location(project) + "/telemetry-bound.txt"
+    if rho_read_text(marker) == placement {
+        return
+    }
+    var ok: bool = true
+    index = 1
+    while index <= count {
+        let kind: string = project_node_value(file, index, "kind", "compute")
+        let id: string = project_node_id(file, index)
+        if (kind == "compute" || kind == "device") && id != "" {
+            var module_id: string = ""
+            let device: string = project_node_value(file, index, "device", "")
+            if device != "" {
+                module_id = yaml.value(device_manifest(device), "module.id")
+            }
+            let bound: string = telemetry_source_bind(project, id, gateway,
+                u32(rho_int_from_str(area)), index, project_node_value(file, index, "name", ""), module_id)
+            if rho_str_index_of(bound, "\"ok\":true") < 0 {
+                ok = false
+                warn("mesh", "telemetry source " + id + " could not be bound: " + bound)
+            }
+        }
+        index = index + 1
+    }
+    if ok {
+        ignore_bool(rho_write_text(marker, placement))
+    }
 }
 
 // telemetry_device_poll_once reads the HTTP devices in every project. A device
@@ -424,6 +477,7 @@ fn telemetry_device_poll_once() void {
             continue
         }
         let file: string = project_file(project)
+        telemetry_bind_plan(project, file)
         let count: u32 = u32(rho_int_from_str(state_value_in(file, "node.count")))
         var index: u32 = 1
         while index <= count {
@@ -486,43 +540,57 @@ fn telemetry_worker() void {
     }
 }
 
-// mesh_source_coordinates maps a source ID to the device key and field a
-// reading was stored under. A module source belongs to the node it extends; a
-// device source uses the device id the plan recorded, or the node index when it
-// has none.
+// mesh_source_coordinates maps a source ID to the store's source and field a
+// reading was kept under: `<source>|<field>`.
 fn mesh_source_coordinates(project: string, source: string) string {
     let spec: string = mesh_source_spec(project, source)
     if spec == "" {
         return ""
     }
+    return mesh_spec_coordinates(project, spec)
+}
+
+// mesh_spec_coordinates is where a resolved source's readings are. A device
+// reports as itself. A module reports through the board it extends, under that
+// board's id, with its field tagged by the module's own id; firmware built
+// before that tag published `m<index>.<field>`, and before that the bare field,
+// so the newest of the three that has readings is the series.
+fn mesh_spec_coordinates(project: string, spec: string) string {
+    let file: string = project_file(project)
     let kind: string = field(spec, 0)
+    let index: u32 = u32(rho_int_from_str(field(spec, 1)))
     let field_name: string = field(spec, 3)
-    let area: string = project_area_id(project_file(project))
-    if kind == "module" {
-        let parent: string = field(spec, 9)
-        if !rho_str_starts_with(parent, "node.") {
+    if kind == "device" {
+        let device: string = project_node_id(file, index)
+        if device == "" {
             return ""
         }
-        let node: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
-        // The firmware prefixes a module's field with its plan index, so two
-        // sensors measuring the same quantity on one node stay two series.
-        // A node flashed before that prefix existed published the bare field;
-        // when only the bare field has readings, serve that series.
-        let prefixed: string = "m" + field(spec, 1) + "." + field_name
-        if telemetry_latest_text(project, u32(rho_int_from_str(area)),
-            u32(rho_int_from_str(node)), prefixed) == "" {
-            return area + "|" + node + "|" + field_name
-        }
-        return area + "|" + node + "|" + prefixed
+        return device + "|" + field_name
     }
-    if kind == "device" {
-        // A device is addressed by its node in the plan, which is also the
-        // identity the generated device node publishes under and the one the
-        // Mesh poller stores. The gateway's own device numbering is for its
-        // control endpoint, not for a series.
-        return area + "|" + field(spec, 1) + "|" + field_name
+    if kind != "module" {
+        return ""
     }
-    return ""
+    let parent: string = field(spec, 9)
+    if !rho_str_starts_with(parent, "node.") {
+        return ""
+    }
+    let board: string = project_node_id(file,
+        u32(rho_int_from_str(rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))))
+    if board == "" {
+        return ""
+    }
+    let tagged: string = project_module_tag(file, index) + "." + field_name
+    if telemetry_latest_text(project, board, tagged) != "" {
+        return board + "|" + tagged
+    }
+    let indexed: string = "m" + field(spec, 1) + "." + field_name
+    if telemetry_latest_text(project, board, indexed) != "" {
+        return board + "|" + indexed
+    }
+    if telemetry_latest_text(project, board, field_name) != "" {
+        return board + "|" + field_name
+    }
+    return board + "|" + tagged
 }
 
 fn mesh_api_telemetry_status(req: Request) Response {
@@ -543,10 +611,8 @@ fn mesh_api_telemetry_latest(req: Request) Response {
     if coords == "" {
         return json(404, "{\"ok\":false,\"error\":\"unknown source\"}")
     }
-    return Response{ 200, telemetry_latest(project,
-        u32(rho_int_from_str(field(coords, 0))),
-        u32(rho_int_from_str(field(coords, 1))),
-        field(coords, 2)), "application/json", "" }
+    return Response{ 200, telemetry_latest(project, field(coords, 0), field(coords, 1)),
+        "application/json", "" }
 }
 
 fn mesh_api_telemetry_series(req: Request) Response {
@@ -562,10 +628,7 @@ fn mesh_api_telemetry_series(req: Request) Response {
     if coords == "" {
         return json(404, "{\"ok\":false,\"error\":\"unknown source\"}")
     }
-    return Response{ 200, telemetry_series(project,
-        u32(rho_int_from_str(field(coords, 0))),
-        u32(rho_int_from_str(field(coords, 1))),
-        field(coords, 2),
+    return Response{ 200, telemetry_series(project, field(coords, 0), field(coords, 1),
         request_query_param(req, "from"),
         request_query_param(req, "to"),
         request_query_param(req, "step")), "application/json", "" }

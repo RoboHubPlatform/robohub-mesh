@@ -477,14 +477,24 @@ An application reads it through the gateway contract, or directly through Mesh:
 - `GET /mesh/api/projects/{project}/telemetry/series?source=<source>&from=<ms>&to=<ms>&step=<ms>`
   — raw readings when `step` is absent or zero, averaged into buckets otherwise.
 
-A source is the same ID `/sources` publishes (`device.3.power`,
-`module.2.temperature`). That ID is unique within a project, but it is not the
-identity a stored series is keyed on: the object also carries `module_id`
-(the device integration or board), `driver_id` (the driver that produces the
-signal, when one does), `source`, `project` and `instance`. `source` is
-`<driver_id or module_id>.<signal.id>` and `instance` is `area:node`, so two
-modules with the same name in different repositories, or two instances of one
-module, are different series. Its object carries `history_path` and, when Mesh
+A source is the same ID `/sources` publishes: `<node id>.<signal>`, such as
+`ba06f37ca34ba32c.power`. Every node in the plan has an id, made once when it is
+first needed and kept in the plan; it moves with the node when the plan is
+reordered and goes with it when it is removed, so a node added later is never
+given another's history. A board opens its session with its id, and its
+readings are kept under it. The older form, `<kind>.<index>.<signal>`
+(`device.3.power`), still resolves and is published as `legacy_id`, so a
+dashboard saved before keeps working. The object also carries `module_id` (the
+device integration or board), `driver_id` (the driver that produces the signal,
+when one does), `source` (`<driver_id or module_id>.<signal.id>`), `project` and
+`instance`, which is the node id.
+
+The store keys a series by source and field, never by area and node. Mesh tells
+it where each board and device sits (`telemetry_source`), so a reading that
+arrives without its board's identity is still placed, and a store written
+before sources is migrated in place, each old series adopted by the node at its
+area and node. A board that reports from a place the plan gives another is
+recorded as a fault and kept as its own series, never merged. Its object carries `history_path` and, when Mesh
 knows its own origin, `history_url`, so a dashboard can ask for a chart without
 knowing the area, node or field the reading was stored under.
 
@@ -511,9 +521,11 @@ The descriptors are the contract:
 - a board module names its BSP header and entry point under `telemetry:` and
   carries the signals it exposes under `signals:`.
 
-The generated field is `m<node-index>.<field>`. Two modules that both measure
-temperature on one node therefore become two series, and the source ID the
-application already uses (`module.3.temperature`) resolves to the right one.
+The generated field is `<tag>.<field>`, where the tag is the start of the
+module's own id. Two modules that both measure temperature on one node therefore
+become two series, and a module put where a removed one was is a new series.
+Firmware built before the tag wrote `m<node-index>.<field>`, and older firmware
+the bare field; a source reads whichever of the three its board reports.
 The source object also names the board (`module_id`) and the driver
 (`driver_id`), which is what makes the series identifiable when two
 repositories use the same module name.
