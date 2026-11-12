@@ -1,0 +1,22 @@
+# CI for this repository: the RoboHub workflow every repository in the
+# ecosystem calls, so the steps are written once (robohub/.github/workflows).
+#
+# Mesh builds beside robohub, which carries the shared modules it declares under
+# `deps: robohub:` and the registry of boards it plans with.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: RoboHubPlatform/robohub/.github/workflows/robohub-ci.yml@main
+    secrets: inherit
+    with:
+      siblings: robohub robohub-drivers robohub-devices
+      components: rho-auth rho-log rho-sql rho-sql-sqlite rho-robohub
+      build: .

@@ -188,3 +188,18 @@ bottom-left beside “Operations for …”; the top menu keeps the global items
 both settings links read simply “Settings”. Settings has a Logging tab: level,
 text/JSON, a rotating file under the user state directory, size, retention and
 stderr.
+
+## [0.6.0] - 2026-11-12
+
+Mesh lives in its own repository, robohub-mesh, with its history. It builds
+beside a robohub checkout: the modules it declares under `deps: robohub:` are
+found in the workspace's robohub repository, and the keeper finds it through
+the orchestrator's registry.
+
+Forms answer with a redirect, so a reload never repeats an action, and each
+outcome is shown once. A name, a description or a device address is saved
+without reopening the topology; a change to board, parent, link, modules or
+device still reopens it, and the form says so before it is saved. Back links
+lead to the plan. The node form keeps a link set in the network step, a console
+link keeps its baud, devices are no longer offered as module parents, and fault
+Clear posts to the route that exists.

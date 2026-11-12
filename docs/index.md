@@ -341,7 +341,7 @@ lines and the server-side is reset before each action.
 ## Tests
 
 ```sh
-rho test applications/mesh
+rho test .
 ```
 
 The Rho unit suite checks the wizard's string helpers. The smoke suite builds

@@ -1,0 +1,9 @@
+# Build output, and the project the toolchain generates into it.
+build/
+
+# Python's caches from the smoke test.
+__pycache__/
+
+# Editor files.
+*.swp
+*~

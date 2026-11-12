@@ -11,7 +11,7 @@ planner's promise is that its lists come from there.
 
 Run from anywhere:
 
-    python3 applications/mesh/tests/wizard_smoke.py
+    python3 tests/wizard_smoke.py
 """
 
 import json
@@ -28,8 +28,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve()
 MESH = HERE.parents[1]
-ROBOHUB = MESH.parents[1]
-PROJECTS = ROBOHUB.parent
+# The workspace: the directory the ecosystem's checkouts sit in, robohub (the
+# registry of boards and drivers) and rho among them.
+PROJECTS = Path(os.environ.get("ROBOHUB_WORKSPACE") or os.environ.get("RHO_WORKSPACE") or MESH.parent)
 RHO = PROJECTS / "rho" / "bin" / "rho"
 # The bearer token every request carries: a ticket the keeper would issue,
 # minted by the test with a key pair of its own (see mint_token).
