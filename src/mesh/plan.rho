@@ -1,5 +1,7 @@
 module mesh.plan
 
+include "domain/plan_text.rho"
+
 // The plan store.
 //
 // A project's plan is plan.yml in its folder: the nodes, links, modules and
@@ -80,48 +82,7 @@ fn plan_revision(path: string) u32 {
     return u32(rho_int_from_str(plan_value(rho_yaml_flat(path), "revision")))
 }
 
-// plan_value is one key's value in flat plan text.
-fn plan_value(text: string, key: string) string {
-    let prefix: string = key + "="
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        if rho_str_index_of(line, prefix) == 0 {
-            return rho_str_slice(line, u32(rho_strlen(prefix)), u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
-        }
-    }
-    return ""
-}
 
-// plan_without is flat plan text without the lines of one key, and without
-// empty lines.
-fn plan_without(text: string, key: string) string {
-    let prefix: string = key + "="
-    var out: string = ""
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        if line == "" || rho_str_index_of(line, prefix) == 0 {
-            continue
-        }
-        out = out + line + "\n"
-    }
-    return out
-}
 
 // plan_write replaces a plan with flat text, as the next revision.
 fn plan_write(path: string, text: string) bool {
@@ -194,38 +155,7 @@ fn plan_keep_revision(path: string, revision: u32) void {
     }
 }
 
-// plan_node_key is the row a node key belongs to and the rest of the key:
-// `node.3.parent` is 3 and "parent"; any other key is 0.
-fn plan_node_row(key: string) u32 {
-    if rho_str_index_of(key, "node.") != 0 {
-        return 0
-    }
-    let rest: string = rho_str_slice(key, 5, u32(rho_strlen(key)) - 5)
-    let dot: i32 = rho_str_index_of(rest, ".")
-    if dot <= 0 {
-        return 0
-    }
-    return u32(rho_int_from_str(rho_str_slice(rest, 0, u32(dot))))
-}
 
-// plan_shift_reference is a row reference after row `removed` is gone:
-// `node.K` past it moves up one, and the row itself becomes the gateway.
-fn plan_shift_reference(value: string, removed: u32) string {
-    if rho_str_index_of(value, "node.") != 0 {
-        return value
-    }
-    let row: u32 = u32(rho_int_from_str(rho_str_slice(value, 5, u32(rho_strlen(value)) - 5)))
-    if row == 0 || !rho_str_eq(value, "node." + rho_int_to_str(row)) {
-        return value
-    }
-    if row == removed {
-        return "gateway"
-    }
-    if row > removed {
-        return "node." + rho_int_to_str(row - 1)
-    }
-    return value
-}
 
 // plan_remove_node removes one node from a plan in one write: its keys go, the
 // rows after it move up one with every key they have, the references to rows
@@ -237,54 +167,7 @@ fn plan_remove_node(path: string, index: u32) bool {
         return false
     }
     rho_lock("mesh.plan:" + path)
-    let text: string = plan_view(rho_yaml_flat(path))
-    var out: string = ""
-    var count: u32 = 0
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        let equals: i32 = rho_str_index_of(line, "=")
-        if equals <= 0 {
-            continue
-        }
-        var key: string = rho_str_slice(line, 0, u32(equals))
-        var value: string = rho_str_slice(line, u32(equals) + 1, u32(rho_strlen(line)) - u32(equals) - 1)
-        if rho_str_eq(key, "node.count") {
-            count = u32(rho_int_from_str(value))
-            continue
-        }
-        let row: u32 = plan_node_row(key)
-        if row == index {
-            continue
-        }
-        if row > index {
-            let tail: string = rho_str_slice(key, 5 + u32(rho_strlen(rho_int_to_str(row))),
-                u32(rho_strlen(key)) - 5 - u32(rho_strlen(rho_int_to_str(row))))
-            key = "node." + rho_int_to_str(row - 1) + tail
-        }
-        // A status kept per row moves with its row too.
-        if rho_str_index_of(key, "status.node.") == 0 {
-            let status_row: u32 = u32(rho_int_from_str(rho_str_slice(key, 12, u32(rho_strlen(key)) - 12)))
-            if status_row == index {
-                continue
-            }
-            if status_row > index {
-                key = "status.node." + rho_int_to_str(status_row - 1)
-            }
-        }
-        out = out + key + "=" + plan_shift_reference(value, index) + "\n"
-    }
-    if count > 0 {
-        count = count - 1
-    }
-    let written: bool = plan_write_held(path, out + "node.count=" + rho_int_to_str(count) + "\n")
+    let written: bool = plan_write_held(path, plan_text_remove_node(plan_view(rho_yaml_flat(path)), index))
     rho_unlock("mesh.plan:" + path)
     return written
 }
@@ -318,191 +201,8 @@ fn plan_set_many(path: string, lines: string) bool {
     return written
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Parents by number                                                         */
-/* -------------------------------------------------------------------------- */
-//
-// plan.yml names a node's parent by the parent's number — `parent_node: 7` —
-// which stays with the parent whatever happens to the rows around it. The pages
-// read and write the row form, `parent=node.3`; plan_view turns the stored form
-// into it on every read, and plan_stored turns it back on every write, giving
-// every node its number first.
 
-// plan_line_key and plan_line_value split a flat line at its first "=".
-fn plan_line_key(line: string) string {
-    let equals: i32 = rho_str_index_of(line, "=")
-    if equals <= 0 {
-        return ""
-    }
-    return rho_str_slice(line, 0, u32(equals))
-}
 
-fn plan_line_value(line: string) string {
-    let equals: i32 = rho_str_index_of(line, "=")
-    if equals <= 0 {
-        return ""
-    }
-    return rho_str_slice(line, u32(equals) + 1, u32(rho_strlen(line)) - u32(equals) - 1)
-}
 
-// plan_row_field is the field of a row key — "parent" of `node.3.parent` — or
-// "" for any other key.
-fn plan_row_field(key: string) string {
-    let row: u32 = plan_node_row(key)
-    if row == 0 {
-        return ""
-    }
-    let head: u32 = 6 + u32(rho_strlen(rho_int_to_str(row)))
-    if u32(rho_strlen(key)) <= head {
-        return ""
-    }
-    return rho_str_slice(key, head, u32(rho_strlen(key)) - head)
-}
 
-// plan_lookup finds `|key=value|` in a lookup string and answers the value.
-fn plan_lookup(table: string, key: string) string {
-    let at: i32 = rho_str_index_of(table, "|" + key + "=")
-    if at < 0 {
-        return ""
-    }
-    let start: u32 = u32(at) + u32(rho_strlen(key)) + 2
-    let rest: string = rho_str_slice(table, start, u32(rho_strlen(table)) - start)
-    let end: i32 = rho_str_index_of(rest, "|")
-    if end < 0 {
-        return rest
-    }
-    return rho_str_slice(rest, 0, u32(end))
-}
 
-// plan_view is stored plan text in the row form the pages read.
-fn plan_view(stored: string) string {
-    if rho_str_index_of(stored, ".parent_node=") < 0 {
-        return stored
-    }
-    var rows: string = "|"
-    var rest: string = stored
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        let key: string = plan_line_key(line)
-        if rho_str_eq(plan_row_field(key), "number") {
-            rows = rows + plan_line_value(line) + "=" + rho_int_to_str(plan_node_row(key)) + "|"
-        }
-    }
-    var out: string = ""
-    rest = stored
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        let key: string = plan_line_key(line)
-        if rho_str_eq(plan_row_field(key), "parent_node") {
-            let row: string = plan_lookup(rows, plan_line_value(line))
-            var parent: string = "gateway"
-            if row != "" {
-                parent = "node." + row
-            }
-            out = out + "node." + rho_int_to_str(plan_node_row(key)) + ".parent=" + parent + "\n"
-            continue
-        }
-        if line != "" {
-            out = out + line + "\n"
-        }
-    }
-    return out
-}
-
-// plan_stored is row-form plan text in the stored form: every node numbered,
-// and a parent that is a node named by its number.
-fn plan_stored(view: string) string {
-    let count: u32 = u32(rho_int_from_str(plan_value(view, "node.count")))
-    var numbers: string = "|"
-    var taken: string = "|"
-    var highest: u32 = u32(rho_int_from_str(plan_value(view, "node.next_number")))
-    var rest: string = view
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        let key: string = plan_line_key(line)
-        if rho_str_eq(plan_row_field(key), "number") {
-            let number: u32 = u32(rho_int_from_str(plan_line_value(line)))
-            if number > 0 && plan_node_row(key) <= count {
-                numbers = numbers + rho_int_to_str(plan_node_row(key)) + "=" + rho_int_to_str(number) + "|"
-                taken = taken + rho_int_to_str(number) + "|"
-                if number >= highest {
-                    highest = number + 1
-                }
-            }
-        }
-    }
-    if highest == 0 {
-        highest = 1
-    }
-    // A node without a number gets its row number when no node has it and the
-    // counter has not passed it, otherwise the next number never used.
-    var assigned: string = ""
-    var row: u32 = 1
-    while row <= count {
-        if plan_lookup(numbers, rho_int_to_str(row)) == "" {
-            var chosen: u32 = row
-            if rho_str_index_of(taken, "|" + rho_int_to_str(row) + "|") >= 0 || row < highest {
-                chosen = highest
-            }
-            numbers = numbers + rho_int_to_str(row) + "=" + rho_int_to_str(chosen) + "|"
-            taken = taken + rho_int_to_str(chosen) + "|"
-            if chosen >= highest {
-                highest = chosen + 1
-            }
-            assigned = assigned + "node." + rho_int_to_str(row) + ".number=" + rho_int_to_str(chosen) + "\n"
-        }
-        row = row + 1
-    }
-    var out: string = ""
-    rest = view
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        let key: string = plan_line_key(line)
-        if line == "" || rho_str_eq(key, "node.next_number") {
-            continue
-        }
-        if rho_str_eq(plan_row_field(key), "parent") {
-            let value: string = plan_line_value(line)
-            if rho_str_index_of(value, "node.") == 0 {
-                let number: string = plan_lookup(numbers, rho_str_slice(value, 5, u32(rho_strlen(value)) - 5))
-                if number != "" {
-                    out = out + "node." + rho_int_to_str(plan_node_row(key)) + ".parent_node=" + number + "\n"
-                    continue
-                }
-            }
-        }
-        out = out + line + "\n"
-    }
-    if count == 0 {
-        return out + assigned
-    }
-    return out + assigned + "node.next_number=" + rho_int_to_str(highest) + "\n"
-}

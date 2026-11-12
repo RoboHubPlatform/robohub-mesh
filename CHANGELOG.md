@@ -243,3 +243,8 @@ plan.yml names a node's parent by the parent's number (`parent_node: 7`), which
 stays with the parent whatever happens to the rows around it; the pages still
 read and write the row form, translated on every read and write. A plan written
 before is converted the first time it is saved.
+
+The planning rules have a home of their own, src/mesh/domain/, with unit tests:
+the plan as text (the stored and the row form, numbering, removing a node), the
+rule for which link joins two boards, and the impact table that says which node
+fields a build depends on and which steps reopen after which.

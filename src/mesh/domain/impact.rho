@@ -1,0 +1,52 @@
+module mesh.domain.impact
+
+// What an edit costs.
+//
+// A node's build depends on some of its fields and not others: a new board or a
+// new parent means building and programming again, a new name does not. And
+// each stage of the wizard builds on the ones before it, so reopening one
+// reopens every later one. Both are written here once, as data, and tested on
+// their own (tests/domain_test.rho).
+
+// IMPACT_FIELDS are the node fields a build depends on.
+const IMPACT_FIELDS: string = "kind role board parent link module device transport"
+
+// impact_structural reports whether a change to a node field reopens the
+// topology.
+fn impact_structural(field: string) bool {
+    var rest: string = IMPACT_FIELDS
+    while rest != "" {
+        let at: i32 = str_index_of(rest, " ")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if str_eq(item, field) {
+            return true
+        }
+    }
+    return false
+}
+
+// impact_steps are the steps reopened when a stage is: every one after it.
+fn impact_steps(stage: string) string {
+    if str_eq(stage, "topology") {
+        return "step_network step_build step_verify"
+    }
+    if str_eq(stage, "network") {
+        return "step_build step_verify"
+    }
+    if str_eq(stage, "build") {
+        return "step_verify"
+    }
+    return ""
+}
+
+// impact_resets_builds reports whether reopening a stage throws away what was
+// built: a new topology or network means every node is built again.
+fn impact_resets_builds(stage: string) bool {
+    return str_eq(stage, "topology") || str_eq(stage, "network")
+}

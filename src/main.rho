@@ -4,6 +4,8 @@ module mesh
 // It is standalone on its own port and can be launched by the keeper.
 
 include "mesh/storage.rho"
+include "mesh/domain/transport.rho"
+include "mesh/domain/impact.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
 include "mesh/wizard.rho"

@@ -1,0 +1,72 @@
+module mesh.domain.transport
+
+// Which link may join a parent and a child board.
+//
+// The rule is read from the boards' capabilities alone — the links they
+// declare, whether they are a host, wireless or wired, and their buses — so it
+// is the same rule for a board the registry carries today and one added
+// tomorrow, and it is tested without a registry (tests/domain_test.rho).
+
+struct BoardCaps {
+    links: string
+    host: bool
+    wireless: bool
+    ethernet: bool
+    buses: string
+}
+
+// caps_words_has reports whether a space-separated list holds a word.
+fn caps_words_has(words: string, word: string) bool {
+    var rest: string = words
+    while rest != "" {
+        let at: i32 = str_index_of(rest, " ")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if str_eq(item, word) {
+            return true
+        }
+    }
+    return false
+}
+
+// transport_fits is whether `transport` may join `parent` to `child`.
+//
+// The console is a host's byte stream: the parent must be a host, and a board
+// that declares its links must list it. Otherwise, when both boards declare
+// their links, both must list the transport. Without declared links the
+// transport is matched against what the boards are: wifi needs both wireless,
+// ethernet both wired, a socket both on a network or a host, and anything else
+// is a bus both boards have.
+fn transport_fits(transport: string, parent: BoardCaps, child: BoardCaps) bool {
+    if str_eq(transport, "console") {
+        if !parent.host {
+            return false
+        }
+        if parent.links != "" && !caps_words_has(parent.links, "console") {
+            return false
+        }
+        if child.links != "" && !caps_words_has(child.links, "console") {
+            return false
+        }
+        return true
+    }
+    if parent.links != "" && child.links != "" {
+        return caps_words_has(parent.links, transport) && caps_words_has(child.links, transport)
+    }
+    if str_eq(transport, "wifi") {
+        return parent.wireless && child.wireless
+    }
+    if str_eq(transport, "ethernet") {
+        return parent.ethernet && child.ethernet
+    }
+    if str_eq(transport, "socket") {
+        return (parent.wireless || parent.ethernet || parent.host) &&
+            (child.wireless || child.ethernet || child.host)
+    }
+    return caps_words_has(parent.buses, transport) && caps_words_has(child.buses, transport)
+}

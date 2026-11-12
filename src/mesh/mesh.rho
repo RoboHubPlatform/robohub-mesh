@@ -552,46 +552,20 @@ fn transport_universe() string {
     return "uart wifi"
 }
 
+// transport_allowed is the transport rule (domain/transport.rho) for two boards
+// of the registry, by their capabilities.
 fn transport_allowed(transport: string, parent_board: string, child_board: string) bool {
-    let parent_links: string = board_cap(parent_board, "links")
-    let child_links: string = board_cap(child_board, "links")
-    if transport == "console" {
-        // The console is a host's byte stream. A relay is a board with its own
-        // links; a host/board that declares `console` in its links can still
-        // serve it, which is why this is a capability and not a board name.
-        if board_cap(parent_board, "host") != "true" {
-            return false
-        }
-        if parent_links != "" && !words_contain(parent_links, "console") {
-            return false
-        }
-        if child_links != "" && !words_contain(child_links, "console") {
-            return false
-        }
-        return true
+    return transport_fits(transport, board_caps(parent_board), board_caps(child_board))
+}
+
+fn board_caps(board: string) BoardCaps {
+    return BoardCaps{
+        board_cap(board, "links"),
+        board_cap(board, "host") == "true",
+        board_cap(board, "wireless") == "true",
+        board_cap(board, "ethernet") == "true",
+        board_cap(board, "buses")
     }
-    if parent_links != "" && child_links != "" {
-        return words_contain(parent_links, transport) && words_contain(child_links, transport)
-    }
-    if transport == "wifi" {
-        return board_cap(parent_board, "wireless") == "true" &&
-            board_cap(child_board, "wireless") == "true"
-    }
-    if transport == "ethernet" {
-        return board_cap(parent_board, "ethernet") == "true" &&
-            board_cap(child_board, "ethernet") == "true"
-    }
-    if transport == "socket" {
-        let parent_net: bool = board_cap(parent_board, "wireless") == "true" ||
-            board_cap(parent_board, "ethernet") == "true" ||
-            board_cap(parent_board, "host") == "true"
-        let child_net: bool = board_cap(child_board, "wireless") == "true" ||
-            board_cap(child_board, "ethernet") == "true" ||
-            board_cap(child_board, "host") == "true"
-        return parent_net && child_net
-    }
-    return words_contain(board_cap(parent_board, "buses"), transport) &&
-        words_contain(board_cap(child_board, "buses"), transport)
 }
 
 fn transport_label(transport: string) string {
@@ -878,15 +852,29 @@ fn mesh_link_options(link: string) string {
     return options
 }
 
-// node_structure is what of a node a build depends on: its kind, role, board,
-// parent, link, modules and device. A name, a description or a device's
-// address is not, so a change to those leaves the steps where they are.
+// node_structure is what of a node a build depends on: the fields the impact
+// table names (domain/impact.rho). A name, a description or a device's address
+// is not, so a change to those leaves the steps where they are.
 fn node_structure(index: u32) string {
     let prefix: string = "node." + rho_int_to_str(index) + "."
-    return node_kind(index) + "|" + state_value(prefix + "role") + "|" +
-        state_value(prefix + "board") + "|" + state_value(prefix + "parent") + "|" +
-        state_value(prefix + "link") + "|" + state_value(prefix + "module") + "|" +
-        state_value(prefix + "device") + "|" + state_value(prefix + "transport")
+    var out: string = ""
+    var rest: string = IMPACT_FIELDS
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var field: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            field = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if field == "kind" {
+            out = out + node_kind(index) + "|"
+        } else {
+            out = out + state_value(prefix + field) + "|"
+        }
+    }
+    return out
 }
 
 // mesh_saved settles a node edit: a change a build depends on reopens the
@@ -960,18 +948,22 @@ fn mesh_node_form_url(raw: string, kind: string, parent: string) string {
     return url
 }
 
+// mesh_reset_after reopens every step after a stage, as the impact table says.
 fn mesh_reset_after(stage: string) void {
-    if stage == "topology" {
+    if impact_resets_builds(stage) {
         reset_build_statuses()
-        save_setting("step_network", "pending")
-        save_setting("step_build", "pending")
-        save_setting("step_verify", "pending")
-    } else if stage == "network" {
-        reset_build_statuses()
-        save_setting("step_build", "pending")
-        save_setting("step_verify", "pending")
-    } else if stage == "build" {
-        save_setting("step_verify", "pending")
+    }
+    var rest: string = impact_steps(stage)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var reopened: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            reopened = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        save_setting(reopened, "pending")
     }
 }
 

@@ -1,0 +1,137 @@
+module mesh.domain_test
+
+include "../src/mesh/domain/plan_text.rho"
+include "../src/mesh/domain/transport.rho"
+include "../src/mesh/domain/impact.rho"
+
+// Unit tests for Mesh's domain: the plan as text, the transport rule and the
+// impact table. None of it reads a file, a registry or a board, which is what
+// lets it be tested here rather than through the pages.
+
+extern fn abort()
+
+fn check(condition: bool, what: string) void {
+    if !condition {
+        print("FAIL: " + what + "\n")
+        abort()
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The plan as text                                                          */
+/* -------------------------------------------------------------------------- */
+
+test fn a_parent_is_stored_by_number_and_read_by_row() void {
+    let view: string = "node.count=2\nnode.1.name=Relay\nnode.1.parent=gateway\nnode.2.name=Leaf\nnode.2.parent=node.1\n"
+    let stored: string = plan_stored(view)
+    check(str_eq(plan_value(stored, "node.1.number"), "1"), "a node planned before numbers keeps its row number")
+    check(str_eq(plan_value(stored, "node.2.number"), "2"), "the second keeps its row number too")
+    check(str_eq(plan_value(stored, "node.2.parent_node"), "1"), "the parent is stored by its number")
+    check(str_eq(plan_value(stored, "node.2.parent"), ""), "the row form is not stored")
+    check(str_eq(plan_value(stored, "node.1.parent"), "gateway"), "the gateway is stored as it is")
+    check(str_eq(plan_value(stored, "node.next_number"), "3"), "the counter is past every number")
+    let back: string = plan_view(stored)
+    check(str_eq(plan_value(back, "node.2.parent"), "node.1"), "the pages read the row form")
+    print("[PASS] a_parent_is_stored_by_number_and_read_by_row\n")
+}
+
+test fn a_parent_follows_its_number_when_rows_move() void {
+    // Node 2 is number 7 and its child names it; after node 1 goes, it is row 1.
+    let stored: string = "node.count=3\nnode.1.number=1\nnode.2.number=7\nnode.3.number=8\nnode.3.parent_node=7\nnode.next_number=9\n"
+    let removed: string = plan_text_remove_node(plan_view(stored), 1)
+    check(str_eq(plan_value(removed, "node.count"), "2"), "the count falls by one")
+    check(str_eq(plan_value(removed, "node.1.number"), "7"), "the second node is the first row, with its number")
+    check(str_eq(plan_value(removed, "node.2.parent"), "node.1"), "its child names its new row")
+    check(str_eq(plan_value(plan_stored(removed), "node.2.parent_node"), "7"), "and stores the same number")
+    print("[PASS] a_parent_follows_its_number_when_rows_move\n")
+}
+
+test fn removing_a_node_sends_its_children_to_the_gateway() void {
+    let view: string = "node.count=3\nnode.1.number=1\nnode.2.number=2\nnode.2.parent=node.1\nnode.3.number=3\nnode.3.parent=node.2\nstatus.node.2=built\nstatus.node.3=flashed\n"
+    let removed: string = plan_text_remove_node(view, 2)
+    check(str_eq(plan_value(removed, "node.2.number"), "3"), "the row after moves up with its number")
+    check(str_eq(plan_value(removed, "node.2.parent"), "gateway"), "a child of the removed node goes to the gateway")
+    check(str_eq(plan_value(removed, "status.node.2"), "flashed"), "a status moves with its row")
+    check(str_eq(plan_value(removed, "node.3.number"), ""), "the last row is gone")
+    print("[PASS] removing_a_node_sends_its_children_to_the_gateway\n")
+}
+
+test fn a_new_node_never_takes_a_number_that_was_used() void {
+    // Numbers 1 and 2 were given, node 2 was removed; the new row 2 gets 3.
+    let view: string = "node.count=2\nnode.1.number=1\nnode.2.name=New\nnode.next_number=3\n"
+    let stored: string = plan_stored(view)
+    check(str_eq(plan_value(stored, "node.2.number"), "3"), "the next number never used")
+    check(str_eq(plan_value(stored, "node.next_number"), "4"), "and the counter moves past it")
+    print("[PASS] a_new_node_never_takes_a_number_that_was_used\n")
+}
+
+test fn a_key_is_replaced_not_repeated() void {
+    let text: string = plan_without("a=1\nb=2\nab=3\n", "a") + "a=4\n"
+    check(str_eq(plan_value(text, "a"), "4"), "the new value")
+    check(str_eq(plan_value(text, "ab"), "3"), "a longer key with the same start is kept")
+    print("[PASS] a_key_is_replaced_not_repeated\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Transports                                                                */
+/* -------------------------------------------------------------------------- */
+
+test fn a_transport_fits_what_both_boards_are() void {
+    let pico: BoardCaps = BoardCaps{ "", false, true, false, "uart i2c spi" }
+    let uno: BoardCaps = BoardCaps{ "", false, false, false, "uart i2c" }
+    let host: BoardCaps = BoardCaps{ "", true, true, true, "" }
+    check(transport_fits("wifi", pico, pico), "two wireless boards share wifi")
+    check(!transport_fits("wifi", pico, uno), "a board without radio has no wifi")
+    check(transport_fits("uart", pico, uno), "a bus both have")
+    check(!transport_fits("spi", pico, uno), "a bus only one has")
+    check(transport_fits("socket", host, pico), "a host and a wireless board share a socket")
+    check(transport_fits("console", host, pico), "a host serves a console")
+    check(!transport_fits("console", pico, uno), "a board that is not a host serves none")
+    print("[PASS] a_transport_fits_what_both_boards_are\n")
+}
+
+test fn declared_links_are_the_whole_answer() void {
+    let gateway: BoardCaps = BoardCaps{ "uart console", true, true, false, "" }
+    let relay: BoardCaps = BoardCaps{ "uart wifi", false, true, false, "" }
+    check(transport_fits("uart", gateway, relay), "a link both declare")
+    check(!transport_fits("wifi", gateway, relay), "a link one does not declare, whatever its radio")
+    check(!transport_fits("console", gateway, relay), "a console the child does not declare")
+    print("[PASS] declared_links_are_the_whole_answer\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The impact table                                                          */
+/* -------------------------------------------------------------------------- */
+
+test fn a_build_depends_on_structure_not_on_names() void {
+    check(impact_structural("board"), "a board is built for")
+    check(impact_structural("parent"), "a parent is linked to")
+    check(impact_structural("module"), "a module is compiled in")
+    check(!impact_structural("name"), "a name is not")
+    check(!impact_structural("description"), "nor a description")
+    check(!impact_structural("address"), "nor a device's address")
+    print("[PASS] a_build_depends_on_structure_not_on_names\n")
+}
+
+test fn reopening_a_stage_reopens_every_later_one() void {
+    check(str_eq(impact_steps("topology"), "step_network step_build step_verify"), "after the topology")
+    check(str_eq(impact_steps("network"), "step_build step_verify"), "after the network")
+    check(str_eq(impact_steps("build"), "step_verify"), "after the build")
+    check(str_eq(impact_steps("verify"), ""), "nothing after the last")
+    check(impact_resets_builds("topology") && impact_resets_builds("network") && !impact_resets_builds("build"),
+        "a new topology or network is built again")
+    print("[PASS] reopening_a_stage_reopens_every_later_one\n")
+}
+
+fn main() void {
+    a_parent_is_stored_by_number_and_read_by_row()
+    a_parent_follows_its_number_when_rows_move()
+    removing_a_node_sends_its_children_to_the_gateway()
+    a_new_node_never_takes_a_number_that_was_used()
+    a_key_is_replaced_not_repeated()
+    a_transport_fits_what_both_boards_are()
+    declared_links_are_the_whole_answer()
+    a_build_depends_on_structure_not_on_names()
+    reopening_a_stage_reopens_every_later_one()
+    print("mesh domain tests ok\n")
+}
