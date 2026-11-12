@@ -20,6 +20,7 @@ module:
   version: 0.7.0
   author: Aurel Miron
   maintainer: Aurel Miron
+  license: "MIT"
 description: >
   Plans and runs RoboHub gateway deployments: projects, a gateway and its
   nodes, the network between them, and the firmware on their boards.
