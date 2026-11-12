@@ -4,21 +4,12 @@
 
 targets:
   - id: go-server
-    ports:
-      - logemit
-      - docstore
-      - telemetry
     api:
       public_paths: "/, /mesh, /mesh/docs"
     middleware:
       - name: auth
         options:
           issuer: keeper
-          audience: mesh
-          public_key: ~/.rho/auth/public.pem
-          mode: direct
-          login_url: "/auth/login?audience=mesh"
-          scheme: auto
           # The overview and the documentation are the shop window; the API
           # that reads telemetry, devices and sensors is not.
           skip_paths: "/healthz,/auth/login,/assets,/assets/,/i18n,/auth/callback,/static,/mesh/docs"

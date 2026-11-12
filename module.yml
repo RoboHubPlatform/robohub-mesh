@@ -28,6 +28,12 @@ platform: robohub
 
 main: src/main.rho
 
+# The host ports that supply the foreign functions Mesh declares: docs_* from the
+# documentation store, telemetry_* from the RoboHub integration's telemetry port.
+ports:
+  - docstore
+  - telemetry
+
 build:
   language: go
   targets:
