@@ -422,7 +422,7 @@ fn telemetry_bind_plan(project: string, file: string) void {
         let kind: string = project_node_value(file, index, "kind", "compute")
         if kind == "compute" || kind == "device" {
             placement = placement + project_node_id(file, index) + "|" + area + "|" +
-                rho_int_to_str(index) + "|" + project_node_value(file, index, "name", "") + "|" +
+                rho_int_to_str(project_node_number(file, index)) + "|" + project_node_value(file, index, "name", "") + "|" +
                 project_node_value(file, index, "device", project_node_value(file, index, "board", "")) + "\n"
         }
         index = index + 1
@@ -443,7 +443,7 @@ fn telemetry_bind_plan(project: string, file: string) void {
                 module_id = yaml.value(device_manifest(device), "module.id")
             }
             let bound: string = telemetry_source_bind(project, id, gateway,
-                u32(rho_int_from_str(area)), index, project_node_value(file, index, "name", ""), module_id)
+                u32(rho_int_from_str(area)), project_node_number(file, index), project_node_value(file, index, "name", ""), module_id)
             if rho_str_index_of(bound, "\"ok\":true") < 0 {
                 ok = false
                 warn("mesh", "telemetry source " + id + " could not be bound: " + bound)

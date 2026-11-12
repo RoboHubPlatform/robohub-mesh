@@ -140,6 +140,10 @@ def validate_wizard_schema() -> None:
     if not (go / "src" / "schema").is_dir():
         return
     env = dict(os.environ)
+    # The application finds the toolchain (the documentation generator, the
+    # components) by its home; the test gives the application a HOME of its own,
+    # so the toolchain's home is named before that happens.
+    env.setdefault("RHO_HOME", os.path.join(os.path.expanduser("~"), ".rho"))
     env["ROBOHUB_MESH_WIZARD_DIR"] = str(MESH / "wizard")
     result = subprocess.run(
         ["go", "test", "./src/schema", "-run", "TestKeeperWizardDocuments"],
@@ -189,6 +193,7 @@ def main() -> int:
             "project.name=Old mesh\nnode.count=1\nnode.1.name=Pump: main\nnode.1.parent=gateway\n")
         home = os.path.join(state, "home")
         TOKEN = mint_token(home)
+        env.setdefault("RHO_HOME", os.path.join(os.path.expanduser("~"), ".rho"))
         env["HOME"] = home
         env["RHO_HTTP_ADDR"] = f":{port}"
         process = subprocess.Popen(
@@ -521,12 +526,13 @@ def main() -> int:
 
             wizard_state = Path(state) / "projects" / "default" / "plan.yml"
             saved = plan_flat(wizard_state)
-            # Every save is a revision, and the plan it replaced is kept.
+            # Every save is a revision, and the plan before each edit is kept:
+            # one copy per burst of saves a form makes, the last twenty.
             revision = int(dict(line.split("=", 1) for line in saved.splitlines() if "=" in line)["revision"])
             if revision < 10:
                 raise AssertionError(f"the plan has had many saves but is at revision {revision}")
             kept = sorted(int(p.stem) for p in (wizard_state.parent / "revisions").glob("*.yml"))
-            if not kept or kept[-1] != revision - 1 or len(kept) > 20:
+            if not kept or kept[-1] >= revision or len(kept) > 20:
                 raise AssertionError(f"the revisions kept are {kept} at revision {revision}")
             assert_contains(
                 saved,
@@ -558,6 +564,29 @@ def main() -> int:
                 ],
                 "mesh state",
             )
+
+            # Removing a node moves the rows after it up in one write, and each
+            # node keeps the number its firmware and its telemetry carry.
+            before = int(dict(l.split("=", 1) for l in plan_flat(wizard_state).splitlines() if "=" in l)["revision"])
+            post(base, "/mesh/node/5", {"action": "delete", "kind": "module"})
+            removed = dict(l.split("=", 1) for l in plan_flat(wizard_state).splitlines() if "=" in l)
+            expected = {
+                "node.count": "6",
+                "node.5.module": "ky-013-analog-temperature-sensor-module",
+                "node.5.number": "6",
+                "node.6.module": "ky-018-photoresistor-module",
+                "node.6.number": "7",
+                "node.2.parent": "node.1",
+                "node.2.number": "2",
+                "node.next_number": "8",
+            }
+            for key, value in expected.items():
+                if removed.get(key) != value:
+                    raise AssertionError(f"after removing node 5, {key} = {removed.get(key)!r}, want {value!r}")
+            if "node.7.module" in removed:
+                raise AssertionError("the last row was not removed")
+            if int(removed["revision"]) - before > 20:
+                raise AssertionError("removing a node wrote the plan once per key")
 
             # A project can be made inactive; the Operations menu disappears
             # and a step page returns to the dashboard.

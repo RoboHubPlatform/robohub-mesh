@@ -2580,7 +2580,8 @@ fn prepare_node() u32 {
         net = "y"
     }
     let area: string = default_value("area_id", WIZARD_DEFAULT_AREA)
-    let node: string = rho_int_to_str(selected_node())
+    // The firmware carries the node's stable number, not its row in the plan.
+    let node: string = rho_int_to_str(project_node_number(wizard_file(), selected_node()))
     let prefix: string = "node." + rho_int_to_str(selected_node()) + "."
     let ssid: string = default_value(prefix + "ssid", default_value("ssid", ""))
     let password: string = default_value(prefix + "password", default_value("password", ""))

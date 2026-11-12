@@ -218,7 +218,16 @@ test saves the Alerts tab and reads the setting back.
 A project's plan is plan.yml in its folder: the nodes, links, modules and steps
 as a YAML document a person can read, diff and correct by hand, written by Mesh
 in one step. Every save raises the plan's revision and keeps the plan it
-replaced under revisions/ (the last twenty), and a save changes the plan under
-its lock, so two saves at once no longer lose a key. A project written before
+before each edit under revisions/ (the last twenty), and a save changes the plan
+under its lock, so two saves at once no longer lose a key. A project written before
 plan.yml is imported the first time Mesh starts, and its project.txt is kept as
 project.txt.imported. The pages read and write the plan as before.
+
+Every node has a number of its own, which its firmware (CONFIG_RH_NODE_ID) and
+its telemetry carry. It stays with the node: removing a node moves the rows
+after it up, in one write of the plan with every key they have, but not their
+numbers, so a board that is already flashed still reports as itself. A node
+planned before numbers existed keeps its row number, the one it was flashed
+with. Removing a node used to copy a fixed list of fields row by row, one save
+per field, and lost any field not on the list.
+

@@ -2037,6 +2037,100 @@ fn project_node_value(file: string, index: u32, key: string, fallback: string) s
 // the node reports is kept under it. It is never derived from the node's place
 // in the plan, so a series stays the device's whatever the plan does around it.
 // A board provisioned before nodes had ids keeps the id it was flashed with.
+// project_node_number is the number a node's firmware and its telemetry carry
+// (CONFIG_RH_NODE_ID). It is the node's own and stays with it: removing another
+// node moves rows but not numbers, so a board that is already flashed still
+// reports as itself. A node planned before numbers existed gets its row number,
+// which is what it was flashed with, unless another node already has it; a new
+// node gets the next number never used in the project.
+fn project_node_number(file: string, index: u32) u32 {
+    if index == 0 {
+        return 0
+    }
+    let key: string = "node." + rho_int_to_str(index) + ".number"
+    let existing: u32 = u32(rho_int_from_str(state_value_in(file, key)))
+    if existing > 0 {
+        return existing
+    }
+    let count: u32 = project_node_count_at(file)
+    var taken: bool = false
+    var highest: u32 = u32(rho_int_from_str(state_value_in(file, "node.next_number")))
+    var other: u32 = 1
+    while other <= count {
+        let number: u32 = u32(rho_int_from_str(state_value_in(file, "node." + rho_int_to_str(other) + ".number")))
+        if number == index {
+            taken = true
+        }
+        if number >= highest {
+            highest = number + 1
+        }
+        other = other + 1
+    }
+    // The row number when no node has it and no node ever had it (the counter
+    // has not passed it); otherwise the next number never used.
+    var chosen: u32 = index
+    if taken || index < highest {
+        chosen = highest
+    }
+    if chosen < 1 {
+        chosen = 1
+    }
+    save_setting_at(file, key, rho_int_to_str(chosen))
+    if chosen + 1 > u32(rho_int_from_str(state_value_in(file, "node.next_number"))) {
+        save_setting_at(file, "node.next_number", rho_int_to_str(chosen + 1))
+    }
+    return chosen
+}
+
+// project_node_numbers gives every node of a plan its number, before rows move,
+// in one write: the same rule as project_node_number, for every node that has
+// no number yet.
+fn project_node_numbers(file: string) void {
+    let text: string = plan_text(file)
+    let count: u32 = u32(rho_int_from_str(plan_value(text, "node.count")))
+    var highest: u32 = u32(rho_int_from_str(plan_value(text, "node.next_number")))
+    var index: u32 = 1
+    while index <= count {
+        let number: u32 = u32(rho_int_from_str(plan_value(text, "node." + rho_int_to_str(index) + ".number")))
+        if number >= highest {
+            highest = number + 1
+        }
+        index = index + 1
+    }
+    var assigned: string = ""
+    var taken: string = "|"
+    index = 1
+    while index <= count {
+        let number: u32 = u32(rho_int_from_str(plan_value(text, "node." + rho_int_to_str(index) + ".number")))
+        if number > 0 {
+            taken = taken + rho_int_to_str(number) + "|"
+        }
+        index = index + 1
+    }
+    index = 1
+    while index <= count {
+        let key: string = "node." + rho_int_to_str(index) + ".number"
+        if plan_value(text, key) == "" {
+            var chosen: u32 = index
+            if rho_str_index_of(taken, "|" + rho_int_to_str(index) + "|") >= 0 || index < highest {
+                chosen = highest
+            }
+            if chosen < 1 {
+                chosen = 1
+            }
+            taken = taken + rho_int_to_str(chosen) + "|"
+            if chosen >= highest {
+                highest = chosen + 1
+            }
+            assigned = assigned + key + "=" + rho_int_to_str(chosen) + "\n"
+        }
+        index = index + 1
+    }
+    if assigned != "" {
+        ignore_bool(plan_set_many(file, assigned + "node.next_number=" + rho_int_to_str(highest) + "\n"))
+    }
+}
+
 fn project_node_id(file: string, index: u32) string {
     if index == 0 {
         return ""
@@ -2868,86 +2962,14 @@ fn mesh_node_post_inner(req: Request) Response {
             save_setting("mesh_message", "Remove this node's modules before deleting it.")
             return mesh_redirect(mesh_node_form_url(raw, kind, form_value(body, "parent")))
         }
-        var j: u32 = index
-        while j < count {
-            let from: string = "node." + rho_int_to_str(j + 1) + "."
-            let to: string = "node." + rho_int_to_str(j) + "."
-            // A node's identity moves with it: the device in this row is the
-            // one that was in the next, and its series and session are its own.
-            save_setting(to + "id", state_value(from + "id"))
-            save_setting(to + "uid", state_value(from + "uid"))
-            save_setting(to + "kind", state_value(from + "kind"))
-            save_setting(to + "name", state_value(from + "name"))
-            save_setting(to + "description", state_value(from + "description"))
-            save_setting(to + "role", state_value(from + "role"))
-            save_setting(to + "board", state_value(from + "board"))
-            save_setting(to + "module", state_value(from + "module"))
-            save_setting(to + "sensors", state_value(from + "sensors"))
-            save_setting(to + "driver", state_value(from + "driver"))
-            save_setting(to + "link", state_value(from + "link"))
-            save_setting(to + "device", state_value(from + "device"))
-            save_setting(to + "transport", state_value(from + "transport"))
-            save_setting(to + "address", state_value(from + "address"))
-            save_setting(to + "device_id", state_value(from + "device_id"))
-            save_setting(to + "bus_address", state_value(from + "bus_address"))
-            save_setting(to + "state", state_value(from + "state"))
-            save_setting(to + "last_value", state_value(from + "last_value"))
-            save_setting(to + "last_checked", state_value(from + "last_checked"))
-            save_setting(to + "ssid", state_value(from + "ssid"))
-            save_setting(to + "password", state_value(from + "password"))
-            save_setting(to + "parent_host", state_value(from + "parent_host"))
-            save_setting(to + "child_host", state_value(from + "child_host"))
-            save_setting(to + "gateway_host", state_value(from + "gateway_host"))
-            save_setting(to + "serial_port", state_value(from + "serial_port"))
-            save_setting(to + "baud", state_value(from + "baud"))
-            save_setting(to + "parent_endpoint", state_value(from + "parent_endpoint"))
-            save_setting(to + "child_endpoint", state_value(from + "child_endpoint"))
-            save_setting(to + "port", state_value(from + "port"))
-            var parent: string = state_value(from + "parent")
-            if rho_str_index_of(parent, "node.") == 0 {
-                let parent_index: u32 = rho_int_from_str(
-                    rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
-                if parent_index == index {
-                    parent = "gateway"
-                } else if parent_index > index {
-                    parent = "node." + rho_int_to_str(parent_index - 1)
-                }
-            }
-            save_setting(to + "parent", parent)
-            j = j + 1
+        // Every node gets its number before rows move, so the numbers stay with
+        // the nodes; the removal itself is one write of the plan.
+        let plan: string = wizard_file()
+        project_node_numbers(plan)
+        if !plan_remove_node(plan, index) {
+            save_setting("mesh_message", "Node " + rho_int_to_str(index) + " could not be removed.")
+            return mesh_redirect("/mesh/plan")
         }
-        let last: string = "node." + rho_int_to_str(count) + "."
-        save_setting(last + "id", "")
-        save_setting(last + "uid", "")
-        save_setting(last + "kind", "")
-        save_setting(last + "name", "")
-        save_setting(last + "description", "")
-        save_setting(last + "role", "")
-        save_setting(last + "board", "")
-        save_setting(last + "module", "")
-        save_setting(last + "sensors", "")
-        save_setting(last + "driver", "")
-        save_setting(last + "parent", "")
-        save_setting(last + "link", "")
-        save_setting(last + "device", "")
-        save_setting(last + "transport", "")
-        save_setting(last + "address", "")
-        save_setting(last + "device_id", "")
-        save_setting(last + "bus_address", "")
-        save_setting(last + "state", "")
-        save_setting(last + "last_value", "")
-        save_setting(last + "last_checked", "")
-        save_setting(last + "ssid", "")
-        save_setting(last + "password", "")
-        save_setting(last + "parent_host", "")
-        save_setting(last + "child_host", "")
-        save_setting(last + "gateway_host", "")
-        save_setting(last + "serial_port", "")
-        save_setting(last + "baud", "")
-        save_setting(last + "parent_endpoint", "")
-        save_setting(last + "child_endpoint", "")
-        save_setting(last + "port", "")
-        save_setting("node.count", rho_int_to_str(count - 1))
         save_setting("relay", node_value(1, "board", ""))
         save_setting("link", node_value(1, "link", "uart"))
         save_setting("step_topology", "pending")

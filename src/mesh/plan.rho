@@ -8,8 +8,8 @@ module mesh.plan
 // `node.1.parent=gateway` is `node: 1: parent:` in the file — which is what the
 // pages have always used, so they run on it unchanged.
 //
-// Every write raises the plan's revision and keeps the plan it replaces under
-// revisions/, the last PLAN_REVISIONS_KEPT of them, so a bad edit costs one
+// Every write raises the plan's revision, and the plan before each edit is kept
+// under revisions/, the last PLAN_REVISIONS_KEPT of them, so a bad edit costs one
 // revision rather than the plan. A write is a read, a change and a write; the
 // plan's lock makes the three one step, so two saves at once cannot lose a key.
 // A project written before plan.yml (project.txt) is imported the first time it
@@ -23,7 +23,8 @@ extern fn rho_unlock(name: string)
 const PLAN_FILE: string = "plan.yml"
 const PLAN_LEGACY_FILE: string = "project.txt"
 const PLAN_REVISIONS_KEPT: u32 = 20
-const PLAN_HEADER: string = "The plan of one RoboHub Mesh project, written by Mesh.\nEdit it by hand only while Mesh is stopped; every save raises the revision\nand keeps the plan it replaced under revisions/."
+const PLAN_SNAPSHOT_SECONDS: u32 = 2
+const PLAN_HEADER: string = "The plan of one RoboHub Mesh project, written by Mesh.\nEdit it by hand only while Mesh is stopped; every save raises the revision,\nand the plan before each edit is kept under revisions/."
 
 // plan_text is a plan as flat key=value lines. A project that still has only a
 // project.txt is imported first.
@@ -158,13 +159,161 @@ fn plan_write_held(path: string, text: string) bool {
 }
 
 // plan_keep_revision copies the plan a write replaces into revisions/ and drops
-// the oldest beyond PLAN_REVISIONS_KEPT.
+// the oldest beyond PLAN_REVISIONS_KEPT. One form is several writes in a burst;
+// a copy is kept only when the last one is PLAN_SNAPSHOT_SECONDS old, so what is
+// kept is the plan before each edit rather than each key of it.
 fn plan_keep_revision(path: string, revision: u32) void {
     let dir: string = plan_dir(path) + "/revisions"
+    let marker: string = dir + "/last-kept.txt"
+    let now: u32 = mesh_now_seconds()
+    let last: u32 = u32(rho_int_from_str(rho_read_text(marker)))
+    if last > 0 && now >= last && now - last < PLAN_SNAPSHOT_SECONDS {
+        return
+    }
     let report: string = wizard_report("plan-revisions")
     rho_exec("mkdir", "-p " + dir, report)
     rho_exec("cp", "-f " + path + " " + dir + "/" + rho_int_to_str(revision) + ".yml", report)
-    if revision > PLAN_REVISIONS_KEPT {
-        rho_exec("rm", "-f " + dir + "/" + rho_int_to_str(revision - PLAN_REVISIONS_KEPT) + ".yml", report)
+    rho_write_text(marker, rho_int_to_str(now))
+    // The oldest copies beyond the kept number go; the copies are numbered by
+    // revision, and `ls -v` lists them in that order.
+    let listing: string = wizard_report("plan-revisions-list")
+    rho_exec("sh", "-c \"ls -1v " + dir + " | grep '\\.yml$' | head -n -" + rho_int_to_str(PLAN_REVISIONS_KEPT) + "\"", listing)
+    var rest: string = rho_read_text(listing)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var name: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            name = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if name != "" && rho_str_index_of(name, "/") < 0 {
+            rho_exec("rm", "-f " + dir + "/" + name, report)
+        }
     }
+}
+
+// plan_node_key is the row a node key belongs to and the rest of the key:
+// `node.3.parent` is 3 and "parent"; any other key is 0.
+fn plan_node_row(key: string) u32 {
+    if rho_str_index_of(key, "node.") != 0 {
+        return 0
+    }
+    let rest: string = rho_str_slice(key, 5, u32(rho_strlen(key)) - 5)
+    let dot: i32 = rho_str_index_of(rest, ".")
+    if dot <= 0 {
+        return 0
+    }
+    return u32(rho_int_from_str(rho_str_slice(rest, 0, u32(dot))))
+}
+
+// plan_shift_reference is a row reference after row `removed` is gone:
+// `node.K` past it moves up one, and the row itself becomes the gateway.
+fn plan_shift_reference(value: string, removed: u32) string {
+    if rho_str_index_of(value, "node.") != 0 {
+        return value
+    }
+    let row: u32 = u32(rho_int_from_str(rho_str_slice(value, 5, u32(rho_strlen(value)) - 5)))
+    if row == 0 || !rho_str_eq(value, "node." + rho_int_to_str(row)) {
+        return value
+    }
+    if row == removed {
+        return "gateway"
+    }
+    if row > removed {
+        return "node." + rho_int_to_str(row - 1)
+    }
+    return value
+}
+
+// plan_remove_node removes one node from a plan in one write: its keys go, the
+// rows after it move up one with every key they have, the references to rows
+// move with them (a child of the removed node goes to the gateway), and the
+// count falls by one. A node keeps its stable number, so a board that is already
+// flashed still reports as itself.
+fn plan_remove_node(path: string, index: u32) bool {
+    if path == "" || index == 0 {
+        return false
+    }
+    rho_lock("mesh.plan:" + path)
+    let text: string = rho_yaml_flat(path)
+    var out: string = ""
+    var count: u32 = 0
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let equals: i32 = rho_str_index_of(line, "=")
+        if equals <= 0 {
+            continue
+        }
+        var key: string = rho_str_slice(line, 0, u32(equals))
+        var value: string = rho_str_slice(line, u32(equals) + 1, u32(rho_strlen(line)) - u32(equals) - 1)
+        if rho_str_eq(key, "node.count") {
+            count = u32(rho_int_from_str(value))
+            continue
+        }
+        let row: u32 = plan_node_row(key)
+        if row == index {
+            continue
+        }
+        if row > index {
+            let tail: string = rho_str_slice(key, 5 + u32(rho_strlen(rho_int_to_str(row))),
+                u32(rho_strlen(key)) - 5 - u32(rho_strlen(rho_int_to_str(row))))
+            key = "node." + rho_int_to_str(row - 1) + tail
+        }
+        // A status kept per row moves with its row too.
+        if rho_str_index_of(key, "status.node.") == 0 {
+            let status_row: u32 = u32(rho_int_from_str(rho_str_slice(key, 12, u32(rho_strlen(key)) - 12)))
+            if status_row == index {
+                continue
+            }
+            if status_row > index {
+                key = "status.node." + rho_int_to_str(status_row - 1)
+            }
+        }
+        out = out + key + "=" + plan_shift_reference(value, index) + "\n"
+    }
+    if count > 0 {
+        count = count - 1
+    }
+    let written: bool = plan_write_held(path, out + "node.count=" + rho_int_to_str(count) + "\n")
+    rho_unlock("mesh.plan:" + path)
+    return written
+}
+
+// plan_set_many changes several keys of a plan in one write: `lines` is
+// key=value lines, each replacing that key.
+fn plan_set_many(path: string, lines: string) bool {
+    if path == "" || lines == "" {
+        return false
+    }
+    plan_import(path)
+    rho_lock("mesh.plan:" + path)
+    var text: string = rho_yaml_flat(path)
+    var rest: string = lines
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let equals: i32 = rho_str_index_of(line, "=")
+        if equals > 0 {
+            text = plan_without(text, rho_str_slice(line, 0, u32(equals))) + line + "\n"
+        }
+    }
+    let written: bool = plan_write_held(path, text)
+    rho_unlock("mesh.plan:" + path)
+    return written
 }
