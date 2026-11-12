@@ -387,6 +387,15 @@ fn mesh_free_child_items(readonly: bool) string {
 }
 
 fn mesh_tree(readonly: bool) string {
+    return template_fill(template_get("mesh-tree"), vars("content", mesh_tree_content(readonly)) +
+        vars("tree_event", mesh_tree_event_name(readonly)))
+}
+
+// mesh_tree_content is what a tree event carries: the inside of the tree, which
+// replaces the inside of the element holding the stream. Sending the element
+// itself replaced the connection with it, and the page reconnected after every
+// event.
+fn mesh_tree_content(readonly: bool) string {
     let root_items: string = mesh_child_items("gateway", readonly) +
         mesh_free_child_items(readonly)
     var out: string = gateway_card(readonly)
@@ -410,7 +419,7 @@ fn mesh_tree(readonly: bool) string {
     if count == 0 {
         out = out + template_fill(template_get("mesh-empty"), vars("hint", "Add the first node to the mesh."))
     }
-    return template_fill(template_get("mesh-tree"), vars("content", out) + vars("tree_event", mesh_tree_event_name(readonly)))
+    return out
 }
 
 fn mesh_tree_event_name(readonly: bool) string {
@@ -428,8 +437,8 @@ fn mesh_event_tree() void {
     // A tree event is a read of the plan, not a preparation of it. Writing here
     // would let an open dashboard race a save that is in progress.
     let file: string = wizard_dir() + "/tree-events.jsonl"
-    let lines: string = mesh_event_json("mesh-tree", mesh_tree(true)) +
-        mesh_event_json("mesh-tree-edit", mesh_tree(false))
+    let lines: string = mesh_event_json("mesh-tree", mesh_tree_content(true)) +
+        mesh_event_json("mesh-tree-edit", mesh_tree_content(false))
     ignore_bool(rho_write_text(file, rho_read_text(file) + lines))
 }
 
@@ -439,8 +448,8 @@ fn mesh_events(req: Request) Response {
     let snapshot: string = wizard_dir() + "/tree-snapshot.jsonl"
     let live: string = wizard_dir() + "/tree-events.jsonl"
     ignore_bool(rho_write_text(snapshot,
-        mesh_event_json("mesh-tree", mesh_tree(true)) +
-        mesh_event_json("mesh-tree-edit", mesh_tree(false))))
+        mesh_event_json("mesh-tree", mesh_tree_content(true)) +
+        mesh_event_json("mesh-tree-edit", mesh_tree_content(false))))
     return sse_events(live, snapshot, 1000)
 }
 

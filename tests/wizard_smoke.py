@@ -599,6 +599,22 @@ def main() -> int:
                             break
                         chunk += part
                 assert_contains(chunk.decode("utf-8", "replace"), events, path)
+            # A tree event replaces the inside of the element that holds the
+            # stream: one that carried the element would replace the connection
+            # too, and the page would reconnect after every event.
+            request = urllib.request.Request(base + "/mesh/events")
+            request.add_header("Authorization", f"Bearer {TOKEN}")
+            with urllib.request.urlopen(request, timeout=10) as stream:
+                chunk = b""
+                while b"event: mesh-tree-edit" not in chunk and len(chunk) < 400000:
+                    part = stream.read1(65536)
+                    if not part:
+                        break
+                    chunk += part
+            tree_events = chunk.decode("utf-8", "replace")
+            assert_contains(tree_events, ["event: mesh-tree", "Relay one"], "tree events")
+            if "sse-connect" in tree_events:
+                raise AssertionError("a tree event carries the stream's connection")
             # Gateway health is checked in the background, not when a page is
             # drawn, and kept beside the project.
             health = Path(state) / "projects" / "default" / "health.txt"
