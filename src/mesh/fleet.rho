@@ -1,0 +1,183 @@
+module mesh.fleet
+
+// The fleet: every mesh this Mesh manages, and what each one holds on the
+// machine.
+//
+// Two meshes on one machine cannot share an area — the readings of one would be
+// the readings of the other — nor a REST or an uplink port. fleet.yml, in Mesh's
+// state folder, gives each mesh its own: the smallest area no other mesh has,
+// and REST and uplink ports offset from the defaults by the mesh's place in the
+// fleet. A project that chose a value in its own plan keeps it; the fleet is the
+// default it falls back to, and a mesh deployed before the fleet existed keeps
+// the defaults it was built with while no other mesh has them. A native gateway is started with its process id
+// written beside its project and stopped by that id, so stopping one mesh's
+// gateway leaves the others running.
+
+const FLEET_FILE: string = "fleet.yml"
+const FLEET_HEADER: string = "The meshes this Mesh manages and what each holds on this machine: its\narea and its REST and uplink ports. Written by Mesh."
+const FLEET_REST_BASE: u32 = 8080
+const FLEET_UPLINK_BASE: u32 = 5001
+
+fn fleet_file() string {
+    return wizard_dir() + "/" + FLEET_FILE
+}
+
+fn fleet_text() string {
+    return rho_yaml_flat(fleet_file())
+}
+
+// fleet_value is one of a mesh's fleet values, the mesh given a place first.
+fn fleet_value(id: string, key: string) string {
+    if id == "" {
+        return ""
+    }
+    var value: string = plan_value(fleet_text(), "mesh." + id + "." + key)
+    if value == "" {
+        fleet_place(id)
+        value = plan_value(fleet_text(), "mesh." + id + "." + key)
+    }
+    return value
+}
+
+// fleet_taken reports whether another mesh of the fleet holds a value.
+fn fleet_taken(text: string, id: string, key: string, value: string) bool {
+    var rest: string = text
+    let suffix: string = "." + key + "=" + value
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let length: u32 = u32(rho_strlen(line))
+        let tail: u32 = u32(rho_strlen(suffix))
+        if length > tail && rho_str_eq(rho_str_slice(line, length - tail, tail), suffix) &&
+            rho_str_index_of(line, "mesh." + id + ".") != 0 {
+            return true
+        }
+    }
+    return false
+}
+
+// fleet_place gives a mesh its area and ports, once: what its plan already says
+// when no other mesh has it, otherwise the first free one.
+fn fleet_place(id: string) void {
+    rho_lock("mesh.fleet")
+    let text: string = fleet_text()
+    if plan_value(text, "mesh." + id + ".area") != "" {
+        rho_unlock("mesh.fleet")
+        return
+    }
+    let plan: string = project_file(id)
+    // A mesh that was deployed before the fleet existed was built with the
+    // defaults — its boards dial them — so it keeps them while they are free.
+    let deployed: bool = plan_text_value(plan, "status.gateway") != ""
+    var area: u32 = u32(rho_int_from_str(plan_text_value(plan, "area_id")))
+    if area == 0 && deployed {
+        area = 1
+    }
+    if area == 0 || fleet_taken(text, id, "area", rho_int_to_str(area)) {
+        area = 1
+        while fleet_taken(text, id, "area", rho_int_to_str(area)) {
+            area = area + 1
+        }
+    }
+    var offset: u32 = 0
+    while fleet_taken(text, id, "rest_port", rho_int_to_str(FLEET_REST_BASE + offset)) ||
+        fleet_taken(text, id, "uplink_port", rho_int_to_str(FLEET_UPLINK_BASE + offset)) {
+        offset = offset + 1
+    }
+    var rest: u32 = u32(rho_int_from_str(plan_text_value(plan, "rest_port")))
+    if rest == 0 && deployed {
+        rest = FLEET_REST_BASE
+    }
+    if rest == 0 || fleet_taken(text, id, "rest_port", rho_int_to_str(rest)) {
+        rest = FLEET_REST_BASE + offset
+    }
+    var uplink: u32 = u32(rho_int_from_str(plan_text_value(plan, "uplink_port")))
+    if uplink == 0 && deployed {
+        uplink = FLEET_UPLINK_BASE
+    }
+    if uplink == 0 || fleet_taken(text, id, "uplink_port", rho_int_to_str(uplink)) {
+        uplink = FLEET_UPLINK_BASE + offset
+    }
+    rho_yaml_write_flat(fleet_file(), text +
+        "mesh." + id + ".area=" + rho_int_to_str(area) + "\n" +
+        "mesh." + id + ".rest_port=" + rho_int_to_str(rest) + "\n" +
+        "mesh." + id + ".uplink_port=" + rho_int_to_str(uplink) + "\n", FLEET_HEADER)
+    rho_unlock("mesh.fleet")
+}
+
+// plan_text_value is one key of a plan, without importing or writing anything.
+fn plan_text_value(plan: string, key: string) string {
+    if !rho_path_exists(plan) {
+        return ""
+    }
+    return plan_value(rho_yaml_flat(plan), key)
+}
+
+// fleet_forget drops a mesh from the fleet, when its project is deleted.
+fn fleet_forget(id: string) void {
+    rho_lock("mesh.fleet")
+    let text: string = fleet_text()
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" && rho_str_index_of(line, "mesh." + id + ".") != 0 {
+            out = out + line + "\n"
+        }
+    }
+    rho_yaml_write_flat(fleet_file(), out, FLEET_HEADER)
+    rho_unlock("mesh.fleet")
+}
+
+// The defaults a project's plan falls back to: the fleet's, for that mesh.
+fn fleet_area(id: string) string {
+    return fleet_value(id, "area")
+}
+
+fn fleet_rest_port(id: string) string {
+    return fleet_value(id, "rest_port")
+}
+
+fn fleet_uplink_port(id: string) string {
+    return fleet_value(id, "uplink_port")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  A native gateway, by its process                                          */
+/* -------------------------------------------------------------------------- */
+
+fn fleet_pid_file(id: string) string {
+    return project_location(id) + "/gateway.pid"
+}
+
+fn fleet_gateway_log(id: string) string {
+    return project_location(id) + "/gateway.log"
+}
+
+// fleet_stop_command stops this mesh's native gateway by its process id, and
+// only when that process is a robohub-gateway: a pid the system has since
+// handed to another program is left alone.
+fn fleet_stop_command(id: string) string {
+    let pid: string = fleet_pid_file(id)
+    return "if [ -f " + shell_quote(pid) + " ]; then p=$(cat " + shell_quote(pid) + "); " +
+        "if [ \"$(ps -p \"$p\" -o comm= 2>/dev/null)\" = robohub-gateway ]; then kill \"$p\" 2>/dev/null; " +
+        "for i in 1 2 3 4 5 6 7 8 9 10; do kill -0 \"$p\" 2>/dev/null || break; sleep 0.2; done; fi; " +
+        "rm -f " + shell_quote(pid) + "; fi"
+}
+
+fn fleet_stop_gateway(id: string) u32 {
+    return run_shell(fleet_stop_command(id), "stop-gateway")
+}

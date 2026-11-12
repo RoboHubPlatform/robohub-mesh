@@ -637,9 +637,23 @@ def main() -> int:
                 "renamed project",
             )
 
+            # Two meshes on one machine never share an area or a port.
+            get(base, "/mesh/plan")
+            get(base, "/mesh/project/default")
+            get(base, "/mesh/plan")
+            fleet = dict(l.split("=", 1) for l in plan_flat(Path(state) / "fleet.yml").splitlines() if "=" in l)
+            for key in ("area", "rest_port", "uplink_port"):
+                one, two = fleet.get(f"mesh.default.{key}"), fleet.get(f"mesh.Second-project.{key}")
+                if not one or not two or one == two:
+                    raise AssertionError(f"the two meshes share {key}: {one!r} and {two!r} ({fleet})")
+            if len({fleet[k] for k in fleet if k.endswith(".rest_port")}) != len([k for k in fleet if k.endswith(".rest_port")]):
+                raise AssertionError(f"two meshes share a REST port: {fleet}")
+
             post(base, "/mesh/project/delete", {"project": "Second-project"})
             if second_state.parent.exists():
                 raise AssertionError("deleting a project must remove its folder")
+            if "mesh.Second-project.area" in plan_flat(Path(state) / "fleet.yml"):
+                raise AssertionError("a deleted project kept its place in the fleet")
             get(base, "/mesh/project/default")
             current_project = (Path(state) / "current-project.txt").read_text().strip()
             if current_project != "default":

@@ -231,3 +231,10 @@ planned before numbers existed keeps its row number, the one it was flashed
 with. Removing a node used to copy a fixed list of fields row by row, one save
 per field, and lost any field not on the list.
 
+Several meshes run side by side on one machine. fleet.yml, in Mesh's state
+folder, gives each mesh an area and a REST and an uplink port no other mesh on
+the machine has; a project's own plan values win, and a mesh deployed before
+the fleet existed keeps the defaults it was built with while they are free. A
+native gateway is started with its process id written beside its project and
+stopped by that id, so stopping or deleting one mesh no longer stops every
+gateway on the machine, and each mesh has its own gateway log.

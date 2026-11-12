@@ -5,6 +5,7 @@ module mesh
 
 include "mesh/storage.rho"
 include "mesh/plan.rho"
+include "mesh/fleet.rho"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/tokens.rho"

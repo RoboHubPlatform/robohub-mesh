@@ -45,7 +45,7 @@ fn gateway_reachable_for(gateway: string, host: string, rest: string) bool {
 fn gateway_reachable() bool {
     return gateway_reachable_for(default_value("gateway", "native"),
         default_value("gateway_host", "127.0.0.1"),
-        default_value("rest_port", WIZARD_DEFAULT_REST))
+        default_value("rest_port", fleet_rest_port(current_project())))
 }
 
 fn gateway_live_badge() string {
@@ -1005,7 +1005,7 @@ fn project_card(id: string) string {
     }
     var rest: string = state_value_in(file, "rest_port")
     if rest == "" {
-        rest = WIZARD_DEFAULT_REST
+        rest = fleet_rest_port(id)
     }
     let live: bool = gateway != "" && gateway_reachable_for(gateway, host, rest)
     var address: string = ""
@@ -1137,7 +1137,7 @@ fn dashboard_notice() string {
         out = out + "<details class=\"notice bad\"><summary>Show the build output</summary>" +
             "<pre class=\"out\">" + escape_html(build) + "</pre></details>"
     }
-    let gateway: string = text_tail(wizard_dir() + "/gateway.log", 4000)
+    let gateway: string = text_tail(fleet_gateway_log(current_project()), 4000)
     if gateway != "" {
         out = out + "<details class=\"notice bad\"><summary>Show the gateway log</summary>" +
             "<pre class=\"out\">" + escape_html(gateway) + "</pre></details>"
@@ -1304,9 +1304,10 @@ fn mesh_project_delete(req: Request) Response {
         return mesh_redirect("/mesh")
     }
     let was_current: bool = id == current_project()
-    if was_current && gateway_reachable() {
-        ignore_u32(rho_exec("pkill", "-x robohub-gateway", wizard_report("delete-stop-gateway")))
-    }
+    // The project's own gateway goes with it, by its process id; another
+    // mesh's gateway keeps running.
+    ignore_u32(fleet_stop_gateway(id))
+    fleet_forget(id)
     ignore_u32(rho_exec("rm", "-rf " + project_location(id), wizard_report("delete-project")))
     if was_current {
         var next: string = ""
@@ -2180,12 +2181,35 @@ fn project_module_tag(file: string, index: u32) string {
     return rho_str_slice(id, 0, 8)
 }
 
+// project_area_id is a project's area: what its plan says, or the area the
+// fleet gave the mesh, which no other mesh on this machine has.
 fn project_area_id(file: string) string {
     let value: string = state_value_in(file, "area_id")
     if value == "" {
+        let id: string = plan_project_id(file)
+        if id != "" {
+            return fleet_area(id)
+        }
         return WIZARD_DEFAULT_AREA
     }
     return value
+}
+
+// plan_project_id is the project a plan file belongs to: its folder's name.
+fn plan_project_id(file: string) string {
+    let dir: string = plan_dir(file)
+    var last: i32 = -1
+    var i: u32 = 0
+    while i < u32(rho_strlen(dir)) {
+        if rho_str_eq(rho_str_slice(dir, i, 1), "/") {
+            last = i32(i)
+        }
+        i = i + 1
+    }
+    if last < 0 {
+        return ""
+    }
+    return rho_str_slice(dir, u32(last) + 1, u32(rho_strlen(dir)) - u32(last) - 1)
 }
 
 fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
@@ -3179,7 +3203,7 @@ fn json_number(text: string, key: string) string {
 
 fn gateway_address() string {
     let gateway: string = default_value("gateway", "native")
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     var host: string = default_value("gateway_host", "127.0.0.1")
     if gateway == "native" {
         host = "127.0.0.1"
@@ -3190,7 +3214,7 @@ fn gateway_address() string {
 fn gateway_network_address() string {
     if default_value("gateway", "native") == "native" {
         return "http://" + host_address() + ":" +
-            default_value("rest_port", WIZARD_DEFAULT_REST)
+            default_value("rest_port", fleet_rest_port(current_project()))
     }
     return gateway_address()
 }
@@ -3206,7 +3230,7 @@ fn gateway_http_for(gateway: string, host: string, rest: string, path: string) s
 fn gateway_http(path: string) string {
     return gateway_http_for(default_value("gateway", "native"),
         default_value("gateway_host", "127.0.0.1"),
-        default_value("rest_port", WIZARD_DEFAULT_REST), path)
+        default_value("rest_port", fleet_rest_port(current_project())), path)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3352,7 +3376,7 @@ fn mesh_gateway_stop(req: Request) Response {
     }
     let gateway: string = default_value("gateway", "native")
     if gateway == "native" {
-        ignore_u32(rho_exec("pkill", "-x robohub-gateway", wizard_report("stop-gateway")))
+        ignore_u32(fleet_stop_gateway(current_project()))
     } else {
         let manifest: string = board_manifest(gateway)
         let method: string = yaml.value(manifest, "deployment.method")
@@ -3555,7 +3579,7 @@ fn connection_summary(index: u32) string {
     if link == "wifi" {
         let ssid: string = default_value(prefix + "ssid", default_value("ssid", ""))
         let host: string = default_value(prefix + "parent_host", default_value("gateway_host", "127.0.0.1"))
-        let port: string = default_value(prefix + "port", default_value("uplink_port", "5001"))
+        let port: string = default_value(prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project())))
         detail = "SSID " + ssid + " · " + host + ":" + port
     } else if link == "ethernet" || link == "socket" {
         let parent_ep: string = default_value(prefix + "parent_endpoint", default_value("gateway_host", ""))
@@ -3651,7 +3675,7 @@ fn wifi_settings(index: u32) string {
         mesh_input(prefix + "child_host", "Node host",
             default_value(prefix + "child_host", ""), "Optional hostname or address for this node.") +
         mesh_input(prefix + "port", "TCP port",
-            default_value(prefix + "port", default_value("uplink_port", "5001")), "")
+            default_value(prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project()))), "")
 }
 
 fn network_settings(index: u32) string {
@@ -3898,7 +3922,7 @@ fn mesh_network_node_page(req: Request) Response {
 
 fn mesh_gateway_network_form() string {
     let host: string = default_value("gateway_host", "127.0.0.1")
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     return "<form class=\"grid\" method=\"post\" action=\"/mesh/network/gateway\">" +
         "<input type=\"hidden\" name=\"action\" value=\"save_gateway\">" +
         mesh_input("gateway_host", "Gateway host", host,
@@ -4244,7 +4268,7 @@ fn gateway_live_notice() string {
     if !gateway_reachable() {
         return ""
     }
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     let configured: string = default_value("gateway_host", "127.0.0.1")
     var reachable: string = "http://" + configured + ":" + rest
     if default_value("gateway", "native") == "native" {
@@ -4265,9 +4289,9 @@ fn mesh_gateway_summary() string {
     let node_name: string = node_value(chosen, "name", "Node " + rho_int_to_str(chosen))
     var address: string = default_value("serial_port", "/dev/ttyACM0")
     if link == "wifi" {
-        address = "uplink " + default_value("uplink_port", WIZARD_DEFAULT_UPLINK)
+        address = "uplink " + default_value("uplink_port", fleet_uplink_port(current_project()))
     }
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     let configured_host: string = default_value("gateway_host", "127.0.0.1")
     var reachable: string = "http://" + configured_host + ":" + rest
     if gateway == "native" {

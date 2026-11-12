@@ -472,14 +472,15 @@ fn field_value(stage: string, field: string) string {
     if field == "serial_port" {
         return WIZARD_DEFAULT_SERIAL
     }
+    // A mesh's area and ports are its own on this machine: the fleet's.
     if field == "rest_port" {
-        return WIZARD_DEFAULT_REST
+        return fleet_rest_port(current_project())
     }
     if field == "uplink_port" {
-        return WIZARD_DEFAULT_UPLINK
+        return fleet_uplink_port(current_project())
     }
     if field == "area_id" {
-        return WIZARD_DEFAULT_AREA
+        return fleet_area(current_project())
     }
     if field == "node_id" {
         return WIZARD_DEFAULT_NODE
@@ -2579,7 +2580,7 @@ fn prepare_node() u32 {
     if link == "wifi" || link == "socket" {
         net = "y"
     }
-    let area: string = default_value("area_id", WIZARD_DEFAULT_AREA)
+    let area: string = default_value("area_id", fleet_area(current_project()))
     // The firmware carries the node's stable number, not its row in the plan.
     let node: string = rho_int_to_str(project_node_number(wizard_file(), selected_node()))
     let prefix: string = "node." + rho_int_to_str(selected_node()) + "."
@@ -2589,7 +2590,7 @@ fn prepare_node() u32 {
         prefix + "parent_host",
         default_value(prefix + "gateway_host", default_value("gateway_host", "127.0.0.1")))
     let uplink: string = default_value(
-        prefix + "port", default_value("uplink_port", WIZARD_DEFAULT_UPLINK))
+        prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project())))
     var uart_name: string = default_value(prefix + "child_endpoint", "uart1")
     if link != "uart" {
         uart_name = "console"
@@ -2744,10 +2745,10 @@ fn mesh_gateway_mode() string {
 
 fn gateway_env(key_file: string) string {
     let link: string = node_link()
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     let prefix: string = "node." + rho_int_to_str(selected_node()) + "."
     let uplink: string = default_value(
-        prefix + "port", default_value("uplink_port", WIZARD_DEFAULT_UPLINK))
+        prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project())))
     var uart_name: string = default_value(prefix + "child_endpoint", "uart1")
     if link != "uart" {
         uart_name = "console"
@@ -2807,8 +2808,8 @@ fn handler_start_gateway() u32 {
 
 fn handler_start_native() u32 {
     let project: string = gateway_project()
-    let log: string = wizard_dir() + "/gateway.log"
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let log: string = fleet_gateway_log(current_project())
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     let address: string = host_address()
     let link: string = node_link()
     var attached: bool = false
@@ -2822,9 +2823,12 @@ fn handler_start_native() u32 {
     let command: string = prefix +
         "echo 'gateway: http://127.0.0.1:" + rest + " (this host)'; " +
         "echo 'gateway: http://" + address + ":" + rest + " (network)'; " +
-        "pkill -x robohub-gateway 2>/dev/null || true; cd " +
-        shell_quote(project) + " && nohup env " + gateway_env(mesh_gateway_key_path(current_project())) +
-        " ./build/robohub-gateway > " + shell_quote(log) + " 2>&1 < /dev/null &"
+        // This mesh's gateway is replaced; another mesh's keeps running. The
+        // process id is written beside the project, which is what stops it.
+        fleet_stop_command(current_project()) + "; cd " +
+        shell_quote(project) + " || exit 1; nohup env " + gateway_env(mesh_gateway_key_path(current_project())) +
+        " ./build/robohub-gateway > " + shell_quote(log) + " 2>&1 < /dev/null & echo $! > " +
+        shell_quote(fleet_pid_file(current_project()))
     let started: u32 = run_shell(command, "start-gateway")
     if started != 0 {
         return started
@@ -2930,7 +2934,7 @@ fn handler_start_board() u32 {
             let active: string = current_project()
             if active != "" {
                 save_setting_at(project_file(active), "gateway_url",
-                    "http://" + host + ":" + default_value("rest_port", WIZARD_DEFAULT_REST))
+                    "http://" + host + ":" + default_value("rest_port", fleet_rest_port(current_project())))
             }
         }
         return started
@@ -2945,7 +2949,7 @@ fn handler_verify() u32 {
         // board would point at the board, which is no longer the gateway.
         host = "127.0.0.1"
     }
-    let rest: string = default_value("rest_port", WIZARD_DEFAULT_REST)
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
     let base: string = "http://" + host + ":" + rest
     let stage: string = default_value("current_step", "verify")
     // The gateway answers Mesh's token, which the shell does not hold, so the
