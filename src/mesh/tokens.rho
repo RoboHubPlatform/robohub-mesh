@@ -164,11 +164,11 @@ fn mesh_project_token_revoke(req: Request) Response {
     let id: string = sanitize(param(req, "id"))
     let file: string = project_file(id)
     if id == "" || !rho_path_exists(file) {
-        return mesh_dashboard(req)
+        return mesh_redirect("/mesh")
     }
     let name: string = sanitize(device_trim(form_value(request_body(req), "name")))
     if name == "" {
-        return mesh_project_settings_for(req, id)
+        return mesh_redirect("/mesh/project/" + id + "/settings")
     }
     let now: u32 = mesh_token_now()
     var rest: string = mesh_token_entries(id)
@@ -200,7 +200,7 @@ fn mesh_project_token_revoke(req: Request) Response {
     save_setting_at(file, "message.project",
         if found { "Token " + name + " revoked." } else { "No token named " + name + "." })
     info("mesh", "revoked token " + name + " on project " + id)
-    return mesh_project_settings_for(req, id)
+    return mesh_redirect("/mesh/project/" + id + "/settings")
 }
 
 fn mesh_tokens_html(project: string) string {

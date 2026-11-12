@@ -1175,7 +1175,7 @@ fn module_parent_options(selected: string) string {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        if !is_module_node(index) {
+        if !is_module_node(index) && !is_device_node(index) {
             options = options + option("node." + rho_int_to_str(index),
                 "Node " + rho_int_to_str(index) + " (" +
                 node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
@@ -1197,7 +1197,7 @@ fn module_parent_valid(parent: string) bool {
     if index < 1 || index > node_count() {
         return false
     }
-    return !is_module_node(index)
+    return !is_module_node(index) && !is_device_node(index)
 }
 
 fn module_names_for(indices: string) string {
@@ -3372,7 +3372,7 @@ fn actions_form(stage: string) string {
 }
 
 fn status_notice(stage: string) string {
-    let message: string = state_value("message." + stage)
+    let message: string = mesh_take("message." + stage)
     if message == "" {
         return ""
     }
@@ -3656,7 +3656,7 @@ fn run_step_action(stage: string, action: string) u32 {
 
 fn wizard_step_post(req: Request) Response {
     if current_project() == "" {
-        return mesh_dashboard(req)
+        return mesh_redirect("/mesh")
     }
     let stage: string = param(req, "step")
     if !step_exists(stage) {
@@ -3667,7 +3667,7 @@ fn wizard_step_post(req: Request) Response {
     let action: string = form_value(body, "action")
     if action == "select_node" {
         save_setting("build_node", form_value(body, "node"))
-        return mesh_step_page(req)
+        return mesh_redirect("/mesh/step/" + param(req, "step"))
     }
     if stage == "network" && action == "save_network" {
         if save_step_fields(stage, body) {
@@ -3679,7 +3679,7 @@ fn wizard_step_post(req: Request) Response {
             save_setting("step_" + stage, "failed")
             save_setting("message." + stage, "A required network field is empty.")
         }
-        return mesh_step_page(req)
+        return mesh_redirect("/mesh/step/" + param(req, "step"))
     }
     if action == "save" {
         if save_step_fields(stage, body) {
@@ -3692,7 +3692,7 @@ fn wizard_step_post(req: Request) Response {
             save_setting("step_" + stage, "failed")
             save_setting("message." + stage, "A required field is empty.")
         }
-        return mesh_step_page(req)
+        return mesh_redirect("/mesh/step/" + param(req, "step"))
     }
 
     save_run_token(body)
@@ -3705,5 +3705,5 @@ fn wizard_step_post(req: Request) Response {
     } else {
         save_setting("step_" + stage, "failed")
     }
-    return mesh_step_page(req)
+    return mesh_redirect("/mesh/step/" + param(req, "step"))
 }

@@ -31,7 +31,9 @@ MESH = HERE.parents[1]
 ROBOHUB = MESH.parents[1]
 PROJECTS = ROBOHUB.parent
 RHO = PROJECTS / "rho" / "bin" / "rho"
-SESSION = "smoke-session"
+# The bearer token every request carries: a ticket the keeper would issue,
+# minted by the test with a key pair of its own (see mint_token).
+TOKEN = ""
 
 
 def free_port() -> int:
@@ -54,7 +56,7 @@ def wait_for(base: str, timeout: float = 20.0) -> None:
 
 def get(base: str, path: str) -> str:
     request = urllib.request.Request(base + path)
-    request.add_header("Cookie", f"keeper_session={SESSION}")
+    request.add_header("Authorization", f"Bearer {TOKEN}")
     with urllib.request.urlopen(request, timeout=10) as response:
         return response.read().decode("utf-8", "replace")
 
@@ -63,7 +65,7 @@ def post(base: str, path: str, fields: dict) -> str:
     body = urllib.parse.urlencode(fields).encode()
     request = urllib.request.Request(base + path, data=body, method="POST")
     request.add_header("Content-Type", "application/x-www-form-urlencoded")
-    request.add_header("Cookie", f"keeper_session={SESSION}")
+    request.add_header("Authorization", f"Bearer {TOKEN}")
     with urllib.request.urlopen(request, timeout=20) as response:
         return response.read().decode("utf-8", "replace")
 
@@ -120,7 +122,27 @@ def validate_wizard_schema() -> None:
         raise SystemExit("wizard schema validation failed:\n" + result.stdout + result.stderr)
 
 
+def mint_token(home: str) -> str:
+    """A ticket for audience mesh, as the keeper would issue one.
+
+    Mesh verifies tickets against ~/.rho/auth/public.pem in its own home, so
+    the test makes a key pair there and signs the ticket with it.
+    """
+    rho = str(RHO) if RHO.exists() else "rho"
+    keys = os.path.join(home, ".rho", "auth")
+    os.makedirs(keys, exist_ok=True)
+    subprocess.run([rho, "auth", "keygen", "--dir", keys, "--force"],
+                   check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        [rho, "auth", "ticket", "--private", os.path.join(keys, "private.pem"),
+         "--issuer", "keeper", "--audience", "mesh", "--subject", "smoke",
+         "--scopes", "*", "--ttl", "1h"],
+        check=True, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
 def main() -> int:
+    global TOKEN
     validate_wizard_schema()
     binary = build_mesh()
     port = free_port()
@@ -131,10 +153,7 @@ def main() -> int:
         env["RHO_MESH_STATE_DIR"] = state
         env["ROBOHUB_MESH_PROJECTS"] = os.path.join(state, "projects")
         home = os.path.join(state, "home")
-        sessions = os.path.join(home, ".rho", "keeper")
-        os.makedirs(sessions, exist_ok=True)
-        with open(os.path.join(sessions, "auth-sessions.txt"), "w", encoding="utf-8") as fh:
-            fh.write(f"{SESSION}|{int(time.time()) + 3600}|smoke\n")
+        TOKEN = mint_token(home)
         env["HOME"] = home
         env["RHO_HTTP_ADDR"] = f":{port}"
         process = subprocess.Popen(
@@ -549,12 +568,15 @@ def main() -> int:
             get(base, "/mesh/project/default")
 
             # A long action writes its progress to a file and the page follows
-            # that file. Seed one so the stream's framing and its closing event
-            # are checked without a board attached.
-            (Path(state) / "progress-verify.log").write_text(
-                "one\ntwo\n__DONE__:0\n", encoding="utf-8"
-            )
-            with urllib.request.urlopen(base + "/mesh/progress/verify", timeout=10) as stream:
+            # that file. The page connects first and the action writes after,
+            # as a real one does, so a fast action's lines — its end among them —
+            # must still reach the page. Checked here without a board attached.
+            progress = urllib.request.Request(base + "/mesh/progress/verify")
+            progress.add_header("Authorization", f"Bearer {TOKEN}")
+            with urllib.request.urlopen(progress, timeout=10) as stream:
+                (Path(state) / "progress-verify.log").write_text(
+                    "one\ntwo\n__DONE__:0\n", encoding="utf-8"
+                )
                 events = stream.read().decode("utf-8", "replace")
             assert_contains(
                 events,

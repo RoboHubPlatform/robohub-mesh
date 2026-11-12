@@ -2,5 +2,5 @@
   <td><span class="badge {{ severity_css }}">{{ severity }}</span></td>
   <td><span class="local-time" data-ms="{{ created }}">{{ created }}</span></td>
   <td>{{ message }}</td>
-  <td><form method="post" action="/mesh/faults/clear" hx-post="/mesh/faults/clear" hx-target="#faults-rows" hx-swap="innerHTML"><input type="hidden" name="id" value="{{ id }}">{{{ csrf }}}<button type="submit" class="quiet">{{t "faults.clear"}}</button></form></td>
+  <td><form method="post" action="/faults/clear" hx-post="/faults/clear" hx-target="#faults-rows" hx-swap="innerHTML"><input type="hidden" name="id" value="{{ id }}">{{{ csrf }}}<button type="submit" class="quiet">{{t "faults.clear"}}</button></form></td>
 </tr>
