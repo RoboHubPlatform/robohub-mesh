@@ -16,6 +16,7 @@ Run from anywhere:
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -179,6 +180,43 @@ def main() -> int:
 
             docs = get(base, "/mesh/docs")
             assert_contains(docs, ["RoboHub Mesh", "Projects", "top bar"], "documentation")
+
+            # The Alerts tab is the alert interface's binding: what it saves is
+            # a channel's setting, kept in the application's own bind.conf and
+            # read back on the next page.
+            alerts = get(base, "/settings?tab=alerts")
+            assert_contains(alerts, ["log_path", "email_to", "telegram_chat"], "alerts settings")
+            csrf = re.search(r'name="csrf" value="([^"]*)"', alerts)
+            if not csrf:
+                raise AssertionError("the alerts form must carry its CSRF token")
+            post(
+                base,
+                "/settings?tab=alerts",
+                {
+                    "csrf": csrf.group(1),
+                    "log_path": os.path.join(state, "alerts.log"),
+                    "log_threshold": "WARNING",
+                    "email_enabled": "false",
+                    "email_to": "ops@example.com",
+                    "email_threshold": "critical",
+                    "telegram_enabled": "false",
+                    "telegram_chat": "",
+                    "telegram_token": "",
+                    "telegram_threshold": "critical",
+                },
+            )
+            bind_conf = Path(home) / ".rho" / "apps" / "mesh" / "bind.conf"
+            if not bind_conf.exists():
+                raise AssertionError("the alert settings must be saved in the application's bind.conf")
+            assert_contains(
+                bind_conf.read_text(),
+                ["robohub-provider-email.to_address=ops@example.com",
+                 "robohub-provider-log.severity_threshold=WARNING"],
+                "saved alert settings",
+            )
+            if bind_conf.stat().st_mode & 0o077:
+                raise AssertionError("bind.conf may hold secrets and must be its owner's only")
+            assert_contains(get(base, "/settings?tab=alerts"), ["ops@example.com"], "alert settings read back")
 
             # A new project is active from the start when none was.
             post(base, "/mesh/project/new", {"name": "default"})

@@ -35,33 +35,74 @@ fn mesh_settings_nav(req: Request, active: string) string {
     return out + "</nav>"
 }
 
+// mesh_alert_enabled is a channel's on or off, as the form's select spells it.
+fn mesh_alert_enabled(provider: string) string {
+    if alert.enabled(provider) {
+        return "true"
+    }
+    return "false"
+}
+
+// mesh_alert_list is the bound channels as a comma-separated list.
+fn mesh_alert_list() string {
+    var out: string = ""
+    var rest: string = alert.providers()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var name: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            name = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if name != "" {
+            if out != "" {
+                out = out + ", "
+            }
+            out = out + name
+        }
+    }
+    return out
+}
+
+// mesh_alert_set records one field of the Alerts form as a channel's setting.
+fn mesh_alert_set(body: string, provider: string, key: string, field: string) void {
+    if !alert.configure(provider, key, device_trim(form_value(body, field))) {
+        warn("mesh", "the alert setting " + provider + "." + key + " could not be saved")
+    }
+}
+
 fn mesh_settings_form(req: Request, tab: string) string {
     if rho_str_eq(tab, "logging") {
         return log_settings_form("mesh", "/settings?tab=logging",
             i18n_locale(req))
     }
     if rho_str_eq(tab, "alerts") {
-        var fields: FormField[7]
-        fields[0] = FormField{ "targets", "text", i18n_t(req, "settings.alerts.targets"), "",
-            "alert-log,email-alert", false, "", "",
-            settings_get("alerts.alert-dispatcher.targets", ""), "", "" }
-        fields[1] = FormField{ "threshold", "select", i18n_t(req, "settings.alerts.threshold"), "",
-            "", false, "", "INFO|INFO,WARNING|WARNING,ERROR|ERROR",
-            settings_get("alerts.alert-dispatcher.severity_threshold", "INFO"), "", "" }
-        fields[2] = FormField{ "log_path", "text", i18n_t(req, "settings.alerts.log_path"), "",
-            "~/.rho/mesh/alerts.log", false, "", "",
-            settings_get("alerts.alert-log.path", ""), "", "" }
+        // Each channel's settings are the binding's: the defaults in module.yml,
+        // changed here for this installation.
+        let on_off: string = "true|" + i18n_t(req, "settings.alerts.on") + ",false|" + i18n_t(req, "settings.alerts.off")
+        let levels: string = "INFO|INFO,WARNING|WARNING,ERROR|ERROR,CRITICAL|CRITICAL"
+        var fields: FormField[9]
+        fields[0] = FormField{ "log_path", "text", i18n_t(req, "settings.alerts.log_path"), "",
+            "~/.rho/mesh/alerts.log", false, "", "", alert.config("robohub-provider-log", "path"), "", "" }
+        fields[1] = FormField{ "log_threshold", "select", i18n_t(req, "settings.alerts.threshold"), "",
+            "", false, "", levels, alert.config("robohub-provider-log", "severity_threshold"), "", "" }
+        fields[2] = FormField{ "email_enabled", "select", i18n_t(req, "settings.alerts.email_enabled"), "",
+            "", false, "", on_off, mesh_alert_enabled("robohub-provider-email"), "", "" }
         fields[3] = FormField{ "email_to", "text", i18n_t(req, "settings.alerts.email_to"), "",
-            "ops@example.com", false, "", "",
-            settings_get("alerts.email-alert.to_address", ""), "", "" }
+            "ops@example.com", false, "", "", alert.config("robohub-provider-email", "to_address"), "", "" }
         fields[4] = FormField{ "email_threshold", "select", i18n_t(req, "settings.alerts.email_threshold"), "",
-            "", false, "", "INFO|INFO,WARNING|WARNING,ERROR|ERROR",
-            settings_get("alerts.email-alert.severity_threshold", "ERROR"), "", "" }
-        fields[5] = FormField{ "telegram_chat", "text", i18n_t(req, "settings.alerts.telegram_chat"), "",
-            "", false, "", "", settings_get("alerts.telegram-notifier.chat_id", ""), "", "" }
-        fields[6] = FormField{ "telegram_token", "password", i18n_t(req, "settings.alerts.telegram_token"), "",
-            "", false, "", "", settings_get("alerts.telegram-notifier.bot_token", ""), "", "" }
-        return forms_open(fields, 7, "/settings?tab=alerts",
+            "", false, "", levels, alert.config("robohub-provider-email", "severity_threshold"), "", "" }
+        fields[5] = FormField{ "telegram_enabled", "select", i18n_t(req, "settings.alerts.telegram_enabled"), "",
+            "", false, "", on_off, mesh_alert_enabled("robohub-provider-telegram"), "", "" }
+        fields[6] = FormField{ "telegram_chat", "text", i18n_t(req, "settings.alerts.telegram_chat"), "",
+            "", false, "", "", alert.config("robohub-provider-telegram", "chat_id"), "", "" }
+        fields[7] = FormField{ "telegram_token", "password", i18n_t(req, "settings.alerts.telegram_token"), "",
+            "", false, "", "", alert.config("robohub-provider-telegram", "bot_token"), "", "" }
+        fields[8] = FormField{ "telegram_threshold", "select", i18n_t(req, "settings.alerts.telegram_threshold"), "",
+            "", false, "", levels, alert.config("robohub-provider-telegram", "severity_threshold"), "", "" }
+        return forms_open(fields, 9, "/settings?tab=alerts",
             i18n_t(req, "settings.save"), i18n_locale(req))
     }
     if rho_str_eq(tab, "storage") {
@@ -101,7 +142,8 @@ fn mesh_settings_form(req: Request, tab: string) string {
     if rho_str_eq(tab, "configuration") {
         return "<dl class=\"settings\"><dt>Application</dt><dd>mesh</dd>" +
             "<dt>Workspace</dt><dd><code>" + escape_html(robohub_root()) + "</code></dd>" +
-            "<dt>Plugins</dt><dd>robohub-auth, alert-dispatcher, alert-log, email-alert, telegram-notifier</dd></dl>"
+            "<dt>Plugins</dt><dd>robohub-auth</dd>" +
+            "<dt>Alert channels</dt><dd>" + escape_html(mesh_alert_list()) + "</dd></dl>"
     }
     var fields: FormField[1]
     fields[0] = FormField{ "tabs", "select", i18n_t(req, "settings.orientation"), "",
@@ -154,13 +196,15 @@ fn mesh_settings_save(req: Request) Response {
         return redirect("/settings?tab=storage")
     }
     if rho_str_eq(tab, "alerts") {
-        settings_set("alerts.alert-dispatcher.targets", device_trim(form_value(body, "targets")))
-        settings_set("alerts.alert-dispatcher.severity_threshold", device_trim(form_value(body, "threshold")))
-        settings_set("alerts.alert-log.path", device_trim(form_value(body, "log_path")))
-        settings_set("alerts.email-alert.to_address", device_trim(form_value(body, "email_to")))
-        settings_set("alerts.email-alert.severity_threshold", device_trim(form_value(body, "email_threshold")))
-        settings_set("alerts.telegram-notifier.chat_id", device_trim(form_value(body, "telegram_chat")))
-        settings_set("alerts.telegram-notifier.bot_token", device_trim(form_value(body, "telegram_token")))
+        mesh_alert_set(body, "robohub-provider-log", "path", "log_path")
+        mesh_alert_set(body, "robohub-provider-log", "severity_threshold", "log_threshold")
+        mesh_alert_set(body, "robohub-provider-email", "enabled", "email_enabled")
+        mesh_alert_set(body, "robohub-provider-email", "to_address", "email_to")
+        mesh_alert_set(body, "robohub-provider-email", "severity_threshold", "email_threshold")
+        mesh_alert_set(body, "robohub-provider-telegram", "enabled", "telegram_enabled")
+        mesh_alert_set(body, "robohub-provider-telegram", "chat_id", "telegram_chat")
+        mesh_alert_set(body, "robohub-provider-telegram", "bot_token", "telegram_token")
+        mesh_alert_set(body, "robohub-provider-telegram", "severity_threshold", "telegram_threshold")
         return redirect("/settings?tab=alerts")
     }
     settings_set("ui.tabs", device_trim(form_value(body, "tabs")))

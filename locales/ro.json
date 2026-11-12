@@ -23,7 +23,6 @@
   "settings.save": "Salvează",
   "settings.intro": "Setări pentru aplicație și dependențe. Valorile de build și implementare apar în fila Configurație.",
   "settings.csrf_refused": "Refuzat: tokenul formularului nu corespunde.",
-  "settings.alerts.targets": "Canale active",
   "settings.alerts.threshold": "Prag alerte",
   "settings.alerts.log_path": "Calea jurnalului de alerte",
   "settings.alerts.email_to": "Destinatar email",
@@ -52,5 +51,10 @@
   "nav.faults": "Defecte",
   "faults.empty": "Niciun defect înregistrat.",
   "settings.storage.backoff": "Backoff maxim gateway (secunde)",
-  "settings.tab.logging": "Jurnalizare"
+  "settings.tab.logging": "Jurnalizare",
+  "settings.alerts.on": "Pornit",
+  "settings.alerts.off": "Oprit",
+  "settings.alerts.email_enabled": "Alerte prin e-mail",
+  "settings.alerts.telegram_enabled": "Alerte prin Telegram",
+  "settings.alerts.telegram_threshold": "Prag Telegram"
 }

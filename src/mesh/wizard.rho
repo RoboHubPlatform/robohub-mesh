@@ -858,7 +858,7 @@ fn device_paths() string {
         }
         let line: string = rho_str_slice(text, i, end - i)
         let trimmed: string = device_trim(line)
-        if rho_strlen(trimmed) > 0 && plugin_indent(line) == 0 {
+        if rho_strlen(trimmed) > 0 && rho_str_index_of(line, " ") != 0 {
             break
         }
         if rho_str_index_of(trimmed, "- ") == 0 {
@@ -2291,16 +2291,9 @@ fn mesh_manifest_path() string {
     return ""
 }
 
+// mesh_alert raises an alert through the channels Mesh binds.
 fn mesh_alert(level: string, message: string, metadata: string) u32 {
-    let manifest: string = mesh_manifest_path()
-    if manifest == "" {
-        return 0
-    }
-    let registry: string = registry_load_app(robohub_root() + "/plugins", manifest, "")
-    if registry == "" {
-        return 0
-    }
-    return registry_alert(robohub_root() + "/plugins", registry, level, message, metadata)
+    return alert.raise(level, message, metadata)
 }
 
 fn run_shell(command: string, label: string) u32 {

@@ -4,7 +4,6 @@ module mesh
 // It is standalone on its own port and can be launched by the keeper.
 
 include "mesh/storage.rho"
-include "robohub-contract-alert"
 include "mesh/wizard.rho"
 include "mesh/mesh.rho"
 include "mesh/tokens.rho"
@@ -23,6 +22,7 @@ import robohub.settings
 import robohub.htmx
 import robohub.i18n
 import robohub.logging
+import robohub.alert
 
 // The orchestrator root. A hosted application is started with the workspace in
 // the environment, and a standalone one from the repository root.

@@ -203,3 +203,12 @@ device still reopens it, and the form says so before it is saved. Back links
 lead to the plan. The node form keeps a link set in the network step, a console
 link keeps its baud, devices are no longer offered as module parents, and fault
 Clear posts to the route that exists.
+
+## [0.6.1] - 2026-11-12
+
+Mesh imports the alert interface instead of including the alert contract, and
+binds its channels in `module.yml`; the alert plugins it named are gone. The
+Settings page's Alerts tab saves each channel's settings through the binding,
+including whether e-mail and Telegram are on, and the Configuration tab lists
+the bound channels. The alert rule tests moved to the interface, and the smoke
+test saves the Alerts tab and reads the setting back.

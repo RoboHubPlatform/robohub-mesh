@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.6.0
+  version: 0.6.1
   author: Aurel Miron
   maintainer: Aurel Miron
 description: >
@@ -61,19 +61,17 @@ deps:
     settings: ">=0.1.0"
     forms: ">=0.1.0"
     robohub-auth: ">=0.1.0"
-    alert-dispatcher: ">=0.1.0"
-    alert-log: ">=0.1.0"
-    email-alert: ">=0.1.0"
-    telegram-notifier: ">=0.1.0"
-    robohub-contract-alert: ">=0.1.0"
+    robohub-alert: ">=1.0.0"
+    robohub-provider-log: ">=0.2.0"
+    robohub-provider-email: ">=0.2.0"
+    robohub-provider-telegram: ">=0.2.0"
   rho-sql: ">=0.1.0"
 
 # A hosted application is not a service the keeper is: it has its own listener,
 # its own lifetime and its own command. The keeper reads this block to offer it
 # in its applications registry.
 
-# The alert channels this application uses. The dispatcher is the one alert
-# plugin the application calls; it fans out to the channels named in targets.
+# The plugins this application uses: how it signs a person in.
 plugins:
   - name: robohub-auth
     enabled: true
@@ -81,31 +79,32 @@ plugins:
       issuer: keeper
       mode: direct
       login_url: "http://127.0.0.1:19090/auth/login"
-  - name: alert-dispatcher
-    enabled: true
+
+# The alert channels Mesh raises its alerts through, and their settings. The
+# Settings page changes them on a running installation (bind.conf in Mesh's
+# workspace, or ~/.rho/apps/mesh when it is started by hand); these are the
+# defaults.
+bind:
+  robohub.alert:
+    providers:
+      - robohub-provider-log
+      - robohub-provider-email
+      - robohub-provider-telegram
     config:
-      targets: "alert-log,email-alert,telegram-notifier"
-      severity_threshold: INFO
-  - name: alert-log
-    enabled: true
-    config:
-      path: "~/.rho/mesh/alerts.log"
-      severity_threshold: INFO
-  - name: email-alert
-    enabled: false
-    config:
-      provider: local
-      from_address: "alerts@robohub.internal"
-      to_address: "ops@robohub.internal"
-      subject_template: "[RoboHub {app}] {level}: {rule}"
-      body_template: "{message}"
-      severity_threshold: ERROR
-  - name: telegram-notifier
-    enabled: false
-    config:
-      bot_token: ""
-      chat_id: ""
-      severity_threshold: WARNING
+      robohub-provider-log:
+        path: "~/.rho/mesh/alerts.log"
+        severity_threshold: INFO
+      robohub-provider-email:
+        enabled: "false"
+        mode: local
+        from_address: "alerts@robohub.internal"
+        to_address: "ops@robohub.internal"
+        subject_template: "[RoboHub {app}] {level}: {rule}"
+        body_template: "{message}"
+        severity_threshold: ERROR
+      robohub-provider-telegram:
+        enabled: "false"
+        severity_threshold: WARNING
 
 deploy:
   port: 8478

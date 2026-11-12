@@ -1,7 +1,6 @@
 module mesh.wizard_test
 
 include "../src/mesh/wizard_text.rho"
-include "contracts/alert/rule.rho"
 
 // Unit tests for the string half of the deployment wizard.
 //
@@ -19,7 +18,6 @@ extern fn rho_str_from_byte(b: u8) string
 extern fn rho_str_eq(a: string, b: string) bool
 extern fn rho_int_to_str(value: u32) string
 extern fn rho_int_from_str(s: string) u32
-
 
 extern fn abort()
 
@@ -66,68 +64,6 @@ test fn words_are_the_module_names() void {
     print("[PASS] words_are_the_module_names\n")
 }
 
-test fn an_alert_waits_for_the_pending_window() void {
-    let rule: AlertRule = alert_rule_new("temp", "Overheat", 28.0, 1.0, 10, 300, 0, 0)
-    let first: AlertEvaluation = alert_rule_evaluate(rule, 29.0, 100)
-    check(!first.fired, "a first sample does not fire")
-    check(rho_str_eq(first.rule.state, "pending"), "the rule is pending")
-    let second: AlertEvaluation = alert_rule_evaluate(first.rule, 29.0, 105)
-    check(!second.fired, "the window has not elapsed")
-    let third: AlertEvaluation = alert_rule_evaluate(second.rule, 29.0, 110)
-    check(third.fired, "a sustained breach fires")
-    check(rho_str_eq(third.rule.state, "triggered"), "the rule is triggered")
-    print("[PASS] an_alert_waits_for_the_pending_window\n")
-}
-
-test fn a_transient_spike_returns_to_normal() void {
-    let rule: AlertRule = alert_rule_new("temp", "Overheat", 28.0, 1.0, 10, 300, 0, 0)
-    let first: AlertEvaluation = alert_rule_evaluate(rule, 29.0, 100)
-    let second: AlertEvaluation = alert_rule_evaluate(first.rule, 27.0, 105)
-    check(!second.fired, "a spike never fires")
-    check(rho_str_eq(second.rule.state, "normal"), "the rule returned to normal")
-    print("[PASS] a_transient_spike_returns_to_normal\n")
-}
-
-test fn hysteresis_keeps_the_alert_until_the_clear_line() void {
-    let rule: AlertRule = alert_rule_new("temp", "Overheat", 28.0, 1.0, 0, 300, 0, 0)
-    let fired: AlertEvaluation = alert_rule_evaluate(rule, 29.0, 100)
-    check(fired.fired, "the rule fires")
-    let between: AlertEvaluation = alert_rule_evaluate(fired.rule, 27.5, 110)
-    check(!between.cleared, "27.5 is above the clear line of 27")
-    check(rho_str_eq(between.rule.state, "triggered"), "the alert is still on")
-    let cleared: AlertEvaluation = alert_rule_evaluate(between.rule, 26.9, 120)
-    check(cleared.cleared, "below the clear line clears it")
-    check(rho_str_eq(cleared.rule.state, "cooldown"), "the rule is recharging")
-    print("[PASS] hysteresis_keeps_the_alert_until_the_clear_line\n")
-}
-
-test fn a_cooldown_recharges_before_a_new_alert() void {
-    let rule: AlertRule = alert_rule_new("temp", "Overheat", 28.0, 1.0, 0, 300, 0, 0)
-    let fired: AlertEvaluation = alert_rule_evaluate(rule, 29.0, 100)
-    let cleared: AlertEvaluation = alert_rule_evaluate(fired.rule, 26.0, 110)
-    let cooling: AlertEvaluation = alert_rule_evaluate(cleared.rule, 29.0, 200)
-    check(!cooling.fired, "the cooldown has not elapsed")
-    check(rho_str_eq(cooling.rule.state, "cooldown"), "the rule is still recharging")
-    let pending: AlertEvaluation = alert_rule_evaluate(cooling.rule, 29.0, 410)
-    check(rho_str_eq(pending.rule.state, "pending"), "after the cooldown it is pending")
-    let again: AlertEvaluation = alert_rule_evaluate(pending.rule, 29.0, 420)
-    check(again.fired, "the next sustained breach fires")
-    print("[PASS] a_cooldown_recharges_before_a_new_alert\n")
-}
-
-test fn the_rate_limit_suppresses_a_second_fire() void {
-    let rule: AlertRule = alert_rule_new("temp", "Overheat", 28.0, 1.0, 0, 0, 1, 1000)
-    let fired: AlertEvaluation = alert_rule_evaluate(rule, 29.0, 100)
-    check(fired.fired, "the first alert fires")
-    let cleared: AlertEvaluation = alert_rule_evaluate(fired.rule, 26.0, 200)
-    let pending: AlertEvaluation = alert_rule_evaluate(cleared.rule, 29.0, 250)
-    check(rho_str_eq(pending.rule.state, "pending"), "it can become pending")
-    let suppressed: AlertEvaluation = alert_rule_evaluate(pending.rule, 29.0, 260)
-    check(!suppressed.fired, "the rolling window is full")
-    check(rho_str_eq(suppressed.rule.state, "triggered"), "the rule stays triggered")
-    print("[PASS] the_rate_limit_suppresses_a_second_fire\n")
-}
-
 test fn reads_a_form_value_once() void {
     check(rho_str_eq(form_value("gateway=uno-q&link=uart", "gateway"), "uno-q"), "first field")
     check(rho_str_eq(form_value("b=two+words&b=last", "b"), "two words"), "first duplicate")
@@ -151,11 +87,6 @@ test fn hex_digits_are_values() void {
 fn main() void {
     decodes_percent_escapes()
     decodes_plus_as_space()
-    an_alert_waits_for_the_pending_window()
-    a_transient_spike_returns_to_normal()
-    hysteresis_keeps_the_alert_until_the_clear_line()
-    a_cooldown_recharges_before_a_new_alert()
-    the_rate_limit_suppresses_a_second_fire()
     reads_a_form_value_once()
     addresses_are_hex_numbers()
     reads_a_repeated_field_as_a_list()
