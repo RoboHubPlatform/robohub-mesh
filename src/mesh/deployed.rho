@@ -78,12 +78,6 @@ fn deployed_node_key(project: string, index: u32) string {
     return "node." + project_node_id(project_file(project), index)
 }
 
-// deployed_record_node keeps what a board was just programmed with.
-fn deployed_record_node(project: string, index: u32) void {
-    deployed_set(project, deployed_node_key(project, index),
-        deploy_node_signature(deployed_plan(project), index))
-}
-
 fn deployed_record_gateway(project: string) void {
     deployed_set(project, "gateway", deploy_gateway_signature(deployed_plan(project)))
 }

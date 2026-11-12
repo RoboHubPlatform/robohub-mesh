@@ -1,0 +1,772 @@
+//
+// @file api.rho
+// @brief The JSON API other applications read a mesh through: its projects, sources, values, actions and devices.
+//
+// @module mesh.api
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.api
+
+fn mesh_quote(value: string) string {
+    return "\"" + value + "\""
+}
+
+fn mesh_json_bool(text: string, key: string) string {
+    let at: i32 = rho_str_index_of(text, "\"" + key + "\":")
+    if at < 0 {
+        return ""
+    }
+    let rest: string = rho_str_slice(text, u32(at) + u32(rho_strlen(key)) + 3,
+        u32(rho_strlen(text)) - u32(at) - u32(rho_strlen(key)) - 3)
+    let trimmed: string = rest
+    var i: u32 = 0
+    while i < u32(rho_strlen(trimmed)) &&
+        (rho_str_eq(rho_str_slice(trimmed, i, 1), " ") || rho_str_eq(rho_str_slice(trimmed, i, 1), "\t")) {
+        i = i + 1
+    }
+    if rho_str_index_of(rho_str_slice(trimmed, i, u32(rho_strlen(trimmed)) - i), "true") == 0 {
+        return "on"
+    }
+    if rho_str_index_of(rho_str_slice(trimmed, i, u32(rho_strlen(trimmed)) - i), "false") == 0 {
+        return "off"
+    }
+    return ""
+}
+
+fn mesh_json_number(text: string, key: string) string {
+    let at: i32 = rho_str_index_of(text, "\"" + key + "\":")
+    if at < 0 {
+        return ""
+    }
+    var rest: string = rho_str_slice(text, u32(at) + u32(rho_strlen(key)) + 3,
+        u32(rho_strlen(text)) - u32(at) - u32(rho_strlen(key)) - 3)
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(rest)) {
+        let ch: string = rho_str_slice(rest, i, 1)
+        if (ch >= "0" && ch <= "9") || rho_str_eq(ch, ".") || rho_str_eq(ch, "-") {
+            out = out + ch
+            i = i + 1
+        } else if out == "" && (rho_str_eq(ch, " ") || rho_str_eq(ch, "\t")) {
+            i = i + 1
+        } else {
+            break
+        }
+    }
+    return out
+}
+
+fn mesh_device_checked(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".last_checked")
+}
+
+fn mesh_device_last(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".last_value")
+}
+
+fn mesh_device_state(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".state")
+}
+
+fn mesh_device_poll(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
+    let body: string = request_body(req)
+    let index: u32 = rho_int_from_str(form_value(body, "id"))
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return mesh_redirect("/mesh/plan")
+    }
+    let project: string = current_project()
+    let file: string = project_file(project)
+    let address: string = node_device_address(index)
+    if rho_strlen(address) == 0 {
+        save_setting("mesh_message", "This device has no HTTP address.")
+        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+    }
+    let recorded: u32 = telemetry_poll_http_device(project, file, index)
+    if recorded == 0 {
+        save_setting("mesh_message",
+            "The device did not answer or its manifest names no HTTP telemetry.")
+        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+    }
+    // The page shows the values the store now holds, so it reads the same
+    // series a chart would rather than a second, separate request.
+    let source: string = project_node_id(file, index)
+    let state: string = telemetry_latest_text(project, source, "state")
+    if state != "" {
+        if state == "1" {
+            save_setting("node." + rho_int_to_str(index) + ".state", "on")
+        } else {
+            save_setting("node." + rho_int_to_str(index) + ".state", "off")
+        }
+    }
+    let power: string = telemetry_latest_text(project, source, "power_w")
+    if power != "" {
+        save_setting("node." + rho_int_to_str(index) + ".last_value", power)
+    }
+    let date_report: string = wizard_report("device-time")
+    ignore_u32(rho_exec("date", "+%Y-%m-%dT%H:%M:%S", date_report))
+    save_setting("node." + rho_int_to_str(index) + ".last_checked",
+        first_line(rho_read_text(date_report)))
+    save_setting("mesh_message", "Device read.")
+    return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+}
+
+fn mesh_device_switch(index: u32, state: string) bool {
+    let address: string = node_device_address(index)
+    let on: string = "false"
+    if rho_str_eq(state, "on") {
+        on = "true"
+    }
+    let report: string = wizard_report("device-set-" + rho_int_to_str(index))
+    let url: string = address + "/rpc/Switch.Set?id=0&on=" + on
+    let code: u32 = rho_exec("curl", "-fsS -m 3 " + mesh_quote(url), report)
+    if code == 0 {
+        save_setting("node." + rho_int_to_str(index) + ".state", state)
+    }
+    return code == 0
+}
+
+fn mesh_device_set(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
+    let body: string = request_body(req)
+    let index: u32 = rho_int_from_str(form_value(body, "id"))
+    let state: string = form_value(body, "state")
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return mesh_redirect("/mesh/plan")
+    }
+    if mesh_device_switch(index, state) {
+        save_setting("mesh_message", "Device switched " + state + ".")
+    } else {
+        save_setting("mesh_message", "The device did not answer at " + node_device_address(index) + ".")
+    }
+    return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+}
+
+fn mesh_project_gateway(id: string) string {
+    let file: string = project_file(id)
+    if !rho_path_exists(file) {
+        return ""
+    }
+    return state_value_in(file, "gateway_url")
+}
+
+fn mesh_gateway_url() string {
+    let active: string = current_project()
+    if active != "" {
+        let url: string = mesh_project_gateway(active)
+        if url != "" {
+            return url
+        }
+    }
+    let from_env: string = getenv("ROBOHUB_GATEWAY_URL")
+    if from_env != "" {
+        return from_env
+    }
+    return ""
+}
+
+fn mesh_gateway_answers(url: string) bool {
+    if url == "" {
+        return false
+    }
+    let report: string = wizard_report("gateway-health")
+    let code: u32 = rho_exec("curl", "-fsS -m 2 -o /dev/null " +
+        mesh_quote(url + "/healthz"), report)
+    return code == 0
+}
+
+fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
+    module_id: string, driver_id: string, row: string, origin: string) string {
+    let signal: string = field(row, 0)
+    // A source is addressed by its node's id, which outlives any change to the
+    // plan. The index form is what clients saved before, and still resolves.
+    let file: string = project_file(project)
+    let node_id: string = project_node_id(file, index)
+    let legacy_id: string = kind + "." + rho_int_to_str(index) + "." + signal
+    var id: string = legacy_id
+    if node_id != "" {
+        id = node_id + "." + signal
+    }
+    var source_module: string = module_id
+    if driver_id != "" {
+        source_module = driver_id
+    }
+    var source: string = id
+    if source_module != "" {
+        source = source_module + "." + signal
+    }
+    let instance: string = node_id
+    let base: string = "/mesh/api/projects/" + project + "/sources/" + id
+    let timeline: string = "/mesh/api/projects/" + project +
+        "/telemetry/series?source=" + id
+    var urls: string = ""
+    if origin != "" {
+        urls = ",\"value_url\":" + json_string(origin + base + "/value") +
+            ",\"action_url\":" + json_string(origin + base + "/action") +
+            ",\"history_url\":" + json_string(origin + timeline)
+    }
+    return ",{\"id\":" + json_string(id) +
+        ",\"legacy_id\":" + json_string(legacy_id) +
+        ",\"name\":" + json_string(owner + " · " + field(row, 1)) +
+        ",\"owner\":" + json_string(owner) +
+        ",\"module_id\":" + json_string(module_id) +
+        ",\"driver_id\":" + json_string(driver_id) +
+        ",\"source\":" + json_string(source) +
+        ",\"project\":" + json_string(project) +
+        ",\"instance\":" + json_string(instance) +
+        ",\"kind\":" + json_string(kind) +
+        ",\"signal\":" + json_string(signal) +
+        ",\"label\":" + json_string(field(row, 1)) +
+        ",\"direction\":" + json_string(field(row, 2)) +
+        ",\"unit\":" + json_string(field(row, 3)) +
+        ",\"field\":" + json_string(field(row, 4)) +
+        ",\"kinds\":" + json_string(field(row, 5)) +
+        ",\"value_path\":" + json_string(base + "/value") +
+        ",\"action_path\":" + json_string(base + "/action") +
+        ",\"history_path\":" + json_string(timeline) + urls + "}"
+}
+
+fn mesh_source_entries(project: string, kind: string, index: u32, owner: string,
+    module_id: string, driver_id: string, rows: string, origin: string) string {
+    var out: string = ""
+    var rest: string = rows
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" {
+            out = out + mesh_source_entry(project, kind, index, owner, module_id, driver_id, line, origin)
+        }
+    }
+    return out
+}
+
+fn mesh_sources_json(project: string, origin: string) string {
+    let file: string = project_file(project)
+    if !rho_path_exists(file) {
+        return "[]"
+    }
+    let count: u32 = project_node_count_at(file)
+    var out: string = ""
+    var index: u32 = 1
+    while index <= count {
+        let kind: string = project_node_value(file, index, "kind", "compute")
+        if kind == "device" {
+            let name: string = project_node_value(file, index, "name", "")
+            let device: string = project_node_value(file, index, "device", "")
+            var owner: string = name
+            if owner == "" {
+                owner = device_label(device)
+            }
+            out = out + mesh_source_entries(project, "device", index, owner,
+                device_module_id(device), "", manifest_signal_rows(device_manifest(device), true), origin)
+        } else if kind == "module" {
+            let name: string = project_node_value(file, index, "name", "")
+            let module_name: string = project_node_value(file, index, "module", "")
+            var owner: string = name
+            if owner == "" {
+                owner = module_label(module_name)
+            }
+            out = out + mesh_source_entries(project, "module", index, owner,
+                module_module_id(module_name), driver_module_id(module_driver(module_name)),
+                manifest_signal_rows(module_manifest(module_name), false), origin)
+        }
+        index = index + 1
+    }
+    if rho_str_starts_with(out, ",") {
+        out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
+    }
+    return "[" + out + "]"
+}
+
+fn mesh_json_string_field(text: string, key: string) string {
+    let at: i32 = rho_str_index_of(text, "\"" + key + "\":\"")
+    if at < 0 {
+        return ""
+    }
+    let start: u32 = u32(at) + u32(rho_strlen(key)) + 4
+    let rest: string = rho_str_slice(text, start, u32(rho_strlen(text)) - start)
+    let end: i32 = rho_str_index_of(rest, "\"")
+    if end < 0 {
+        return ""
+    }
+    return rho_str_slice(rest, 0, u32(end))
+}
+
+fn mesh_gateway_audience(path: string) string {
+    if rho_str_starts_with(path, "/api/v1/") {
+        return "gateway"
+    }
+    return ""
+}
+
+fn mesh_url_get(base: string, path: string) string {
+    if base == "" {
+        return ""
+    }
+    let report: string = wizard_report("mesh-source")
+    let audience: string = mesh_gateway_audience(path)
+    var scopes: string = ""
+    if audience != "" {
+        scopes = MESH_GATEWAY_SCOPE
+    }
+    let status: u32 = rho_http_request("GET", base + path, "", "", audience, scopes, report)
+    if status != 200 {
+        return ""
+    }
+    return rho_read_text(report)
+}
+
+// mesh_gateway_command sends a command to a gateway with a gateway token.
+fn mesh_gateway_command(base: string, path: string, body: string) bool {
+    let report: string = wizard_report("mesh-gateway-post")
+    let status: u32 = rho_http_request("POST", base + path, body, "application/json",
+        "gateway", MESH_GATEWAY_SCOPE, report)
+    return status >= 200 && status < 300
+}
+
+fn mesh_url_get_auth(base: string, path: string, token: string) string {
+    if base == "" || token == "" {
+        return mesh_url_get(base, path)
+    }
+    let report: string = wizard_report("mesh-source")
+    if rho_exec("curl", "-fsS -m 4 -H " +
+        mesh_quote("Authorization: Bearer " + token) + " " +
+        mesh_quote(base + path), report) != 0 {
+        return ""
+    }
+    return rho_read_text(report)
+}
+
+fn gateway_device_object(base: string, name: string, address: string,
+    device_id: string) string {
+    let text: string = mesh_url_get(base, "/api/v1/devices")
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "},{")
+        var object: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            object = rho_str_slice(rest, 0, u32(at) + 1)
+            rest = rho_str_slice(rest, u32(at) + 3, u32(rho_strlen(rest)) - u32(at) - 3)
+        }
+        let found_name: string = mesh_json_string_field(object, "name")
+        let found_address: string = mesh_json_string_field(object, "address")
+        let found_id: string = mesh_json_string_field(object, "device_id")
+        if (device_id != "" && found_id == device_id) ||
+            (name != "" && found_name == name) ||
+            (address != "" && found_address == address) {
+            return object
+        }
+    }
+    return ""
+}
+
+fn gateway_node_object(text: string, area: string, node: string) string {
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "},{")
+        var object: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            object = rho_str_slice(rest, 0, u32(at) + 1)
+            rest = rho_str_slice(rest, u32(at) + 3, u32(rho_strlen(rest)) - u32(at) - 3)
+        }
+        if json_number(object, "area_id") == area && json_number(object, "node_id") == node {
+            return object
+        }
+    }
+    return ""
+}
+
+fn mesh_source_spec(project: string, source: string) string {
+    let file: string = project_file(project)
+    if !rho_path_exists(file) {
+        return ""
+    }
+    let first: i32 = rho_str_index_of(source, ".")
+    if first < 0 {
+        return ""
+    }
+    var kind: string = rho_str_slice(source, 0, u32(first))
+    let rest: string = rho_str_slice(source, u32(first) + 1,
+        u32(rho_strlen(source)) - u32(first) - 1)
+    var index_text: string = ""
+    var signal: string = ""
+    var index: u32 = 0
+    // `<node id>.<signal>` names the node by its identity; `<kind>.<index>.<signal>`
+    // is the older form, which names it by place.
+    let by_id: u32 = project_node_by_id(file, kind)
+    if by_id > 0 {
+        index = by_id
+        index_text = rho_int_to_str(by_id)
+        signal = rest
+        kind = project_node_value(file, index, "kind", "compute")
+    } else {
+        let second: i32 = rho_str_index_of(rest, ".")
+        if second < 0 {
+            return ""
+        }
+        index_text = rho_str_slice(rest, 0, u32(second))
+        signal = rho_str_slice(rest, u32(second) + 1, u32(rho_strlen(rest)) - u32(second) - 1)
+        index = rho_int_from_str(index_text)
+        if project_node_value(file, index, "kind", "compute") != kind {
+            return ""
+        }
+    }
+    var manifest: string = ""
+    var is_device: bool = false
+    if kind == "device" {
+        manifest = device_manifest(project_node_value(file, index, "device", ""))
+        is_device = true
+    } else if kind == "module" {
+        manifest = module_manifest(project_node_value(file, index, "module", ""))
+    } else {
+        return ""
+    }
+    let row: string = signal_row_for(manifest, is_device, signal)
+    if row == "" {
+        return ""
+    }
+    var owner: string = project_node_value(file, index, "name", "")
+    if owner == "" {
+        owner = project_node_value(file, index, "device", "")
+    }
+    if owner == "" {
+        owner = project_node_value(file, index, "module", "")
+    }
+    return kind + "|" + index_text + "|" + signal + "|" + field(row, 4) + "|" +
+        field(row, 2) + "|" + owner + "|" + project_node_value(file, index, "name", "") +
+        "|" + project_node_value(file, index, "transport", "") + "|" +
+        project_node_value(file, index, "address", "") + "|" +
+        project_node_value(file, index, "parent", "") + "|" + field(row, 5) + "|" +
+        project_node_value(file, index, "device_id", "")
+}
+
+fn mesh_stored_text(spec: string, stored: string) string {
+    let kinds: string = field(spec, 10)
+    if rho_str_index_of(kinds, "toggle") >= 0 || rho_str_index_of(kinds, "boolean") >= 0 {
+        if stored == "1" {
+            return "on"
+        }
+        if stored == "0" {
+            return "off"
+        }
+    }
+    return stored
+}
+
+fn mesh_device_stored_value(project: string, spec: string, field_name: string) string {
+    let file: string = project_file(project)
+    let stored: string = telemetry_latest_text(project,
+        project_node_id(file, u32(rho_int_from_str(field(spec, 1)))), field_name)
+    return mesh_stored_text(spec, stored)
+}
+
+fn mesh_module_stored_value(project: string, spec: string, field_name: string) string {
+    let coords: string = mesh_spec_coordinates(project, spec)
+    if coords == "" {
+        return ""
+    }
+    return mesh_stored_text(spec, telemetry_latest_text(project, field(coords, 0), field(coords, 1)))
+}
+
+fn mesh_source_value(project: string, source: string) string {
+    let spec: string = mesh_source_spec(project, source)
+    if spec == "" {
+        return ""
+    }
+    let kind: string = field(spec, 0)
+    let field_name: string = field(spec, 3)
+    let transport: string = field(spec, 7)
+    let address: string = field(spec, 8)
+    let base: string = mesh_project_gateway(project)
+    if kind == "device" {
+        let stored: string = mesh_device_stored_value(project, spec, field_name)
+        if stored != "" {
+            return stored
+        }
+    }
+    if kind == "device" && address != "" &&
+        (transport == "http" || rho_str_index_of(address, "http") == 0) {
+        // A device the plan reaches directly is read the same way Mesh's own
+        // device page reads it, so a plug works before it is registered on a
+        // gateway.
+        let report: string = wizard_report("mesh-source-device")
+        if rho_exec("curl", "-fsS -m 3 " + mesh_quote(address + "/rpc/Shelly.GetStatus"),
+            report) == 0 {
+            let text: string = rho_read_text(report)
+            if field_name == "state" {
+                return mesh_json_bool(text, "output")
+            }
+            if field_name == "power_w" {
+                return mesh_json_number(text, "apower")
+            }
+            return mesh_json_number(text, field_name)
+        }
+    }
+    if kind == "module" {
+        let stored: string = mesh_module_stored_value(project, spec, field_name)
+        if stored != "" {
+            return stored
+        }
+    }
+    if base == "" {
+        return ""
+    }
+    if kind == "device" {
+        let object: string = gateway_device_object(base, field(spec, 6), address,
+            field(spec, 11))
+        if object == "" {
+            return ""
+        }
+        if field_name == "state" {
+            return mesh_json_string_field(object, field_name)
+        }
+        return json_number(object, field_name)
+    }
+    if kind == "module" {
+        let parent: string = field(spec, 9)
+        if !rho_str_starts_with(parent, "node.") {
+            return ""
+        }
+        let parent_index: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
+        let nodes: string = mesh_url_get(base, "/api/v1/nodes")
+        let object: string = gateway_node_object(nodes,
+            project_area_id(project_file(project)), parent_index)
+        if object == "" {
+            return ""
+        }
+        return json_number(object, field_name)
+    }
+    return ""
+}
+
+fn mesh_source_action(project: string, source: string, state: string) bool {
+    let spec: string = mesh_source_spec(project, source)
+    if spec == "" || field(spec, 4) != "output" {
+        return false
+    }
+    let transport: string = field(spec, 7)
+    let address: string = field(spec, 8)
+    var desired: string = state
+    if desired != "on" && desired != "off" {
+        desired = "on"
+    }
+    if address != "" && (transport == "http" || rho_str_index_of(address, "http") == 0) {
+        // Drive the device the plan names, not only one the gateway already
+        // knows; this is the same RPC Mesh's device page uses.
+        var on: string = "false"
+        if desired == "on" {
+            on = "true"
+        }
+        let direct: string = wizard_report("mesh-source-switch")
+        if rho_exec("curl", "-fsS -m 4 " +
+            mesh_quote(address + "/rpc/Switch.Set?id=0&on=" + on), direct) == 0 {
+            return true
+        }
+    }
+    let base: string = mesh_project_gateway(project)
+    if base == "" {
+        return false
+    }
+    let object: string = gateway_device_object(base, field(spec, 6), address,
+        field(spec, 11))
+    if object == "" {
+        return false
+    }
+    let id: string = json_number(object, "id")
+    if id == "" {
+        return false
+    }
+    return mesh_gateway_command(base, "/api/v1/devices/" + id + "/switch?state=" + desired, "")
+}
+
+fn mesh_api_sources(req: Request) Response {
+    let project: string = current_project()
+    if !mesh_scoped(req, project) {
+        return mesh_scope_denied()
+    }
+    if project == "" {
+        return json(200, "[]")
+    }
+    return json(200, mesh_sources_json(project, request_query_param(req, "base")))
+}
+
+fn mesh_api_project_sources(req: Request) Response {
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
+    return json(200, mesh_sources_json(param(req, "project"),
+        request_query_param(req, "base")))
+}
+
+fn mesh_api_source_value(req: Request) Response {
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
+    let value: string = mesh_source_value(param(req, "project"), param(req, "source"))
+    return Response{ 200, value, "text/plain; charset=utf-8", "" }
+}
+
+fn mesh_api_source_action(req: Request) Response {
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
+    var state: string = request_query_param(req, "state")
+    if state == "" {
+        state = form_value(request_body(req), "state")
+    }
+    if mesh_source_action(param(req, "project"), param(req, "source"), state) {
+        return json(200, "{\"ok\":true}")
+    }
+    return json(502, "{\"ok\":false}")
+}
+
+fn mesh_api_projects(req: Request) Response {
+    var out: string = "["
+    var first: bool = true
+    var ids: string = project_ids()
+    while ids != "" {
+        let at: i32 = rho_str_index_of(ids, "\n")
+        var id: string = ""
+        if at < 0 {
+            id = ids
+            ids = ""
+        } else {
+            id = rho_str_slice(ids, 0, u32(at))
+            ids = rho_str_slice(ids, u32(at) + 1, u32(rho_strlen(ids)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        if !mesh_scoped(req, id) {
+            continue
+        }
+        if !first {
+            out = out + ","
+        }
+        first = false
+        let url: string = mesh_project_gateway(id)
+        var active: string = "false"
+        if id == current_project() {
+            active = "true"
+        }
+        out = out + "{\"id\":" + json_string(id) +
+            ",\"name\":" + json_string(project_name(id)) +
+            ",\"active\":" + active +
+            ",\"gateway_url\":" + json_string(url) + "}"
+    }
+    return json(status_ok(), out + "]")
+}
+
+fn mesh_api_project_gateway(req: Request) Response {
+    let id: string = param(req, "project")
+    let url: string = mesh_project_gateway(id)
+    if url == "" {
+        return json(503, "{\"available\":false,\"project\":" + json_string(id) + "}")
+    }
+    var available: string = "false"
+    if mesh_gateway_answers(url) {
+        available = "true"
+    }
+    return json(status_ok(), "{\"available\":" + available +
+        ",\"project\":" + json_string(id) + ",\"url\":" + json_string(url) + "}")
+}
+
+fn mesh_api_gateway(req: Request) Response {
+    let active: string = current_project()
+    let url: string = mesh_gateway_url()
+    if url == "" {
+        return json(503, "{\"available\":false,\"project\":" + json_string(active) + "}")
+    }
+    var available: string = "false"
+    if mesh_gateway_answers(url) {
+        available = "true"
+    }
+    return json(status_ok(), "{\"available\":" + available +
+        ",\"project\":" + json_string(active) + ",\"url\":" + json_string(url) + "}")
+}
+
+fn mesh_api_devices(req: Request) Response {
+    if !mesh_scoped(req, current_project()) {
+        return mesh_scope_denied()
+    }
+    var out: string = "["
+    var first: bool = true
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if is_device_node(index) && node_visible(index) {
+            if !first {
+                out = out + ","
+            }
+            first = false
+            out = out + "{\"id\":" + rho_int_to_str(index) +
+                ",\"name\":" + json_string(node_value(index, "name", "")) +
+                ",\"device\":" + json_string(node_device_name(index)) +
+                ",\"transport\":" + json_string(node_device_transport(index)) +
+                ",\"address\":" + json_string(node_device_address(index)) +
+                ",\"state\":" + json_string(mesh_device_state(index)) +
+                ",\"power_w\":" + json_string(mesh_device_last(index)) + "}"
+        }
+        index = index + 1
+    }
+    return json(status_ok(), out + "]")
+}
+
+fn mesh_api_device_switch(req: Request) Response {
+    if !mesh_scoped(req, current_project()) {
+        return mesh_scope_denied()
+    }
+    let index: u32 = rho_int_from_str(param(req, "id"))
+    let body: string = request_body(req)
+    var state: string = form_value(body, "state")
+    if rho_strlen(state) == 0 {
+        state = request_query_param(req, "state")
+    }
+    if index < 1 || index > node_count() || !is_device_node(index) {
+        return json(status_not_found(), "{\"success\":false}")
+    }
+    if !mesh_device_switch(index, state) {
+        return json(502, "{\"success\":false}")
+    }
+    return json(status_ok(), "{\"success\":true,\"state\":" + json_string(state) + "}")
+}
+
+fn json_number(text: string, key: string) string {
+    let needle: string = "\"" + key + "\":";
+    let at: i32 = rho_str_index_of(text, needle)
+    if at < 0 {
+        return ""
+    }
+    var index: u32 = u32(at) + u32(rho_strlen(needle))
+    let length: u32 = u32(rho_strlen(text))
+    var out: string = ""
+    while index < length {
+        let ch: string = rho_str_slice(text, index, 1)
+        if ch == "-" || (ch >= "0" && ch <= "9") || ch == "." {
+            out = out + ch
+            index = index + 1
+        } else {
+            break
+        }
+    }
+    return out
+}

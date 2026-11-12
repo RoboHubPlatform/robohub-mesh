@@ -58,5 +58,8 @@
   "settings.alerts.telegram_enabled": "Telegram alerts",
   "settings.alerts.telegram_threshold": "Telegram threshold",
   "nav.fleet": "Fleet",
-  "nav.live": "Live"
+  "nav.live": "Live",
+  "nav.apply": "Apply changes",
+  "nav.mesh": "Mesh",
+  "nav.new_mesh": "New mesh"
 }

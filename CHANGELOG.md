@@ -308,3 +308,15 @@ another's. A flash waits on its board's card, with the board's own instruction
 cancelled, and a failed job tried again. The background worker records what a
 board runs once it is flashed, and the gateway's plan once it started. Boards
 are built in a folder of their own under each project.
+
+## [0.11.0] - 2026-11-13
+
+The wizard is retired. /mesh is the fleet, with the form that starts a new mesh;
+a mesh opens as its agora at /mesh/p/<project>, and the wizard's step, network,
+build and node addresses open the agora with what they showed selected. A new
+mesh is guided on its own canvas: where the gateway runs, the first node,
+apply. The menus name Live, Gateway and Apply changes for the open mesh instead
+of the steps. On a narrow screen the inspector is a sheet at the bottom. The
+wizard's pages, its step documents and the code only they used are gone; what
+remains of mesh.rho and wizard.rho is split into store, catalog, build, views
+and api.

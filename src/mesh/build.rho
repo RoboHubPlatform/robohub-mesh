@@ -1,0 +1,999 @@
+//
+// @file build.rho
+// @brief Preparing, building and starting: a board's sources and configuration, the gateway's build and start, and the commands they run.
+//
+// @module mesh.build
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.build
+
+fn gateway_project() string {
+    let entry: string = registry_entry("robohub-gateway")
+    if !rho_path_exists(entry) {
+        return robohub_root() + "/../robohub-gateway"
+    }
+    return resolve_path(yaml.value(entry, "path"))
+}
+
+fn canonical_path(path: string) string {
+    let report: string = wizard_report("canonical-path")
+    let code: u32 = rho_exec("realpath", "-m " + path, report)
+    if code == 0 {
+        let resolved: string = first_line(rho_read_text(report))
+        if resolved != "" {
+            return resolved
+        }
+    }
+    return path
+}
+
+fn drivers_root() string {
+    let entry: string = registry_entry("robohub-drivers")
+    if !rho_path_exists(entry) {
+        return canonical_path(robohub_root() + "/../robohub-drivers")
+    }
+    return canonical_path(resolve_path(yaml.value(entry, "path")))
+}
+
+// Every node is built from the same telemetry template. The modules fitted to
+// it are what differ, and Mesh writes sensors.c for them before the build. The
+// template is still a working DS18B20 example on its own.
+fn node_source() string {
+    return drivers_root() + "/examples/temperature/ds18b20/c/telemetry"
+}
+
+fn path_base(path: string) string {
+    var start: u32 = 0
+    var i: u32 = 0
+    let length: u32 = u32(rho_strlen(path))
+    while i < length {
+        if rho_str_slice(path, i, 1) == "/" {
+            start = i + 1
+        }
+        i = i + 1
+    }
+    if start >= length {
+        return ""
+    }
+    return rho_str_slice(path, start, length - start)
+}
+
+fn path_parent(path: string) string {
+    var last: u32 = 0
+    var i: u32 = 0
+    let length: u32 = u32(rho_strlen(path))
+    while i < length {
+        if rho_str_slice(path, i, 1) == "/" {
+            last = i
+        }
+        i = i + 1
+    }
+    if last == 0 {
+        return ""
+    }
+    return rho_str_slice(path, 0, last)
+}
+
+// The build names the image after the directory it builds, so the copy keeps
+// the example's own name. That is how `deployment.binary` can name it without
+// the keeper knowing what the example is called.
+fn node_dir() string {
+    return jobs_board_dir(selected_node())
+}
+
+fn node_binary() string {
+    return node_dir() + "/build/output/" + path_base(node_dir()) + ".elf"
+}
+
+fn node_board() string {
+    return node_value(selected_node(), "board", first_board("relay"))
+}
+
+fn node_driver_for(index: u32) string {
+    let sensors: string = module_names_for(node_module_children(index))
+    var rest: string = sensors
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var name: string = ""
+        if at < 0 {
+            name = rest
+            rest = ""
+        } else {
+            name = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if name == "" {
+            continue
+        }
+        let driver: string = module_driver(name)
+        if driver != "" {
+            return driver
+        }
+    }
+    // No attached module names a program of its own. The node still builds
+    // from a sensor example rather than failing; the module list is kept.
+    return first_driver()
+}
+
+fn node_driver() string {
+    return node_driver_for(selected_node())
+}
+
+fn node_link() string {
+    return node_value(selected_node(), "link", "uart")
+}
+
+fn shell_quote(value: string) string {
+    return "'" + value + "'"
+}
+
+fn progress_path_for(stage: string, run: string) string {
+    let safe: string = sanitize(run)
+    if safe == "" {
+        return wizard_dir() + "/progress-" + stage + ".log"
+    }
+    return wizard_dir() + "/progress-" + stage + "-" + safe + ".log"
+}
+
+fn progress_path(stage: string) string {
+    return progress_path_for(stage, state_value("run_token"))
+}
+
+fn run_shell(command: string, label: string) u32 {
+    if jobs_recording() != "" {
+        return jobs_record_shell(command, label)
+    }
+    ensure_wizard_dir()
+    let stage: string = default_value("current_step", "build")
+    let progress: string = progress_path(stage)
+    let command_file: string = wizard_dir() + "/stage-command.sh"
+    let stage_file: string = wizard_dir() + "/stage-run.sh"
+    ignore_bool(rho_write_text(command_file, command + "\n"))
+    let script: string = "#!/bin/sh\n" +
+        "printf '\\n== %s ==\\n' " + shell_quote(label) + " >> " + shell_quote(progress) + "\n" +
+        ". " + shell_quote(command_file) + " >> " + shell_quote(progress) + " 2>&1\n" +
+        "exit $?\n"
+    ignore_bool(rho_write_text(stage_file, script))
+    ignore_u32(rho_exec("chmod", "+x " + stage_file, wizard_report("chmod-stage")))
+    return rho_exec("sh", stage_file, wizard_report("stage-exit"))
+}
+
+fn kconfig_string(value: string) string {
+    var out: string = ""
+    var i: u32 = 0
+    let length: u32 = u32(rho_strlen(value))
+    while i < length {
+        let ch: string = rho_str_slice(value, i, 1)
+        if ch == "\"" || ch == "\\" {
+            out = out + "\\" + ch
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return "\"" + out + "\""
+}
+
+// A manifest's `deployment.kconfig` is a list of symbol assignments written as
+// one string, because a manifest is read by a simple reader. This is where that
+// string becomes lines in a generated project.conf.
+fn append_kconfig(config: string, entries: string) string {
+    var out: string = config
+    var rest: string = entries
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        let entry: string = ""
+        if at < 0 {
+            entry = rest
+            rest = ""
+        } else {
+            entry = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if entry != "" {
+            out = out + entry + "\n"
+        }
+    }
+    return out
+}
+
+fn index_from(text: string, needle: string, start: u32) i32 {
+    if start >= u32(rho_strlen(text)) {
+        return -1
+    }
+    let at: i32 = rho_str_index_of(
+        rho_str_slice(text, start, u32(rho_strlen(text)) - start), needle)
+    if at < 0 {
+        return -1
+    }
+    return i32(start + u32(at))
+}
+
+fn upper_snake(value: string) string {
+    var out: string = ""
+    var i: u32 = 0
+    let length: u32 = u32(rho_strlen(value))
+    while i < length {
+        let ch: string = rho_str_slice(value, i, 1)
+        if ch >= "a" && ch <= "z" {
+            out = out + rho_str_from_byte(u8(u32(rho_str_index_of("abcdefghijklmnopqrstuvwxyz", ch)) + 65))
+        } else if (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") {
+            out = out + ch
+        } else {
+            out = out + "_"
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn cmake_target(manifest: string) string {
+    let target: string = yaml.value(manifest, "exports.cmake.target")
+    if rho_str_index_of(target, "rho::") == 0 {
+        return rho_str_slice(target, 5, u32(rho_strlen(target)) - 5)
+    }
+    return target
+}
+
+// append_manifest_dep adds one `depends:` entry before the next top-level key
+// in a copied example's manifest. The entry is skipped when a dependency with
+// the same path is already there.
+fn append_manifest_dep(text: string, name: string, path: string) string {
+    if rho_str_index_of(text, "path: " + path) >= 0 ||
+        rho_str_index_of(text, "  - name: " + name + "\n") >= 0 {
+        return text
+    }
+    let entry: string = "  - name: " + name + "\n    type: c\n    path: " + path + "\n"
+    let start: i32 = index_from(text, "\ndepends:\n", 0)
+    if start < 0 {
+        return text + "\ndepends:\n" + entry
+    }
+    var i: u32 = u32(start) + 10
+    while i < u32(rho_strlen(text)) {
+        let at: i32 = index_from(text, "\n", i)
+        let end: u32 = u32(rho_strlen(text))
+        if at >= 0 {
+            end = u32(at)
+        }
+        let line: string = rho_str_slice(text, i, end - i)
+        if line != "" && rho_str_slice(line, 0, 1) != " " &&
+            rho_str_slice(line, 0, 1) != "-" && rho_str_slice(line, 0, 1) != "#" {
+            return rho_str_slice(text, 0, i) + entry +
+                rho_str_slice(text, i, u32(rho_strlen(text)) - i)
+        }
+        if at < 0 {
+            break
+        }
+        i = u32(at) + 1
+    }
+    return text + entry
+}
+
+// append_variant_library adds one library to the copied example's
+// `c_connection.variants.<preset>.libraries` list, which is what the generated
+// target links. A module whose board the example does not name still becomes
+// part of the node's image this way.
+fn append_variant_library(text: string, preset: string, library: string) string {
+    if library == "" || rho_str_index_of(text, "        - " + library + "\n") >= 0 {
+        return text
+    }
+    let variants: i32 = index_from(text, "\n  variants:\n", 0)
+    if variants < 0 {
+        return text
+    }
+    let preset_at: i32 = index_from(text, "\n    " + preset + ":\n", u32(variants))
+    if preset_at < 0 {
+        return text
+    }
+    let libraries: i32 = index_from(text, "\n      libraries:\n", u32(preset_at))
+    if libraries < 0 {
+        return text
+    }
+    let line_at: i32 = index_from(text, "\n", u32(libraries) + 1)
+    if line_at < 0 {
+        return text
+    }
+    var i: u32 = u32(line_at) + 1
+    var insert: u32 = i
+    while i < u32(rho_strlen(text)) {
+        let at: i32 = index_from(text, "\n", i)
+        let end: u32 = u32(rho_strlen(text))
+        if at >= 0 {
+            end = u32(at)
+        }
+        let line: string = rho_str_slice(text, i, end - i)
+        if rho_str_index_of(line, "        - ") != 0 {
+            break
+        }
+        insert = end + 1
+        if at < 0 {
+            i = u32(rho_strlen(text))
+            break
+        }
+        i = u32(at) + 1
+    }
+    return rho_str_slice(text, 0, insert) + "        - " + library + "\n" +
+        rho_str_slice(text, insert, u32(rho_strlen(text)) - insert)
+}
+
+fn sensor_kconfig_symbols(name: string) string {
+    let manifest: string = module_manifest(name)
+    if manifest == "" {
+        return ""
+    }
+    var out: string = ""
+    let board_kconfig: string = yaml.value(manifest, "deployment.kconfig")
+    if board_kconfig != "" {
+        out = out + board_kconfig + " "
+    } else {
+        let designation: string = yaml.value(manifest, "board.designation")
+        if designation != "" {
+            out = out + "CONFIG_RH_BOARD_" + upper_snake(designation) + "=y "
+        }
+    }
+    let driver: string = module_driver(name)
+    if driver != "" {
+        let driver_manifest: string = driver_manifest(driver)
+        let driver_kconfig: string = yaml.value(driver_manifest, "deployment.kconfig")
+        if driver_kconfig != "" {
+            out = out + driver_kconfig + " "
+        } else {
+            let suffix: string = rho_str_slice(driver, 15, u32(rho_strlen(driver)) - 15)
+            out = out + "CONFIG_RH_DRV_" + upper_snake(suffix) + "=y "
+        }
+    }
+    let kind: string = yaml.value(manifest, "board.bus.type")
+    if kind == "onewire" {
+        out = out + "CONFIG_RH_HAL_ONEWIRE=y "
+    } else if kind == "i2c" {
+        out = out + "CONFIG_RH_HAL_I2C=y "
+    } else if kind == "spi" {
+        out = out + "CONFIG_RH_HAL_SPI=y "
+    } else if kind == "adc" {
+        out = out + "CONFIG_RH_HAL_ADC=y "
+    } else if kind == "uart" {
+        out = out + "CONFIG_RH_HAL_UART=y "
+    } else if kind == "gpio" {
+        out = out + "CONFIG_RH_HAL_GPIO=y "
+    }
+    return out
+}
+
+// augment_node_build makes the copied example carry every compatible module:
+// each board and driver becomes a dependency (so its Kconfig fragment is
+// merged), its library is linked, and its symbols are written to project.conf.
+fn augment_node_build(target: string, sensors: string) u32 {
+    let manifest_path: string = target + "/module.yml"
+    if !rho_path_exists(manifest_path) {
+        return 1
+    }
+    var text: string = rho_read_text(manifest_path)
+    let preset: string = node_board()
+    let example_target: string = yaml.value(manifest_path,
+        "c_connection.variants." + preset + ".target")
+    var rest: string = sensors
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var name: string = ""
+        if at < 0 {
+            name = rest
+            rest = ""
+        } else {
+            name = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if name == "" {
+            continue
+        }
+        let board_manifest: string = module_manifest(name)
+        if board_manifest == "" {
+            continue
+        }
+        let board_dir: string = canonical_path(path_parent(board_manifest))
+        text = append_manifest_dep(text, name, board_dir)
+        // The example's own target is already linked by the generated build;
+        // adding it again under --whole-archive would define every symbol twice.
+        let board_library: string = cmake_target(board_manifest)
+        if board_library != example_target {
+            text = append_variant_library(text, preset, board_library)
+        }
+        let driver: string = module_driver(name)
+        if driver != "" {
+            let driver_manifest: string = driver_manifest(driver)
+            if driver_manifest != "" {
+                text = append_manifest_dep(text, driver, canonical_path(path_parent(driver_manifest)))
+                text = append_variant_library(text, preset, cmake_target(driver_manifest))
+            }
+        }
+    }
+    if rho_write_text(manifest_path, text) {
+        return 0
+    }
+    return 1
+}
+
+fn prepare_node() u32 {
+    let source: string = node_source()
+    if source == "" || !rho_path_exists(source) {
+        return 1
+    }
+    let target: string = node_dir()
+    let command: string = "rm -rf " + shell_quote(target) + " && mkdir -p " + shell_quote(target) +
+        " && cp -a " + shell_quote(source) + "/. " + shell_quote(target) + "/" +
+        " && rm -rf " + shell_quote(target + "/build")
+    let code: u32 = run_shell(command, "prepare-node")
+    if code != 0 {
+        return code
+    }
+
+    let link: string = node_link()
+    var net: string = "n"
+    if link == "wifi" || link == "socket" {
+        net = "y"
+    }
+    let area: string = default_value("area_id", fleet_area(current_project()))
+    // The firmware carries the node's stable number, not its row in the plan.
+    let node: string = rho_int_to_str(project_node_number(wizard_file(), selected_node()))
+    let prefix: string = "node." + rho_int_to_str(selected_node()) + "."
+    let ssid: string = default_value(prefix + "ssid", default_value("ssid", ""))
+    let password: string = default_value(prefix + "password", default_value("password", ""))
+    let host: string = default_value(
+        prefix + "parent_host",
+        default_value(prefix + "gateway_host", default_value("gateway_host", "127.0.0.1")))
+    let uplink: string = default_value(
+        prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project())))
+    var uart_name: string = default_value(prefix + "child_endpoint", "uart1")
+    if link != "uart" {
+        uart_name = "console"
+    } else if rho_str_index_of(uart_name, "uart") != 0 {
+        uart_name = "uart1"
+    }
+    let baud: string = default_value(prefix + "baud", "115200")
+
+    var config: string = "CONFIG_RH_HAL_GPIO=y\n" +
+        "CONFIG_RH_HAL_UART=y\n" +
+        "CONFIG_RH_HAL_TIMER=y\n" +
+        "CONFIG_RH_CONSOLE_USB=y\n"
+
+    // The network symbols belong to the telemetry example. Another example —
+    // a DHT11 or BMP180 node that only prints to the console — does not declare
+    // them, and writing them would make Kconfig fail the build. The link is
+    // still saved on the node; it just is not something this example reads.
+    let example_text: string = rho_read_text(target + "/module.yml")
+    if rho_str_index_of(example_text, "robohub-telemetry") >= 0 ||
+        rho_str_index_of(example_text, "robohub-transport") >= 0 {
+        config = config + "CONFIG_RH_NET=" + net + "\n" +
+            "CONFIG_RH_AREA_ID=" + area + "\n" +
+            "CONFIG_RH_NODE_ID=" + node + "\n" +
+            "CONFIG_RH_WIFI_SSID=" + kconfig_string(ssid) + "\n" +
+            "CONFIG_RH_WIFI_PASSWORD=" + kconfig_string(password) + "\n" +
+            "CONFIG_RH_TELEMETRY_HOST=" + kconfig_string(host) + "\n" +
+            "CONFIG_RH_TELEMETRY_PORT=" + uplink + "\n" +
+            "CONFIG_RH_NODE_TRANSPORT=" + kconfig_string(link) + "\n" +
+            "CONFIG_RH_NODE_UART=" + kconfig_string(uart_name) + "\n" +
+            "CONFIG_RH_NODE_BAUD=" + baud + "\n"
+    }
+    let board_kconfig: string = yaml.value(board_manifest(node_board()), "deployment.kconfig")
+    let driver_kconfig: string = yaml.value(driver_manifest(node_driver()), "deployment.kconfig")
+    config = append_kconfig(config, board_kconfig)
+    config = append_kconfig(config, driver_kconfig)
+
+    // Every module fitted to the node is part of the node's image. The example
+    // comes from the primary module's driver, so its own board symbol is added
+    // here too; a driver shared by several boards does not name the one fitted.
+    let compatible: string = node_build_sensors(selected_node())
+    // The board's id and its key under this project's gateway; a board that
+    // cannot be given one is built with a plain link.
+    if firmware_write_secret(target, current_project(), selected_node()) != 0 {
+        warn("mesh", "board " + rho_int_to_str(selected_node()) + " is built without an authenticated link")
+    }
+    if firmware_write_sensors(target, node_telemetry_sensors(selected_node())) != 0 {
+        return 1
+    }
+    let primary: string = first_sensor(compatible)
+    if primary != "" {
+        config = append_kconfig(config, sensor_kconfig_symbols(primary))
+    }
+    var rest_sensors: string = compatible
+    while rest_sensors != "" {
+        let at: i32 = rho_str_index_of(rest_sensors, " ")
+        var name: string = ""
+        if at < 0 {
+            name = rest_sensors
+            rest_sensors = ""
+        } else {
+            name = rho_str_slice(rest_sensors, 0, u32(at))
+            rest_sensors = rho_str_slice(rest_sensors, u32(at) + 1,
+                u32(rho_strlen(rest_sensors)) - u32(at) - 1)
+        }
+        if name == "" || name == primary {
+            continue
+        }
+        config = append_kconfig(config, sensor_kconfig_symbols(name))
+    }
+
+    let written: bool = rho_write_text(target + "/project.conf", config)
+    if !written {
+        return 1
+    }
+    let augmented: u32 = augment_node_build(target, compatible)
+    if augmented != 0 {
+        info("mesh", "the node manifest could not carry every attached module; building the primary")
+    }
+    return 0
+}
+
+fn handler_build_gateway() u32 {
+    let project: string = gateway_project()
+    var code: u32 = run_shell("cd " + shell_quote(project) + " && rho build .", "build-gateway")
+    if code != 0 {
+        return code
+    }
+    let gateway: string = default_value("gateway", "native")
+    if gateway == "native" {
+        return 0
+    }
+    let manifest: string = board_manifest(gateway)
+    let arch: string = yaml.value(manifest, "deployment.arch")
+    if arch == "" {
+        return 1
+    }
+    let generated: string = project + "/build/generated/go-server"
+    let output: string = wizard_dir() + "/robohub-gateway-" + arch
+    let cross: u32 = run_shell("cd " + shell_quote(generated) +
+        " && GOWORK=off GOOS=linux GOARCH=" + arch + " CGO_ENABLED=0 go build -o " +
+        shell_quote(output) + " .", "build-gateway-" + arch)
+    if cross != 0 {
+        return cross
+    }
+    return 0
+}
+
+// mesh_gateway_mode is the tree position the gateway should run as. A gateway
+// with another gateway above it is a relay; the root is the master.
+fn mesh_gateway_mode() string {
+    let gateway: string = default_value("gateway", "native")
+    if gateway == "native" {
+        return "master"
+    }
+    let parent: string = node_value(u32(rho_int_from_str(gateway)), "parent", "gateway")
+    if rho_str_starts_with(parent, "node.") {
+        return "relay"
+    }
+    return "master"
+}
+
+fn gateway_env(key_file: string) string {
+    let link: string = node_link()
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
+    let prefix: string = "node." + rho_int_to_str(selected_node()) + "."
+    let uplink: string = default_value(
+        prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project())))
+    var uart_name: string = default_value(prefix + "child_endpoint", "uart1")
+    if link != "uart" {
+        uart_name = "console"
+    } else if rho_str_index_of(uart_name, "uart") != 0 {
+        uart_name = "uart1"
+    }
+    let baud: string = default_value(prefix + "baud", "115200")
+    var port: string = default_value(
+        prefix + "parent_endpoint",
+        default_value(prefix + "serial_port", default_value("serial_port", WIZARD_DEFAULT_SERIAL)))
+    if link == "console" || link == "usb" {
+        // The Pico's USB CDC is renumbered by a flash; the by-id path the start
+        // discovered is the stable name for it.
+        port = default_value("gateway_serial", port)
+    }
+    var area: string = project_area_id(project_file(current_project()))
+    if area == "" {
+        area = WIZARD_DEFAULT_AREA
+    }
+    var env: string = "GATEWAY_MODE=" + mesh_gateway_mode() +
+        " GATEWAY_AREA=" + area +
+        " RHO_HTTP_ADDR=:" + rest + " REST_PORT=" + rest +
+        " PLOTJUGGLER_ADDR=127.0.0.1:9870"
+    // The gateway trusts keeper's tokens, verified with keeper's public key,
+    // which is installed beside it; it names itself so a token's scopes can.
+    env = env + " GATEWAY_ID=" + shell_quote(current_project())
+    // The key boards' keys are derived from, as a file only the gateway's user
+    // can read on the machine it runs on.
+    if key_file != "" {
+        env = env + " GATEWAY_KEY_FILE=" + key_file
+    }
+    if link == "wifi" || link == "socket" {
+        env = env + " SERIAL_PORT=/nonexistent UPLINK_PORT=" + uplink
+    } else {
+        env = env + " SERIAL_PORT=" + port + " UPLINK_PORT=0"
+    }
+    return env
+}
+
+fn handler_program_gateway() u32 {
+    let status: string = default_value("status.gateway", "pending")
+    if status != "built" && status != "running" && status != "programmed" {
+        let build: u32 = handler_build_gateway()
+        if build != 0 {
+            return build
+        }
+    }
+    return handler_start_gateway()
+}
+
+fn handler_start_gateway() u32 {
+    if default_value("gateway", "native") == "native" {
+        return handler_start_native()
+    }
+    return handler_start_board()
+}
+
+fn handler_start_native() u32 {
+    let project: string = gateway_project()
+    let log: string = fleet_gateway_log(current_project())
+    let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
+    let address: string = host_address()
+    let link: string = node_link()
+    var attached: bool = false
+    if link == "console" || link == "usb" {
+        attached = attach_pico_host()
+    }
+    var prefix: string = ""
+    if attached {
+        prefix = "echo 'pico: attached to this host'; "
+    }
+    let command: string = prefix +
+        "echo 'gateway: http://127.0.0.1:" + rest + " (this host)'; " +
+        "echo 'gateway: http://" + address + ":" + rest + " (network)'; " +
+        // This mesh's gateway is replaced; another mesh's keeps running. The
+        // process id is written beside the project, which is what stops it.
+        fleet_stop_command(current_project()) + "; cd " +
+        shell_quote(project) + " || exit 1; nohup env " + gateway_env(mesh_gateway_key_path(current_project())) +
+        " ./build/robohub-gateway > " + shell_quote(log) + " 2>&1 < /dev/null & echo $! > " +
+        shell_quote(fleet_pid_file(current_project()))
+    let started: u32 = run_shell(command, "start-gateway")
+    if started != 0 {
+        return started
+    }
+    let probe: string = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do " +
+        "if curl -fsS -m 1 http://127.0.0.1:" + rest + "/healthz >/dev/null 2>&1; then exit 0; fi; " +
+        "sleep 0.25; done; echo 'gateway did not answer at http://127.0.0.1:" + rest + "'; exit 1"
+    let probed: u32 = run_shell(probe, "start-gateway-probe")
+    if probed == 0 {
+        // The gateway Mesh started is the one Mesh reads; recording it here is
+        // what makes telemetry ingestion start without a manual URL.
+        let active: string = current_project()
+        if active != "" {
+            save_setting_at(project_file(active), "gateway_url",
+                "http://127.0.0.1:" + rest)
+        }
+    }
+    return probed
+}
+
+fn handler_start_board() u32 {
+    let gateway: string = default_value("gateway", "native")
+    if gateway == "native" {
+        return handler_start_native()
+    }
+    let manifest: string = board_manifest(gateway)
+    let method: string = yaml.value(manifest, "deployment.method")
+    let arch: string = yaml.value(manifest, "deployment.arch")
+    let binary: string = wizard_dir() + "/robohub-gateway-" + arch
+    // While a job is written the build has not run yet; the job builds first.
+    if jobs_recording() == "" && !rho_path_exists(binary) {
+        return 1
+    }
+    if method == "adb" {
+        let apps_dir: string = yaml.value(manifest, "deployment.apps_dir")
+        if apps_dir == "" {
+            return 1
+        }
+        // A host that has shared the same board twice gives adb two transports
+        // with one serial. `-t` names one transport, so the first is taken
+        // rather than letting adb refuse the command as ambiguous.
+        let adb: string = "adb -t $(adb devices -l | awk 'NR==2 {sub(\"transport_id:\", \"\", $4); print $4}')"
+        let push: u32 = run_shell(adb + " push " + shell_quote(binary) +
+            " " + shell_quote(apps_dir + "/robohub-gateway"), "push-gateway")
+        if push != 0 {
+            return push
+        }
+        var device_key: string = ""
+        if mesh_gateway_key_path(current_project()) != "" {
+            let key_push: u32 = run_shell(adb + " push " + shell_quote(mesh_gateway_key_file(current_project())) +
+                " " + shell_quote(apps_dir + "/gateway.key") + " && " + adb + " shell chmod 600 " +
+                shell_quote(apps_dir + "/gateway.key"), "push-gateway-secret")
+            if key_push != 0 {
+                return key_push
+            }
+            device_key = apps_dir + "/gateway.key"
+        }
+        let command: string = adb + " shell 'pkill -x robohub-gateway 2>/dev/null || true; " +
+            "chmod +x " + apps_dir + "/robohub-gateway; cd " + apps_dir + " && " +
+            "nohup env " + gateway_env(device_key) +
+            " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &'"
+        return run_shell(command, "start-gateway")
+    }
+    if method == "ssh" {
+        let user: string = yaml.value(manifest, "deployment.user")
+        let remote: string = yaml.value(manifest, "deployment.path")
+        let host: string = default_value("gateway_host", "127.0.0.1")
+        if user == "" || remote == "" || host == "" {
+            return 1
+        }
+        let target: string = user + "@" + host
+        let copy_code: u32 = run_shell("scp " + shell_quote(binary) + " " +
+            shell_quote(target + ":" + remote + "/robohub-gateway"), "push-gateway")
+        if copy_code != 0 {
+            return copy_code
+        }
+        // keeper's public key, which the gateway verifies every caller's token
+        // with. Only the public half leaves this machine.
+        let key_code: u32 = run_shell("ssh " + shell_quote(target) + " " +
+            shell_quote("mkdir -p ~/.rho/auth") + " && scp " +
+            shell_quote(getenv("HOME") + "/.rho/auth/public.pem") + " " +
+            shell_quote(target + ":.rho/auth/public.pem"), "push-gateway-key")
+        if key_code != 0 {
+            return key_code
+        }
+        // The gateway's own key, which boards' keys are derived from, readable
+        // by the gateway's user alone on the machine it runs on.
+        var remote_key: string = ""
+        if mesh_gateway_key_path(current_project()) != "" {
+            let secret_code: u32 = run_shell("scp " + shell_quote(mesh_gateway_key_file(current_project())) + " " +
+                shell_quote(target + ":" + remote + "/gateway.key") + " && ssh " + shell_quote(target) + " " +
+                shell_quote("chmod 600 " + remote + "/gateway.key"), "push-gateway-secret")
+            if secret_code != 0 {
+                return secret_code
+            }
+            remote_key = remote + "/gateway.key"
+        }
+        let command: string = "ssh " + shell_quote(target) + " " +
+            shell_quote("pkill -x robohub-gateway 2>/dev/null || true; chmod +x " +
+                remote + "/robohub-gateway; cd " + remote + " && nohup env " +
+                gateway_env(remote_key) + " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &")
+        let started: u32 = run_shell(command, "start-gateway")
+        if started == 0 {
+            let active: string = current_project()
+            if active != "" {
+                save_setting_at(project_file(active), "gateway_url",
+                    "http://" + host + ":" + default_value("rest_port", fleet_rest_port(current_project())))
+            }
+        }
+        return started
+    }
+    return 1
+}
+
+fn gateway_reachable_for(gateway: string, host: string, rest: string) bool {
+    var address: string = host
+    if gateway == "native" {
+        address = "127.0.0.1"
+    }
+    let report: string = wizard_report("gateway-health")
+    let code: u32 = rho_exec("curl", "-fsS -m 1 http://" + address + ":" + rest + "/healthz", report)
+    return code == 0
+}
+
+// gateway_reachable is whether the active mesh's gateway answers, as the
+// background last found (agora.rho), so drawing a page does not wait on it.
+fn gateway_reachable() bool {
+    let active: string = current_project()
+    if active == "" {
+        return false
+    }
+    return agora_gateway_online(active)
+}
+
+fn gateway_status() string {
+    return default_value("status.gateway", "pending")
+}
+
+fn node_status(index: u32) string {
+    return default_value("status.node." + rho_int_to_str(index), "pending")
+}
+
+fn all_nodes_programmed() bool {
+    let count: u32 = node_count()
+    if count < 1 {
+        return false
+    }
+    var index: u32 = 1
+    while index <= count {
+        if !is_module_node(index) && !is_device_node(index) && node_status(index) != "programmed" {
+            return false
+        }
+        index = index + 1
+    }
+    return true
+}
+
+fn build_complete() bool {
+    let status: string = gateway_status()
+    return (status == "running" || status == "programmed") && all_nodes_programmed()
+}
+
+fn update_build_step() void {
+    if build_complete() {
+        save_setting("step_build", "done")
+        save_setting("build_message", "Gateway running and every node programmed.")
+    } else {
+        save_setting("step_build", "pending")
+    }
+    save_setting("step_verify", "pending")
+}
+
+fn mesh_gateway_restart(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
+    if current_project() == "" {
+        return mesh_redirect("/mesh")
+    }
+    // A restart builds before it starts. Pin the step so the build output
+    // lands in the file the dashboard reads when the action fails.
+    save_setting("current_step", "build")
+    // A native gateway is built from its sources every time: a restart that
+    // reused the last build left a changed gateway running as it was.
+    var code: u32 = 0
+    if default_value("gateway", "native") == "native" {
+        code = handler_build_gateway()
+        if code == 0 {
+            code = handler_start_gateway()
+        }
+    } else {
+        code = handler_program_gateway()
+    }
+    if code == 0 {
+        if default_value("gateway", "native") == "native" {
+            save_setting("status.gateway", "running")
+        } else {
+            save_setting("status.gateway", "programmed")
+        }
+        update_build_step()
+        deployed_record_gateway(current_project())
+        save_setting("message.build", "Gateway restarted.")
+        info("mesh", "gateway restarted")
+    } else {
+        save_setting("status.gateway", "failed")
+        save_setting("message.build", "Gateway restart failed (build or start exited " +
+            rho_int_to_str(code) + "). The output is below.")
+        error("mesh", "gateway restart failed with status " + rho_int_to_str(code))
+    }
+    return mesh_gateway_return(req)
+}
+
+// mesh_gateway_return goes back to the page a gateway control was on, with the
+// gateway's state checked again so that page shows what was just done.
+fn mesh_gateway_return(req: Request) Response {
+    let id: string = current_project()
+    agora_check_health(id)
+    if rho_str_eq(form_value(request_body(req), "return"), "agora") {
+        return mesh_redirect("/mesh/agora?project=" + id)
+    }
+    return mesh_redirect("/mesh")
+}
+
+fn mesh_gateway_stop(req: Request) Response {
+    if mesh_project_mismatch(req) {
+        return mesh_project_refused()
+    }
+    if current_project() == "" {
+        return mesh_redirect("/mesh")
+    }
+    let gateway: string = default_value("gateway", "native")
+    if gateway == "native" {
+        ignore_u32(fleet_stop_gateway(current_project()))
+    } else {
+        let manifest: string = board_manifest(gateway)
+        let method: string = yaml.value(manifest, "deployment.method")
+        let host: string = default_value("gateway_host", "127.0.0.1")
+        if method == "adb" {
+            let command: string = "adb -t $(adb devices -l | awk 'NR==2 { sub(\"transport_id:\", \"\", $4); print $4 }') shell 'pkill -x robohub-gateway 2>/dev/null || true'"
+            ignore_u32(run_shell(command, "stop-gateway"))
+        } else if method == "ssh" {
+            let user: string = yaml.value(manifest, "deployment.user")
+            if user != "" {
+                ignore_u32(run_shell("ssh " + shell_quote(user + "@" + host) +
+                    " " + shell_quote("pkill -x robohub-gateway 2>/dev/null || true"), "stop-gateway"))
+            }
+        }
+    }
+    save_setting("status.gateway", "pending")
+    save_setting("step_build", "pending")
+    save_setting("step_verify", "pending")
+    save_setting("message.build", "Gateway stopped.")
+    info("mesh", "gateway stopped")
+    return mesh_gateway_return(req)
+}
+
+fn programming_instruction(board: string) string {
+    if board == "pico2w" {
+        return "Put the Pico 2W in BOOTSEL: hold BOOT, tap RST/EN, release RST/EN, then release BOOT. The board should appear as an RP2350 drive."
+    }
+    if board == "lolin32-lite" {
+        return "Put the ESP32 in download mode: hold BOOT/GPIO0, tap EN/RST, release EN/RST, then release BOOT."
+    }
+    return "Put the board in its programming mode before continuing."
+}
+
+fn pico_serial_path() string {
+    let report: string = wizard_report("pico-serial")
+    ignore_u32(rho_exec("sh", "-c \"ls /dev/serial/by-id 2>/dev/null | grep -i -E 'pico|2e8a' | head -1\"", report))
+    let name: string = first_line(rho_read_text(report))
+    if name == "" {
+        return ""
+    }
+    return "/dev/serial/by-id/" + name
+}
+
+fn attach_pico_host() bool {
+    ensure_wizard_dir()
+    // A Pico already attached to WSL needs no attach call, but its serial path
+    // is what the gateway opens; record it either way.
+    let existing: string = pico_serial_path()
+    if existing != "" {
+        save_setting("gateway_serial", existing)
+        return true
+    }
+    let busid_report: string = wizard_report("pico-busid")
+    ignore_u32(rho_exec("sh", "-c \"timeout 10 powershell.exe -NoProfile -Command 'usbipd list' | tr -d '\\r' | grep -E '2e8a:0009.*Shared' | awk '{print $1; exit}'\"", busid_report))
+    let busid: string = first_line(rho_read_text(busid_report))
+    if busid == "" {
+        return false
+    }
+    let attach_report: string = wizard_report("pico-attach")
+    ignore_u32(rho_exec("sh", "-c \"timeout 15 powershell.exe -NoProfile -Command 'usbipd attach --wsl --busid " + busid + "'\"", attach_report))
+    let wait_report: string = wizard_report("pico-wait")
+    let code: u32 = rho_exec("sh", "-c \"for i in 1 2 3 4 5 6 7 8 9 10; do ls /dev/ttyACM* >/dev/null 2>&1 && exit 0; sleep 0.3; done; exit 1\"", wait_report)
+    if code == 0 {
+        let serial: string = pico_serial_path()
+        if serial != "" {
+            save_setting("gateway_serial", serial)
+            return true
+        }
+    }
+    return code == 0
+}
+
+fn host_address() string {
+    let report: string = wizard_report("host-address")
+    ignore_u32(rho_exec("sh", "-c \"hostname -I | awk '{print $1}'\"", report))
+    let address: string = first_line(rho_read_text(report))
+    if address == "" {
+        return "127.0.0.1"
+    }
+    return address
+}
+
+fn serial_port_list() string {
+    let report: string = wizard_report("serial-ports")
+    ignore_u32(rho_exec("sh", "-c \"ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null\"", report))
+    return rho_read_text(report)
+}
+
+fn serial_port_options(selected: string) string {
+    var out: string = ""
+    var rest: string = serial_port_list()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let port: string = ""
+        if at < 0 {
+            port = rest
+            rest = ""
+        } else {
+            port = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if port != "" {
+            out = out + option(port, port, "", selected)
+        }
+    }
+    if selected != "" && rho_str_index_of(out, "value=\"" + selected + "\"") < 0 {
+        out = out + option(selected, selected + " (not present)", "", selected)
+    }
+    return out
+}

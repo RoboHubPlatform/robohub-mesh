@@ -9,8 +9,11 @@ include "mesh/domain/impact.rho"
 include "mesh/domain/deploy.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
-include "mesh/wizard.rho"
-include "mesh/mesh.rho"
+include "mesh/store.rho"
+include "mesh/catalog.rho"
+include "mesh/build.rho"
+include "mesh/views.rho"
+include "mesh/api.rho"
 include "mesh/tokens.rho"
 include "mesh/telemetry.rho"
 include "mesh/clients.rho"
@@ -20,6 +23,7 @@ include "mesh/agora.rho"
 include "mesh/deployed.rho"
 include "mesh/editor.rho"
 include "mesh/jobs.rho"
+include "mesh/home.rho"
 
 import std.web.http
 import std.web.template
@@ -66,9 +70,9 @@ fn resolve_path(path: string) string {
     return robohub_root() + "/" + path
 }
 
-route GET "/" => mesh_dashboard
-route GET "/mesh" => mesh_dashboard
-route GET "/mesh/plan" => mesh_page
+route GET "/" => mesh_home
+route GET "/mesh" => mesh_home
+route GET "/mesh/plan" => mesh_old_page
 route GET "/mesh/agora" => mesh_agora_page
 route GET "/mesh/p/{project}" => mesh_p_page
 route GET "/mesh/p/{project}/node/{node}" => mesh_p_node_page
@@ -92,10 +96,7 @@ route POST "/mesh/project/{id}/token" => mesh_project_token_generate
 route POST "/mesh/project/{id}/token/revoke" => mesh_project_token_revoke
 route GET "/mesh/project/{id}" => mesh_project_open_page
 route POST "/mesh/project/delete" => mesh_project_delete
-route POST "/mesh/project/active" => mesh_project_active
 route POST "/mesh/project/new" => mesh_project_new
-route POST "/mesh/project/restart" => mesh_project_restart
-route POST "/mesh/project/stop" => mesh_project_stop
 route POST "/mesh/gateway/restart" => mesh_gateway_restart
 route POST "/mesh/gateway/stop" => mesh_gateway_stop
 route GET "/faults" => mesh_faults_page
@@ -107,10 +108,8 @@ route GET "/settings" => mesh_settings_page
 route POST "/settings" => mesh_settings_save
 route GET "/mesh/docs" => mesh_docs_page
 route GET "/docs" => mesh_docs_page
-route GET "/mesh/gateway" => mesh_gateway_page
-route POST "/mesh/gateway" => mesh_gateway_post
-route GET "/mesh/node/{index}" => mesh_node_page
-route POST "/mesh/node/{index}" => mesh_node_post
+route GET "/mesh/gateway" => mesh_old_gateway_page
+route GET "/mesh/node/{index}" => mesh_old_node_page
 route POST "/mesh/device/poll" => mesh_device_poll
 route POST "/mesh/device/set" => mesh_device_set
 route GET "/mesh/api/devices" => mesh_api_devices
@@ -131,26 +130,14 @@ route GET "/mesh/api/projects/{project}/telemetry/status" => mesh_api_telemetry_
 route GET "/mesh/api/projects/{project}/telemetry/latest" => mesh_api_telemetry_latest
 route GET "/mesh/api/projects/{project}/telemetry/series" => mesh_api_telemetry_series
 route GET "/mesh/api/projects/{project}/telemetry/stream" => mesh_api_telemetry_stream
-route GET "/mesh/events" => mesh_events
-route POST "/mesh/accept" => mesh_accept
-route POST "/mesh/reopen" => mesh_reopen
-route GET "/mesh/step/network" => mesh_network_page
-route GET "/mesh/network/link/{index}" => mesh_connection_page
-route POST "/mesh/network/link/{index}" => mesh_connection_post
-route GET "/mesh/network/node/{index}" => mesh_network_node_page
-route GET "/mesh/network/gateway" => mesh_network_gateway_page
-route POST "/mesh/network/gateway" => mesh_network_gateway_post
-route POST "/mesh/network/accept" => mesh_network_accept
-route GET "/mesh/step/build" => mesh_build_page
-route GET "/mesh/build/node/{index}" => mesh_build_node_page
-route POST "/mesh/build/node/{index}" => mesh_build_node_post
-route GET "/mesh/build/gateway" => mesh_build_gateway_page
-route POST "/mesh/build/gateway" => mesh_build_gateway_post
-route GET "/mesh/step/{step}" => mesh_step_page
-route POST "/mesh/step/{step}" => wizard_step_post
-route GET "/mesh/progress/{step}/{run}" => wizard_progress_run
-route GET "/mesh/progress/{step}" => wizard_progress
-route POST "/mesh/console/clear/{step}" => mesh_console_clear
+route GET "/mesh/step/network" => mesh_old_page
+route GET "/mesh/network/link/{index}" => mesh_old_link_page
+route GET "/mesh/network/node/{index}" => mesh_old_node_page
+route GET "/mesh/network/gateway" => mesh_old_gateway_page
+route GET "/mesh/step/build" => mesh_old_build_page
+route GET "/mesh/build/node/{index}" => mesh_old_node_page
+route GET "/mesh/build/gateway" => mesh_old_gateway_page
+route GET "/mesh/step/{step}" => mesh_old_build_page
 
 // background is the telemetry worker: the generated server runs it on its own
 // goroutine beside the HTTP listener. It polls every project's gateway and

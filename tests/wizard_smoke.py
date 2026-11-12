@@ -216,7 +216,13 @@ def check_editor(base: str, project: Path) -> None:
     # A board programmed before signatures were kept is taken to run what is
     # planned: the plan is told so, as a build that programmed it would have.
     text = plan_file.read_text()
-    text = re.sub(r'(\nstatus:\n(?:  .*\n)*?    1: )"[a-z]*"', r'\1"programmed"', text, count=1)
+    if re.search(r'\nstatus:\n(?:  .*\n)*?    1: "', text):
+        text = re.sub(r'(\nstatus:\n(?:  .*\n)*?    1: )"[a-z]*"', r'\1"programmed"', text, count=1)
+    elif "\nstatus:\n" in text:
+        text = text.replace("\nstatus:\n", '\nstatus:\n  node:\n    1: "programmed"\n', 1)
+    else:
+        text = text.rstrip("\n") + '\nstatus:\n  node:\n    1: "programmed"\n'
+
     plan_file.write_text(text)
     page = get(base, f"/mesh/p/default?select=node:{relay}")
     if "runs what is planned" not in page:
@@ -366,14 +372,14 @@ def main() -> int:
             assert_contains(mesh, ["Old mesh"], "imported project listed")
             assert_contains(
                 mesh,
-                ["RoboHub Mesh", "Projects", "Create project", "Documentation"],
+                ["RoboHub Mesh", "Fleet", "New mesh", "id=\"new-mesh\"", "Documentation"],
                 "mesh overview",
             )
             if "Operations for" in mesh:
                 raise AssertionError("Operations must be hidden when no project is active")
 
             docs = get(base, "/mesh/docs")
-            assert_contains(docs, ["RoboHub Mesh", "Projects", "top bar"], "documentation")
+            assert_contains(docs, ["RoboHub Mesh", "The agora", "Editing in place", "top bar"], "documentation")
 
             # The Alerts tab is the alert interface's binding: what it saves is
             # a channel's setting, kept in the application's own bind.conf and
@@ -412,94 +418,39 @@ def main() -> int:
                 raise AssertionError("bind.conf may hold secrets and must be its owner's only")
             assert_contains(get(base, "/settings?tab=alerts"), ["ops@example.com"], "alert settings read back")
 
-            # A new project is active from the start when none was.
-            post(base, "/mesh/project/new", {"name": "default"})
-            active = get(base, "/mesh")
-            assert_contains(
-                active,
-                ["Operations for", "<strong>default</strong>", "nav-badge\">Active",
-                 "Project settings"],
-                "active project menu",
-            )
+            # A new mesh opens as its agora, with the first-run guide on the
+            # canvas and the menu naming the mesh.
+            created = post(base, "/mesh/project/new", {"name": "default"})
+            assert_contains(created, ["Choose where the gateway runs", "Add the first node", "Apply",
+                                      "<strong>default</strong>", "id=\"agora-inspector\""], "a new mesh")
+            for old in ("Next: network", "/mesh/step/", "Verify"):
+                if old in created:
+                    raise AssertionError(f"the new mesh still shows the wizard ({old!r})")
+            wizard_state = Path(state) / "projects" / "default" / "plan.yml"
 
-            node_form = get(base, "/mesh/node/new")
-            assert_contains(
-                node_form,
-                [
-                    'name="name"',
-                    'name="role"',
-                    'name="board"',
-                    'name="parent"',
-                    'name="link"',
-                    'value="pico2w"',
-                    "form-actions",
-                ],
-                "node editor",
-            )
+            node_form = hx(base, "/mesh/p/default/node/new?kind=compute&parent=gateway")
+            assert_contains(node_form, ['name="name"', 'name="role"', 'name="board"', 'name="parent"',
+                                        'name="link"', 'value="pico2w"', "Add node"], "the new-node form")
             if 'name="sensors"' in node_form:
                 raise AssertionError("modules are nodes of their own, not a field on the node")
+            gateway_form = hx(base, "/mesh/p/default/gateway")
+            assert_contains(gateway_form, ['name="gateway"', 'name="rest_port"', 'name="uplink_port"'], "the gateway form")
 
-            native_gateway = get(base, "/mesh/gateway")
-            assert_contains(native_gateway, ["native host has no pins"], "native gateway")
-            if "Add module" in native_gateway:
-                raise AssertionError("a native host cannot take modules")
-
-            post(
-                base,
-                "/mesh/gateway",
-                {
-                    "name": "Gateway",
-                    "description": "The UNO Q gateway.",
-                    "gateway": "arduino-uno-q",
-                },
-            )
-            board_gateway = get(base, "/mesh/gateway")
-            assert_contains(board_gateway, ["+ Add module"], "board gateway")
-
-            post(
-                base,
-                "/mesh/node/new",
-                {
-                    "action": "save",
-                    "kind": "compute",
-                    "name": "Relay one",
-                    "description": "First node",
-                    "role": "relay",
-                    "board": "pico2w",
-                    "parent": "gateway",
-                    "link": "uart",
-                },
-            )
-            post(
-                base,
-                "/mesh/node/new",
-                {
-                    "action": "save",
-                    "kind": "compute",
-                    "name": "Leaf two",
-                    "description": "Second node",
-                    "role": "node",
-                    "board": "pico2w",
-                    "parent": "node.1",
-                    "link": "wifi",
-                },
-            )
-
-            module_form = get(base, "/mesh/node/new?kind=module&parent=node.1")
-            assert_contains(
-                module_form,
-                [
-                    "Add a module",
-                    'name="module"',
-                    'name="parent"',
-                    'value="ds18b20-waterproof-probe-module"',
-                    'value="ky-001-temperature-sensor-module"',
-                    'value="bmp180-module"',
-                    "Module board",
-                ],
-                "module editor",
-            )
-
+            hx(base, "/mesh/p/default/gateway", {"tab": "gateway", "gateway": "arduino-uno-q",
+                                                  "gateway_host": "192.0.2.10", "rest_port": "8080", "uplink_port": "5001"})
+            assert_contains(hx(base, "/mesh/p/default/gateway"), ['name="gateway_host"', "192.0.2.10"],
+                            "a board gateway asks where it is")
+            hx(base, "/mesh/p/default/node", {"tab": "new", "kind": "compute", "name": "Relay one",
+                                               "description": "First node", "role": "relay", "board": "pico2w",
+                                               "parent": "gateway", "link": "uart"})
+            hx(base, "/mesh/p/default/node", {"tab": "new", "kind": "compute", "name": "Leaf two",
+                                               "description": "Second node", "role": "node", "board": "pico2w",
+                                               "parent": "node.1", "link": "wifi"})
+            module_form = hx(base, "/mesh/p/default/node/new?kind=module&parent=node.1")
+            assert_contains(module_form, ["New module", 'name="module"', 'name="parent"',
+                                          'value="ds18b20-waterproof-probe-module"',
+                                          'value="ky-001-temperature-sensor-module"', 'value="bmp180-module"'],
+                            "the new-module form")
             for name, module, parent in [
                 ("Temperature probe", "ds18b20-temperature-module", "node.1"),
                 ("Humidity probe", "dht11-module", "node.1"),
@@ -507,212 +458,59 @@ def main() -> int:
                 ("Leaf thermistor", "ky-013-analog-temperature-sensor-module", "node.2"),
                 ("Leaf light", "ky-018-photoresistor-module", "node.2"),
             ]:
-                post(
-                    base,
-                    "/mesh/node/new",
-                    {
-                        "action": "save",
-                        "kind": "module",
-                        "name": name,
-                        "module": module,
-                        "parent": parent,
-                    },
-                )
+                added = hx(base, "/mesh/p/default/node", {"tab": "new", "kind": "module", "name": name,
+                                                           "module": module, "parent": parent})
+                assert_contains(added, [name + " added."], "a module added")
 
-            post(base, "/mesh/accept", {"action": "accept"})
-
-            accepted = get(base, "/mesh/plan")
-            assert_contains(
-                accepted,
-                ["Edit topology", "Next: network", "Relay one", "Leaf two",
-                 "mesh-children", "link-badge", "UART", "WiFi", "module-branch",
-                 "Temperature probe", "Humidity probe", "Gateway pressure"],
-                "accepted mesh",
-            )
+            planned = get(base, "/mesh/p/default")
+            assert_contains(planned, ["Relay one", "Leaf two", "mesh-children", "link-badge", "UART", "WiFi",
+                                      "module-branch", "Temperature probe", "Humidity probe", "Gateway pressure",
+                                      "Apply changes"], "the planned mesh")
 
             sources = get(base, "/mesh/api/sources")
-            assert_contains(
-                sources,
-                [
-                    "module.3.temperature",
-                    "\"direction\":\"input\"",
-                    "\"unit\":\"°C\"",
-                    "\"kinds\":\"numeric chart table\"",
-                    "value_path",
-                    "action_path",
-                ],
-                "module sources",
-            )
+            assert_contains(sources, ["module.3.temperature", "\"direction\":\"input\"", "\"unit\":\"°C\"",
+                                      "\"kinds\":\"numeric chart table\"", "value_path", "action_path"],
+                            "module sources")
 
-            relay_page = get(base, "/mesh/node/1")
-            assert_contains(
-                relay_page,
-                [
-                    "+ Add module",
-                    "DS18B20_MODULE (ds18b20-temperature-module)",
-                    "DHT11_MODULE (dht11-module)",
-                    "1-Wire onewire0",
-                    "gpio dht0",
-                    "Bus plan",
-                ],
-                "relay modules",
-            )
-            leaf_page = get(base, "/mesh/node/2")
-            assert_contains(leaf_page, ["conflict", "adc adc0 channel 0"], "bus conflict")
-            # The conflicted module is reported and left out of the image, so
-            # the node itself still has a build path.
+            plan_now = wizard_state.read_text()
+            relay_id, leaf_id = plan_node_id(plan_now, 1), plan_node_id(plan_now, 2)
+            relay_modules = hx(base, f"/mesh/p/default/node/{relay_id}?tab=modules")
+            assert_contains(relay_modules, ["DS18B20_MODULE (ds18b20-temperature-module)", "DHT11_MODULE (dht11-module)",
+                                            "1-Wire onewire0", "gpio dht0", "Fit this module"], "the relay's modules")
+            leaf_modules = hx(base, f"/mesh/p/default/node/{leaf_id}?tab=modules")
+            assert_contains(leaf_modules, ["conflict", "adc adc0 channel 0"], "a bus conflict")
 
-            dashboard = get(base, "/mesh")
-            assert_contains(
-                dashboard,
-                ["RoboHub Mesh", "Projects", "Create project", "Gateway",
-                 "Restart", "Stop", "Delete", "Project settings", "Last update"],
-                "mesh dashboard",
-            )
-
-            network = get(base, "/mesh/step/network")
-            assert_contains(
-                network,
-                ["Network", "Click a connection badge", "needs setup", "Relay one", "Leaf two"],
-                "network page",
-            )
-            if 'href="/mesh/node/' in network:
-                raise AssertionError("the topology tree must be read-only on the network step")
-
-            link_one = get(base, "/mesh/network/link/1")
-            assert_contains(
-                link_one,
-                ["Use transport", "Save connection", "Parent serial port", "Node serial port",
-                 "UART", "USB", '<option value="console">', "WiFi"],
-                "connection 1 page",
-            )
-            post(base, "/mesh/network/link/1", {"action": "choose_transport", "transport": "uart"})
-            post(
-                base,
-                "/mesh/network/link/1",
-                {
-                    "action": "save_settings",
-                    "node.1.parent_endpoint": "/dev/ttyACM0",
-                    "node.1.child_endpoint": "/dev/ttyACM1",
-                    "node.1.baud": "115200",
-                },
-            )
-
-            link_two = get(base, "/mesh/network/link/2")
-            assert_contains(link_two, ["Use transport", "Save connection"], "connection 2 page")
-            if '<option value="console">' in link_two:
+            # Each link is edited on its own: only transports both ends serve
+            # are offered, and its settings are those of its transport.
+            relay_link = hx(base, f"/mesh/p/default/edge/{relay_id}")
+            assert_contains(relay_link, ["Use this transport", "Save link", "UART", "WiFi"], "the relay's link")
+            hx(base, f"/mesh/p/default/edge/{relay_id}", {"tab": "settings", "node.1.parent_endpoint": "/dev/ttyACM0",
+                                                          "node.1.child_endpoint": "/dev/ttyACM1", "node.1.baud": "115200"})
+            leaf_link = hx(base, f"/mesh/p/default/edge/{leaf_id}")
+            if '<option value="console">' in leaf_link:
                 raise AssertionError("Console must not be offered when the parent is a relay")
-            post(base, "/mesh/network/link/2", {"action": "choose_transport", "transport": "wifi"})
-            post(
-                base,
-                "/mesh/network/link/2",
-                {
-                    "action": "save_settings",
-                    "node.2.ssid": "TestNet",
-                    "node.2.password": "secret",
-                    "node.2.parent_host": "192.0.2.10",
-                    "node.2.child_host": "192.0.2.20",
-                    "node.2.port": "5001",
-                },
-            )
+            hx(base, f"/mesh/p/default/edge/{leaf_id}", {"tab": "settings", "node.2.ssid": "TestNet",
+                                                         "node.2.password": "secret", "node.2.parent_host": "192.0.2.10",
+                                                         "node.2.child_host": "192.0.2.20", "node.2.port": "5001"})
 
-            node_network = get(base, "/mesh/network/node/1")
-            assert_contains(
-                node_network,
-                ["Incoming connection", "Connections to children", "Relay one"],
-                "node network page",
-            )
-            gateway_network = get_until(base, "/mesh/network/gateway", "Gateway host")
-            assert_contains(
-                gateway_network,
-                ["Gateway host", "Save gateway network", "Connections to nodes"],
-                "gateway network page",
-            )
-            post(
-                base,
-                "/mesh/network/gateway",
-                {"action": "save_gateway", "gateway_host": "192.0.2.10", "rest_port": "8080"},
-            )
-            post(base, "/mesh/network/accept", {"action": "accept"})
-
-            accepted_network = get(base, "/mesh/step/network")
-            assert_contains(
-                accepted_network,
-                ["Network accepted", "Next: build"],
-                "accepted network",
-            )
-
-            build_page = get(base, "/mesh/step/build")
-            assert_contains(
-                build_page,
-                ["Build", "Select the gateway card", "not built", "Relay one", "Leaf two"],
-                "build page",
-            )
-            node_build = get(base, "/mesh/build/node/1")
-            assert_contains(
-                node_build,
-                ["Build node", "Program node", "Program uses the last successful build", "Relay one", "Console", "Clear console"],
-                "node build page",
-            )
-            prompt = post(base, "/mesh/build/node/1", {"action": "program_prompt"})
-            assert_contains(
-                prompt,
-                ["BOOTSEL", "I have put the board in boot mode", "Program"],
-                "program prompt",
-            )
-
-            (Path(state) / "progress-build.log").write_text("old output\n__DONE__:0\n", encoding="utf-8")
-            post(base, "/mesh/console/clear/build", {})
-            if (Path(state) / "progress-build.log").read_text() != "":
-                raise AssertionError("clear console must empty the progress log")
-
-            gateway_build = get_until(base, "/mesh/build/gateway", "Program gateway")
-            assert_contains(
-                gateway_build,
-                ["Build gateway", "Program gateway", "Change gateway", "Gateway"],
-                "gateway build page",
-            )
-
-            wizard_state = Path(state) / "projects" / "default" / "plan.yml"
             saved = plan_flat(wizard_state)
             # Every save is a revision, and the plan before each edit is kept:
-            # one copy per burst of saves a form makes, the last twenty.
+            # one copy per burst of saves, the last twenty.
             revision = int(dict(line.split("=", 1) for line in saved.splitlines() if "=" in line)["revision"])
             if revision < 10:
                 raise AssertionError(f"the plan has had many saves but is at revision {revision}")
             kept = sorted(int(p.stem) for p in (wizard_state.parent / "revisions").glob("*.yml"))
             if not kept or kept[-1] >= revision or len(kept) > 20:
                 raise AssertionError(f"the revisions kept are {kept} at revision {revision}")
-            assert_contains(
-                saved,
-                [
-                    "gateway=arduino-uno-q",
-                    "gateway_name=Gateway",
-                    "node.count=7",
-                    "node.1.name=Relay one",
-                    "node.1.board=pico2w",
-                    "node.1.kind=compute",
-                    "node.2.parent_node=1",
-                    "node.3.kind=module",
-                    "node.3.module=ds18b20-temperature-module",
-                    "node.3.parent_node=1",
-                    "node.4.module=dht11-module",
-                    "node.5.module=bmp180-module",
-                    "node.5.parent=gateway",
-                    "node.6.module=ky-013-analog-temperature-sensor-module",
-                    "node.7.module=ky-018-photoresistor-module",
-                    "step_topology=done",
-                    "step_network=done",
-                    "node.1.link=uart",
-                    "node.1.parent_endpoint=/dev/ttyACM0",
-                    "node.1.child_endpoint=/dev/ttyACM1",
-                    "node.2.link=wifi",
-                    "node.2.ssid=TestNet",
-                    "node.2.parent_host=192.0.2.10",
-                    "gateway_host=192.0.2.10",
-                ],
-                "mesh state",
-            )
+            assert_contains(saved, [
+                "gateway=arduino-uno-q", "node.count=7", "node.1.name=Relay one", "node.1.board=pico2w",
+                "node.1.kind=compute", "node.2.parent_node=1", "node.3.kind=module",
+                "node.3.module=ds18b20-temperature-module", "node.3.parent_node=1", "node.4.module=dht11-module",
+                "node.5.module=bmp180-module", "node.5.parent=gateway",
+                "node.6.module=ky-013-analog-temperature-sensor-module", "node.7.module=ky-018-photoresistor-module",
+                "node.1.link=uart", "node.1.parent_endpoint=/dev/ttyACM0", "node.1.child_endpoint=/dev/ttyACM1",
+                "node.2.link=wifi", "node.2.ssid=TestNet", "node.2.parent_host=192.0.2.10", "gateway_host=192.0.2.10",
+            ], "mesh state")
 
             # The agora shows the mesh's real nodes, live; the inspector shows
             # the node selected, and links to the page that edits it.
@@ -742,17 +540,17 @@ def main() -> int:
             # A tree event replaces the inside of the element that holds the
             # stream: one that carried the element would replace the connection
             # too, and the page would reconnect after every event.
-            request = urllib.request.Request(base + "/mesh/events")
+            request = urllib.request.Request(base + "/mesh/agora/events?project=default")
             request.add_header("Authorization", f"Bearer {TOKEN}")
             with urllib.request.urlopen(request, timeout=10) as stream:
                 chunk = b""
-                while b"event: mesh-tree-edit" not in chunk and len(chunk) < 400000:
+                while b"event: agora-strip" not in chunk and len(chunk) < 400000:
                     part = stream.read1(65536)
                     if not part:
                         break
                     chunk += part
             tree_events = chunk.decode("utf-8", "replace")
-            assert_contains(tree_events, ["event: mesh-tree", "Relay one"], "tree events")
+            assert_contains(tree_events, ["event: agora-tree", "Relay one"], "tree events")
             if "sse-connect" in tree_events:
                 raise AssertionError("a tree event carries the stream's connection")
             # Gateway health is checked in the background, not when a page is
@@ -768,7 +566,8 @@ def main() -> int:
             # node keeps the number its firmware and its telemetry carry. A
             # parent is stored by its number, so it needs no rewriting.
             before = int(dict(l.split("=", 1) for l in plan_flat(wizard_state).splitlines() if "=" in l)["revision"])
-            post(base, "/mesh/node/5", {"action": "delete", "kind": "module"})
+            pressure = plan_node_id(wizard_state.read_text(), 5)
+            hx(base, f"/mesh/p/default/node/{pressure}/delete", {"tab": "delete", "action": "delete"})
             removed = dict(l.split("=", 1) for l in plan_flat(wizard_state).splitlines() if "=" in l)
             expected = {
                 "node.count": "6",
@@ -788,147 +587,72 @@ def main() -> int:
             if int(removed["revision"]) - before > 20:
                 raise AssertionError("removing a node wrote the plan once per key")
 
-            # A project can be made inactive; the Operations menu disappears
-            # and a step page returns to the dashboard.
-            settings_default = get(base, "/mesh/project/default/settings")
-            assert_contains(settings_default, ["Make inactive", "active one"], "active settings")
-            post(
-                base,
-                "/mesh/project/active",
-                {"project": "default", "active": "0", "return": "settings"},
-            )
-            inactive = get(base, "/mesh")
-            if "Operations for" in inactive:
-                raise AssertionError("Operations must be hidden when no project is active")
-            assert_contains(inactive, ["No active project"], "inactive project menu")
-            assert_contains(get(base, "/mesh/plan"), ["Create project"], "step without a project")
-            post(
-                base,
-                "/mesh/project/active",
-                {"project": "default", "active": "1", "return": "dashboard"},
-            )
-            assert_contains(get(base, "/mesh"), ['<strong>default</strong>'], "reactivated project")
+            # The wizard's old addresses open the agora with what they showed.
+            for old, wanted in (("/mesh/plan", "/mesh/p/default"), ("/mesh/step/network", "/mesh/p/default"),
+                                ("/mesh/step/build", "select=apply"), ("/mesh/gateway", "select=gateway"),
+                                ("/mesh/node/1", f"select=node:{relay_id}"),
+                                ("/mesh/network/link/2", f"select=edge:{leaf_id}")):
+                request = urllib.request.Request(base + old)
+                request.add_header("Authorization", f"Bearer {TOKEN}")
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    if wanted not in response.geturl():
+                        raise AssertionError(f"{old} led to {response.geturl()}, not {wanted}")
 
-            # A project is a folder of its own; creating one starts empty, and
-            # an existing project can be opened again.
+            # A project is a folder of its own; creating one starts empty.
             post(base, "/mesh/project/new", {"name": "Second project"})
-            current_project = (Path(state) / "current-project.txt").read_text().strip()
-            if current_project == "default":
-                raise AssertionError("a new project must get its own folder")
             second_state = Path(state) / "projects" / "Second-project" / "plan.yml"
             if not second_state.exists():
                 raise AssertionError("the new project folder must exist")
-
             settings = get(base, "/mesh/project/Second-project/settings")
-            assert_contains(
-                settings,
-                ["Project settings", "Project name", "Short description", "Save project"],
-                "project settings",
-            )
-            post(
-                base,
-                "/mesh/project/Second-project/settings",
-                {"name": "Renamed project", "description": "A second test mesh"},
-            )
-            saved_project = plan_flat(second_state)
-            assert_contains(
-                saved_project,
-                ["project.name=Renamed project", "project.description=A second test mesh"],
-                "renamed project",
-            )
+            assert_contains(settings, ["Project settings", "Project name", "Short description", "Save project"],
+                            "project settings")
+            post(base, "/mesh/project/Second-project/settings",
+                 {"name": "Renamed project", "description": "A second test mesh"})
+            assert_contains(plan_flat(second_state),
+                            ["project.name=Renamed project", "project.description=A second test mesh"],
+                            "renamed project")
 
             # Two meshes on one machine never share an area or a port.
-            get(base, "/mesh/plan")
-            get(base, "/mesh/project/default")
-            get(base, "/mesh/plan")
             fleet = dict(l.split("=", 1) for l in plan_flat(Path(state) / "fleet.yml").splitlines() if "=" in l)
             for key in ("area", "rest_port", "uplink_port"):
                 one, two = fleet.get(f"mesh.default.{key}"), fleet.get(f"mesh.Second-project.{key}")
                 if not one or not two or one == two:
                     raise AssertionError(f"the two meshes share {key}: {one!r} and {two!r} ({fleet})")
-            if len({fleet[k] for k in fleet if k.endswith(".rest_port")}) != len([k for k in fleet if k.endswith(".rest_port")]):
-                raise AssertionError(f"two meshes share a REST port: {fleet}")
 
-            # An operation link names its project, and opening it makes that
-            # project the active one; a form drawn for another project is
-            # refused rather than written into this one.
-            plan_page = get(base, "/mesh/plan?project=Second-project")
-            if (Path(state) / "current-project.txt").read_text().strip() != "Second-project":
-                raise AssertionError("a link naming a project did not open it")
-            if 'name="project" value="Second-project"' not in plan_page:
-                raise AssertionError("a page's forms do not carry their project")
-            before_default = plan_flat(Path(state) / "projects" / "default" / "plan.yml")
-            post(base, "/mesh/reopen", {"project": "default"})
-            if plan_flat(Path(state) / "projects" / "default" / "plan.yml") != before_default:
-                raise AssertionError("a form for another project changed it")
-            refused = plan_flat(second_state)
-            if "another project" not in refused:
-                raise AssertionError("a form for another project was not refused")
-            get(base, "/mesh/project/default")
+            # The front door is the fleet, with both meshes on it and the form
+            # that starts another.
+            home = get(base, "/mesh")
+            assert_contains(home, ["Fleet", "Renamed project", "default", "id=\"new-mesh\""], "the fleet at /mesh")
 
             post(base, "/mesh/project/delete", {"project": "Second-project"})
             if second_state.parent.exists():
                 raise AssertionError("deleting a project must remove its folder")
             if "mesh.Second-project.area" in plan_flat(Path(state) / "fleet.yml"):
                 raise AssertionError("a deleted project kept its place in the fleet")
-            get(base, "/mesh/project/default")
-            current_project = (Path(state) / "current-project.txt").read_text().strip()
-            if current_project != "default":
-                raise AssertionError("opening a project must make it current")
+            get(base, "/mesh/p/default")
 
-            # A device is a node of its own, but it is not a compute node: a
-            # topology that carries a device must accept without asking the
-            # device for a role, board and link.
+            # A device is a node of its own, polled by Mesh rather than built.
             post(base, "/mesh/project/new", {"name": "Device project"})
-            post(
-                base,
-                "/mesh/node/new",
-                {
-                    "action": "save",
-                    "kind": "device",
-                    "name": "Test plug",
-                    "device": "robohub-device-shelly-plug-m-gen3",
-                    "transport": "http",
-                    "address": "http://192.0.2.50",
-                    "device_id": "",
-                    "parent": "gateway",
-                },
-            )
-            device_plan = get(base, "/mesh/plan")
-            assert_contains(device_plan, ["Test plug", "device"], "device plan")
+            hx(base, "/mesh/p/Device-project/node", {"tab": "new", "kind": "device", "name": "Test plug",
+                                                      "device": "robohub-device-shelly-plug-m-gen3", "transport": "http",
+                                                      "address": "http://192.0.2.50", "device_id": "", "parent": "gateway"})
+            assert_contains(get(base, "/mesh/p/Device-project"), ["Test plug"], "the device on the tree")
             device_sources = get(base, "/mesh/api/sources")
-            assert_contains(
-                device_sources,
-                [
-                    "device.1.switch",
-                    "device.1.power",
-                    "\"direction\":\"output\"",
-                    "\"direction\":\"input\"",
-                    "\"unit\":\"W\"",
-                ],
-                "device sources",
-            )
-            accepted_device = post(base, "/mesh/accept", {"action": "accept"})
-            assert_contains(accepted_device, ["Topology accepted"], "device topology")
+            assert_contains(device_sources, ["device.1.switch", "device.1.power", "\"direction\":\"output\"",
+                                             "\"direction\":\"input\"", "\"unit\":\"W\""], "device sources")
             post(base, "/mesh/project/delete", {"project": "Device-project"})
-            get(base, "/mesh/project/default")
+            get(base, "/mesh/p/default")
 
             # A native gateway that Mesh starts for a mesh of its own, on a port
             # the test chose: the background finds it online, the agora and the
             # fleet say so, and stopping it ends that process by its pid.
             post(base, "/mesh/project/new", {"name": "Live mesh"})
-            post(base, "/mesh/gateway", {"name": "Gateway", "description": "This machine.", "gateway": "native"})
             live_port = free_port()
-            # The network is set after the topology is accepted, as the wizard has
-            # it, and a topology has at least one node: a plug on the network.
-            post(base, "/mesh/node/new", {
-                "action": "save", "kind": "device", "name": "Live plug",
-                "device": "robohub-device-shelly-plug-m-gen3", "transport": "http",
-                "address": "http://192.0.2.51", "device_id": "", "parent": "gateway",
-            })
-            post(base, "/mesh/accept", {"action": "accept"})
-            post(base, "/mesh/network/gateway",
-                 {"action": "save_gateway", "gateway_host": "127.0.0.1", "rest_port": str(live_port)})
+            hx(base, "/mesh/p/Live-mesh/gateway", {"tab": "gateway", "gateway": "native",
+                                                    "rest_port": str(live_port), "uplink_port": "5099"})
+            hx(base, "/mesh/p/Live-mesh/node", {"tab": "new", "kind": "device", "name": "Live plug",
+                                                 "device": "robohub-device-shelly-plug-m-gen3", "transport": "http",
+                                                 "address": "http://192.0.2.51", "device_id": "", "parent": "gateway"})
             # A native gateway Mesh has not started is not down: the agora says it
             # is not started and offers to start it, and no fault is raised.
             live_health = Path(state) / "projects" / "Live-mesh" / "health.txt"
@@ -1016,23 +740,6 @@ def main() -> int:
             # wizard's pages did, and an edit marks out of date only the boards
             # whose image it changes.
             check_editor(base, Path(state) / "projects" / "default")
-
-            # A long action writes its progress to a file and the page follows
-            # that file. The page connects first and the action writes after,
-            # as a real one does, so a fast action's lines — its end among them —
-            # must still reach the page. Checked here without a board attached.
-            progress = urllib.request.Request(base + "/mesh/progress/verify")
-            progress.add_header("Authorization", f"Bearer {TOKEN}")
-            with urllib.request.urlopen(progress, timeout=10) as stream:
-                (Path(state) / "progress-verify.log").write_text(
-                    "one\ntwo\n__DONE__:0\n", encoding="utf-8"
-                )
-                events = stream.read().decode("utf-8", "replace")
-            assert_contains(
-                events,
-                ["data: one", "data: two", "event: done", "data: 0"],
-                "progress stream",
-            )
 
             print("mesh smoke test ok")
             return 0

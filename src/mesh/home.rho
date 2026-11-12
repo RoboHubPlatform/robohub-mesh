@@ -1,0 +1,90 @@
+//
+// @file home.rho
+// @brief Mesh's front door, and where the wizard's old addresses lead now.
+//
+// /mesh is the fleet: every mesh, the hosts, the inbox, and the form that
+// starts a new one. A mesh opens as its agora, /mesh/p/<project>. The wizard's
+// step, network, build and node pages are gone; a bookmark to one opens the
+// agora with what it showed selected.
+//
+// @module mesh.home
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.home
+
+fn mesh_home(req: Request) Response {
+    return mesh_fleet_page(req)
+}
+
+// mesh_new_mesh_form is the card that starts a mesh: a name, and Mesh gives it
+// its own area, ports and gateway.
+fn mesh_new_mesh_form() string {
+    return "<form class=\"new-mesh\" id=\"new-mesh\" method=\"post\" action=\"/mesh/project/new\">" +
+        "<strong>+ New mesh</strong><input type=\"text\" name=\"name\" placeholder=\"Greenhouse\" aria-label=\"Name\" required>" +
+        "<button type=\"submit\">Create</button><small>its own area, ports and gateway</small></form>"
+}
+
+// mesh_old_target is where an old address leads in the agora of the project
+// it names (or the open one).
+fn mesh_old_page_to(req: Request, selection: string) Response {
+    mesh_follow_project(req)
+    let id: string = current_project()
+    if id == "" {
+        return mesh_redirect("/mesh")
+    }
+    if selection == "" {
+        return mesh_redirect("/mesh/p/" + id)
+    }
+    return mesh_redirect("/mesh/p/" + id + "?select=" + selection)
+}
+
+fn mesh_old_node(req: Request) string {
+    let raw: string = param(req, "index")
+    if raw == "new" {
+        return "new&kind=" + request_query_param(req, "kind") + "&parent=" + request_query_param(req, "parent")
+    }
+    let index: u32 = u32(rho_int_from_str(raw))
+    if index == 0 || index > node_count() {
+        return ""
+    }
+    return "node:" + project_node_id(wizard_file(), index)
+}
+
+fn mesh_old_page(req: Request) Response {
+    return mesh_old_page_to(req, "")
+}
+
+fn mesh_old_gateway_page(req: Request) Response {
+    return mesh_old_page_to(req, "gateway")
+}
+
+fn mesh_old_node_page(req: Request) Response {
+    mesh_follow_project(req)
+    return mesh_old_page_to(req, mesh_old_node(req))
+}
+
+fn mesh_old_link_page(req: Request) Response {
+    mesh_follow_project(req)
+    let selection: string = mesh_old_node(req)
+    if rho_str_index_of(selection, "node:") == 0 {
+        return mesh_old_page_to(req, "edge:" + rho_str_slice(selection, 5, u32(rho_strlen(selection)) - 5))
+    }
+    return mesh_old_page_to(req, selection)
+}
+
+fn mesh_old_build_page(req: Request) Response {
+    return mesh_old_page_to(req, "apply")
+}
+
+fn mesh_project_open_page(req: Request) Response {
+    let id: string = param(req, "id")
+    if !load_project(id) {
+        return mesh_redirect("/mesh")
+    }
+    return mesh_redirect("/mesh/p/" + id)
+}

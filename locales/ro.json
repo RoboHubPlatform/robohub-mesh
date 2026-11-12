@@ -58,5 +58,8 @@
   "settings.alerts.telegram_enabled": "Alerte prin Telegram",
   "settings.alerts.telegram_threshold": "Prag Telegram",
   "nav.fleet": "Flotă",
-  "nav.live": "Live"
+  "nav.live": "Live",
+  "nav.apply": "Aplică modificările",
+  "nav.mesh": "Rețea",
+  "nav.new_mesh": "Rețea nouă"
 }

@@ -1,0 +1,834 @@
+//
+// @file store.rho
+// @brief Projects and their plans: where they live, which one is open, and reading and writing what a plan says.
+//
+// @module mesh.store
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.store
+
+include "wizard_text.rho"
+import std.web.http
+import std.web.template
+extern fn sse_file(path: string, interval_ms: u32) Response
+const WIZARD_DEFAULT_LINK: string = "uart"
+const WIZARD_DEFAULT_SERIAL: string = "/dev/ttyACM0"
+const WIZARD_DEFAULT_REST: string = "8080"
+const WIZARD_DEFAULT_UPLINK: string = "5001"
+const WIZARD_DEFAULT_AREA: string = "1"
+const WIZARD_DEFAULT_NODE: string = "1"
+
+// A call whose answer the host does not need: an action that writes a file or
+// makes a directory reports success through the value, and a step that has
+// nothing to do with that answer still has to say so.
+fn ignore_u32(value: u32) void {
+}
+
+fn ignore_bool(value: bool) void {
+}
+
+fn ignore_string(value: string) void {
+}
+
+fn wizard_dir() string {
+    let override: string = getenv("RHO_MESH_STATE_DIR")
+    if override != "" {
+        return override
+    }
+    let home: string = getenv("HOME")
+    if home == "" {
+        return "build/mesh"
+    }
+    return home + "/.rho/mesh/state"
+}
+
+fn projects_dir() string {
+    let override: string = getenv("ROBOHUB_MESH_PROJECTS")
+    if override != "" {
+        return override
+    }
+    let home: string = getenv("HOME")
+    if home == "" {
+        return wizard_dir() + "/projects"
+    }
+    return home + "/.rho/mesh/projects"
+}
+
+fn current_project_file() string {
+    return wizard_dir() + "/current-project.txt"
+}
+
+fn first_line(text: string) string {
+    let at: i32 = rho_str_index_of(text, "\n")
+    if at < 0 {
+        return text
+    }
+    return rho_str_slice(text, 0, u32(at))
+}
+
+// The active project. It is the one the Operations menu and the step pages
+// act on. An empty string means no project is active: the application still
+// lists and creates projects, but it shows no operations until one is opened.
+fn current_project() string {
+    return first_line(rho_read_text(current_project_file()))
+}
+
+// project_file is a project's plan. Every read of it goes through plan_text and
+// every write through plan_write or plan_set (plan.rho).
+fn project_file(id: string) string {
+    return projects_dir() + "/" + id + "/" + PLAN_FILE
+}
+
+fn project_location(id: string) string {
+    return projects_dir() + "/" + id
+}
+
+fn wizard_file() string {
+    let id: string = current_project()
+    if id == "" {
+        return ""
+    }
+    return project_file(id)
+}
+
+fn wizard_report(name: string) string {
+    return wizard_dir() + "/" + name + ".txt"
+}
+
+fn project_listing() string {
+    let report: string = wizard_report("projects")
+    ignore_u32(rho_exec("ls", projects_dir(), report))
+    return rho_read_text(report)
+}
+
+fn project_ids() string {
+    ensure_wizard_dir()
+    var out: string = ""
+    var rest: string = project_listing()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let id: string = ""
+        if at < 0 {
+            id = rest
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && rho_path_exists(project_file(id)) {
+            out = out + id + "\n"
+        }
+    }
+    return out
+}
+
+fn project_name(id: string) string {
+    let name: string = state_value_in(project_file(id), "project.name")
+    if name == "" {
+        return id
+    }
+    return name
+}
+
+fn project_id_from_name(name: string) string {
+    var base: string = ""
+    var i: u32 = 0
+    let length: u32 = u32(rho_strlen(name))
+    while i < length {
+        let ch: string = rho_str_slice(name, i, 1)
+        if ch == " " {
+            base = base + "-"
+        } else if (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") ||
+            (ch >= "0" && ch <= "9") || ch == "-" || ch == "_" || ch == "." {
+            base = base + ch
+        }
+        i = i + 1
+    }
+    if base == "" {
+        base = "mesh-project"
+    }
+    var id: string = base
+    var suffix: u32 = 2
+    while rho_path_exists(project_location(id)) {
+        id = base + "-" + rho_int_to_str(suffix)
+        suffix = suffix + 1
+    }
+    return id
+}
+
+fn new_project(name: string) string {
+    let dir: string = projects_dir()
+    ignore_u32(rho_exec("mkdir", "-p " + dir, wizard_report("mkdir-projects")))
+    let id: string = project_id_from_name(name)
+    ignore_u32(rho_exec("mkdir", "-p " + project_location(id), wizard_report("mkdir-project")))
+    var display: string = sanitize(name)
+    if display == "" {
+        display = "Mesh project"
+    }
+    ignore_bool(plan_write(project_file(id), "project.name=" + display + "\n"))
+    ignore_bool(rho_write_text(current_project_file(), id + "\n"))
+    // A mesh gets its area and ports on this machine when it is created, so it
+    // never runs on another mesh's.
+    fleet_place(id)
+    return id
+}
+
+fn load_project(id: string) bool {
+    let safe: string = sanitize(id)
+    if safe == "" || rho_str_index_of(safe, "/") >= 0 || rho_str_index_of(safe, "..") >= 0 {
+        return false
+    }
+    if !rho_path_exists(project_file(safe)) {
+        return false
+    }
+    return rho_write_text(current_project_file(), safe + "\n")
+}
+
+fn ensure_wizard_dir() void {
+    let dir: string = wizard_dir()
+    ignore_u32(rho_exec("mkdir", "-p " + projects_dir(), dir + "/mkdir.txt"))
+    let current: string = current_project_file()
+
+    // A project written before plan.yml is imported before anything asks
+    // whether it exists, so it is listed, opened and kept active as it was.
+    let listing_report: string = wizard_report("plan-listing")
+    rho_exec("ls", projects_dir(), listing_report)
+    var listed: string = rho_read_text(listing_report)
+    while listed != "" {
+        let at: i32 = rho_str_index_of(listed, "\n")
+        var name: string = listed
+        if at < 0 {
+            listed = ""
+        } else {
+            name = rho_str_slice(listed, 0, u32(at))
+            listed = rho_str_slice(listed, u32(at) + 1, u32(rho_strlen(listed)) - u32(at) - 1)
+        }
+        if name != "" {
+            plan_import(project_file(name))
+        }
+    }
+
+    // Sessions written by an older layout became projects. They are migrated
+    // whenever the directory is prepared, because a project that is not one
+    // yet cannot be opened, listed or activated.
+    let legacy_current: string = first_line(rho_read_text(dir + "/current-session.txt"))
+    let legacy_report: string = wizard_report("legacy-sessions")
+    ignore_u32(rho_exec("ls", dir + "/sessions", legacy_report))
+    var rest: string = rho_read_text(legacy_report)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let file: string = ""
+        if at < 0 {
+            file = rest
+            rest = ""
+        } else {
+            file = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if file == "" || rho_str_index_of(file, ".txt") < 0 {
+            continue
+        }
+        let id: string = rho_str_slice(file, 0, u32(rho_str_index_of(file, ".txt")))
+        if !rho_path_exists(project_file(id)) {
+            ignore_u32(rho_exec("mkdir", "-p " + project_location(id), legacy_report))
+            let old: string = rho_read_text(dir + "/sessions/" + file)
+            ignore_bool(plan_write(project_file(id), "project.name=" + id + "\n" + old))
+        }
+    }
+
+    // A legacy pointer selects a project only when it names one that exists.
+    // A missing pointer is a real state now: it means no project is active,
+    // and the Operations menu is hidden rather than defaulting to one.
+    if !rho_path_exists(current) && legacy_current != "" &&
+        rho_path_exists(project_file(legacy_current)) {
+        ignore_bool(rho_write_text(current, legacy_current + "\n"))
+    }
+
+    // A pointer to a deleted project is not an active project.
+    let active: string = current_project()
+    if active != "" && !rho_path_exists(project_file(active)) {
+        ignore_bool(rho_write_text(current, ""))
+    }
+
+    if active != "" {
+        let file: string = wizard_file()
+        if !rho_path_exists(file) {
+            let legacy: string = dir + "/wizard.txt"
+            if rho_path_exists(legacy) {
+                ignore_bool(plan_write(file, rho_read_text(legacy)))
+            } else {
+                ignore_bool(plan_write(file, "project.name=" + active + "\n"))
+            }
+        }
+    }
+
+    // A module used to be a field on a node. It is a node of its own now, so a
+    // plan written before that change gets one module node per attachment.
+    migrate_module_nodes()
+}
+
+fn state_value_in(path: string, key: string) string {
+    let text: string = plan_text(path)
+    let prefix: string = key + "="
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let line: string = ""
+        if at < 0 {
+            line = rest
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if rho_str_index_of(line, prefix) == 0 {
+            return rho_str_slice(line, u32(rho_strlen(prefix)),
+                u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+        }
+    }
+    return ""
+}
+
+fn state_value(key: string) string {
+    let text: string = plan_text(wizard_file())
+    let prefix: string = key + "="
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        let line: string = ""
+        if at < 0 {
+            line = rest
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if rho_str_index_of(line, prefix) == 0 {
+            return rho_str_slice(line, u32(rho_strlen(prefix)),
+                u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+        }
+    }
+    return ""
+}
+
+// write_state_file replaces a project file in one step.
+//
+// A state write is a read, a change and a write. If a reader sees the old file
+// while the writer is still writing, or two writers overlap, the file can lose
+// keys. The rename is atomic on the same filesystem, so a reader sees either
+// the old file or the new one, never half of each.
+fn write_state_file(path: string, text: string) bool {
+    let tmp: string = path + ".tmp"
+    if !rho_write_text(tmp, text) {
+        return false
+    }
+    // Keep the state a write replaces. A plan is the person's work, and a bug
+    // in a writer should cost one edit rather than the plan.
+    if rho_path_exists(path) {
+        ignore_u32(rho_exec("cp", "-f " + path + " " + path + ".bak", wizard_report("state-bak")))
+    }
+    let code: u32 = rho_exec("mv", "-f " + tmp + " " + path, wizard_report("state-mv"))
+    return code == 0
+}
+
+// save_setting_raw is save_setting without preparing the directory. The
+// migration that runs while preparing it writes many settings; asking to
+// prepare the directory from inside that would come back here forever.
+fn save_setting_raw(key: string, value: string) void {
+    ignore_bool(plan_set(wizard_file(), key, sanitize(value)))
+}
+
+fn save_setting_at(path: string, key: string, value: string) void {
+    ignore_bool(plan_set(path, key, sanitize(value)))
+}
+
+fn save_setting(key: string, value: string) void {
+    // The caller has already prepared the project; a write must not run the
+    // migration or touch any other key. The plan is changed under its lock and
+    // replaced in one step, so a concurrent reader never sees a half-written one.
+    let file: string = wizard_file()
+    if file == "" {
+        return
+    }
+    if !plan_set(file, key, sanitize(value)) {
+        error("mesh", "could not write " + file)
+    }
+}
+
+fn default_value(key: string, fallback: string) string {
+    let value: string = state_value(key)
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+fn node_kind(index: u32) string {
+    let kind: string = state_value("node." + rho_int_to_str(index) + ".kind")
+    if kind == "" {
+        return "compute"
+    }
+    return kind
+}
+
+fn is_module_node(index: u32) bool {
+    return node_kind(index) == "module"
+}
+
+fn is_device_node(index: u32) bool {
+    return node_kind(index) == "device"
+}
+
+fn node_device_name(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".device")
+}
+
+fn node_device_transport(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".transport")
+}
+
+fn node_device_address(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".address")
+}
+
+fn node_module_name(index: u32) string {
+    return state_value("node." + rho_int_to_str(index) + ".module")
+}
+
+fn node_module_children(index: u32) string {
+    var out: string = ""
+    var child: u32 = 1
+    let count: u32 = node_count()
+    while child <= count {
+        if is_module_node(child) &&
+            state_value("node." + rho_int_to_str(child) + ".parent") == "node." + rho_int_to_str(index) {
+            if rho_strlen(out) > 0 {
+                out = out + " "
+            }
+            out = out + rho_int_to_str(child)
+        }
+        child = child + 1
+    }
+    return out
+}
+
+fn gateway_module_indices() string {
+    var out: string = ""
+    var child: u32 = 1
+    let count: u32 = node_count()
+    while child <= count {
+        if is_module_node(child) &&
+            state_value("node." + rho_int_to_str(child) + ".parent") == "gateway" {
+            if rho_strlen(out) > 0 {
+                out = out + " "
+            }
+            out = out + rho_int_to_str(child)
+        }
+        child = child + 1
+    }
+    return out
+}
+
+fn append_module_node(module_name: string, parent: string) u32 {
+    let index: u32 = node_count() + 1
+    if index > 64 {
+        return 0
+    }
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    save_setting_raw("node.count", rho_int_to_str(index))
+    save_setting_raw(prefix + "id", "")
+    save_setting_raw(prefix + "uid", "")
+    save_setting_raw(prefix + "kind", "module")
+    save_setting_raw(prefix + "name", module_label(module_name))
+    save_setting_raw(prefix + "description", module_summary(module_name))
+    save_setting_raw(prefix + "module", module_name)
+    save_setting_raw(prefix + "parent", parent)
+    save_setting_raw(prefix + "role", "module")
+    save_setting_raw(prefix + "board", "")
+    save_setting_raw(prefix + "link", "")
+    save_setting_raw(prefix + "sensors", "")
+    save_setting_raw(prefix + "driver", "")
+    return index
+}
+
+fn migrate_module_nodes() void {
+    if current_project() == "" {
+        return
+    }
+    // A migration is only a change when there is something to migrate. A plan
+    // that has already been migrated must not be written on every read: a
+    // background reader that writes is a writer that can race a form save.
+    let initial: u32 = node_count()
+    var has_work: bool = gateway_allows_modules() && gateway_sensors() != ""
+    var index: u32 = 1
+    while index <= initial {
+        if !is_module_node(index) && node_sensors(index) != "" {
+            has_work = true
+        }
+        index = index + 1
+    }
+    if !has_work && state_value("gateway_driver") == "" && gateway_sensors() == "" &&
+        default_value("driver", "") == "" {
+        return
+    }
+    index = 1
+    while index <= initial {
+        if !is_module_node(index) {
+            var rest: string = node_sensors(index)
+            while rest != "" {
+                let at: i32 = rho_str_index_of(rest, " ")
+                var name: string = ""
+                if at < 0 {
+                    name = rest
+                    rest = ""
+                } else {
+                    name = rho_str_slice(rest, 0, u32(at))
+                    rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+                }
+                if name != "" {
+                    ignore_u32(append_module_node(name,
+                        "node." + rho_int_to_str(index)))
+                }
+            }
+            if node_sensors(index) != "" {
+                save_setting_raw("node." + rho_int_to_str(index) + ".sensors", "")
+                save_setting_raw("node." + rho_int_to_str(index) + ".driver", "")
+            }
+        }
+        index = index + 1
+    }
+    if gateway_allows_modules() {
+        var rest: string = gateway_sensors()
+        while rest != "" {
+            let at: i32 = rho_str_index_of(rest, " ")
+            var name: string = ""
+            if at < 0 {
+                name = rest
+                rest = ""
+            } else {
+                name = rho_str_slice(rest, 0, u32(at))
+                rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+            }
+            if name != "" {
+                ignore_u32(append_module_node(name, "gateway"))
+            }
+        }
+    }
+    save_setting_raw("gateway_sensors", "")
+    save_setting_raw("gateway_driver", "")
+    // The old global driver was the first node's fallback. Once it has become a
+    // module node it must not be read again, or every preparation would append
+    // another copy of the same module.
+    save_setting_raw("driver", "")
+}
+
+fn field(line: string, index: u32) string {
+    var rest: string = line
+    var i: u32 = 0
+    while i < index {
+        let at: i32 = rho_str_index_of(rest, "|")
+        if at < 0 {
+            return ""
+        }
+        rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        i = i + 1
+    }
+    let at: i32 = rho_str_index_of(rest, "|")
+    if at < 0 {
+        return rest
+    }
+    return rho_str_slice(rest, 0, u32(at))
+}
+
+fn words_contain(words: string, value: string) bool {
+    var rest: string = words
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        let word: string = ""
+        if at < 0 {
+            word = rest
+            rest = ""
+        } else {
+            word = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if word == value {
+            return true
+        }
+    }
+    return false
+}
+
+// A node's role, board, parent and link are saved as one indexed family:
+// node.count says how many rows there are, and node.N.<attr> is each row's
+// choice. The state file is flat because a form is flat; the index is what
+// makes a tree out of it.
+fn node_count() u32 {
+    let count: u32 = rho_int_from_str(default_value("node.count", "0"))
+    if count > 64 {
+        return 64
+    }
+    return count
+}
+
+fn selected_node() u32 {
+    let job_node: u32 = jobs_node()
+    if job_node > 0 {
+        return job_node
+    }
+    let count: u32 = node_count()
+    if count < 1 {
+        return 1
+    }
+    let chosen: u32 = rho_int_from_str(default_value("build_node", "1"))
+    if chosen < 1 {
+        return 1
+    }
+    if chosen > count {
+        return count
+    }
+    return chosen
+}
+
+fn node_value(index: u32, attr: string, fallback: string) string {
+    let value: string = state_value("node." + rho_int_to_str(index) + "." + attr)
+    if value != "" {
+        return value
+    }
+    if index == 1 {
+        if attr == "board" {
+            let relay: string = state_value("relay")
+            if relay != "" {
+                return relay
+            }
+            return first_board_for("relay", first_driver())
+        }
+        if attr == "driver" {
+            let driver: string = state_value("driver")
+            if driver != "" {
+                return driver
+            }
+            return first_driver()
+        }
+        if attr == "link" {
+            let link: string = state_value("link")
+            if link != "" && link != "usb" {
+                return link
+            }
+            return "uart"
+        }
+    }
+    return fallback
+}
+
+fn mesh_take_in(file: string, key: string) string {
+    let message: string = state_value_in(file, key)
+    if message != "" {
+        save_setting_at(file, key, "")
+    }
+    return message
+}
+
+fn project_description(id: string) string {
+    return state_value_in(project_file(id), "project.description")
+}
+
+fn project_node_count_at(file: string) u32 {
+    let value: string = state_value_in(file, "node.count")
+    if value == "" {
+        return 0
+    }
+    return rho_int_from_str(value)
+}
+
+fn project_node_value(file: string, index: u32, key: string, fallback: string) string {
+    let value: string = state_value_in(file, "node." + rho_int_to_str(index) + "." + key)
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+// project_node_id is a planned node's identity, made the first time it is asked
+// for and kept in the plan: a board opens its session with it, and every series
+// the node reports is kept under it. It is never derived from the node's place
+// in the plan, so a series stays the device's whatever the plan does around it.
+// A board provisioned before nodes had ids keeps the id it was flashed with.
+// project_node_number is the number a node's firmware and its telemetry carry
+// (CONFIG_RH_NODE_ID). It is the node's own and stays with it: removing another
+// node moves rows but not numbers, so a board that is already flashed still
+// reports as itself. A node planned before numbers existed gets its row number,
+// which is what it was flashed with, unless another node already has it; a new
+// node gets the next number never used in the project.
+fn project_node_number(file: string, index: u32) u32 {
+    if index == 0 {
+        return 0
+    }
+    let key: string = "node." + rho_int_to_str(index) + ".number"
+    let existing: u32 = u32(rho_int_from_str(state_value_in(file, key)))
+    if existing > 0 {
+        return existing
+    }
+    let count: u32 = project_node_count_at(file)
+    var taken: bool = false
+    var highest: u32 = u32(rho_int_from_str(state_value_in(file, "node.next_number")))
+    var other: u32 = 1
+    while other <= count {
+        let number: u32 = u32(rho_int_from_str(state_value_in(file, "node." + rho_int_to_str(other) + ".number")))
+        if number == index {
+            taken = true
+        }
+        if number >= highest {
+            highest = number + 1
+        }
+        other = other + 1
+    }
+    // The row number when no node has it and no node ever had it (the counter
+    // has not passed it); otherwise the next number never used.
+    var chosen: u32 = index
+    if taken || index < highest {
+        chosen = highest
+    }
+    if chosen < 1 {
+        chosen = 1
+    }
+    save_setting_at(file, key, rho_int_to_str(chosen))
+    if chosen + 1 > u32(rho_int_from_str(state_value_in(file, "node.next_number"))) {
+        save_setting_at(file, "node.next_number", rho_int_to_str(chosen + 1))
+    }
+    return chosen
+}
+
+// project_node_numbers gives every node of a plan its number, before rows move,
+// in one write: the same rule as project_node_number, for every node that has
+// no number yet.
+fn project_node_numbers(file: string) void {
+    let text: string = plan_text(file)
+    let count: u32 = u32(rho_int_from_str(plan_value(text, "node.count")))
+    var highest: u32 = u32(rho_int_from_str(plan_value(text, "node.next_number")))
+    var index: u32 = 1
+    while index <= count {
+        let number: u32 = u32(rho_int_from_str(plan_value(text, "node." + rho_int_to_str(index) + ".number")))
+        if number >= highest {
+            highest = number + 1
+        }
+        index = index + 1
+    }
+    var assigned: string = ""
+    var taken: string = "|"
+    index = 1
+    while index <= count {
+        let number: u32 = u32(rho_int_from_str(plan_value(text, "node." + rho_int_to_str(index) + ".number")))
+        if number > 0 {
+            taken = taken + rho_int_to_str(number) + "|"
+        }
+        index = index + 1
+    }
+    index = 1
+    while index <= count {
+        let key: string = "node." + rho_int_to_str(index) + ".number"
+        if plan_value(text, key) == "" {
+            var chosen: u32 = index
+            if rho_str_index_of(taken, "|" + rho_int_to_str(index) + "|") >= 0 || index < highest {
+                chosen = highest
+            }
+            if chosen < 1 {
+                chosen = 1
+            }
+            taken = taken + rho_int_to_str(chosen) + "|"
+            if chosen >= highest {
+                highest = chosen + 1
+            }
+            assigned = assigned + key + "=" + rho_int_to_str(chosen) + "\n"
+        }
+        index = index + 1
+    }
+    if assigned != "" {
+        ignore_bool(plan_set_many(file, assigned + "node.next_number=" + rho_int_to_str(highest) + "\n"))
+    }
+}
+
+fn project_node_id(file: string, index: u32) string {
+    if index == 0 {
+        return ""
+    }
+    let key: string = "node." + rho_int_to_str(index) + ".id"
+    var id: string = state_value_in(file, key)
+    if rho_strlen(id) == 16 {
+        return id
+    }
+    id = state_value_in(file, "node." + rho_int_to_str(index) + ".uid")
+    if rho_strlen(id) != 16 {
+        id = rho_random_hex(8)
+    }
+    if rho_strlen(id) != 16 {
+        return ""
+    }
+    save_setting_at(file, key, id)
+    return id
+}
+
+// project_node_by_id is the plan index of the node with an id, or 0. It only
+// reads: an id nobody has asked for yet is not one a caller can know.
+fn project_node_by_id(file: string, id: string) u32 {
+    if rho_strlen(id) != 16 {
+        return 0
+    }
+    let count: u32 = project_node_count_at(file)
+    var index: u32 = 1
+    while index <= count {
+        if state_value_in(file, "node." + rho_int_to_str(index) + ".id") == id {
+            return index
+        }
+        index = index + 1
+    }
+    return 0
+}
+
+// project_module_tag is how a module's readings are told apart on the board
+// that carries it: the start of the module's id, so two sensors measuring the
+// same quantity are two series, and a module added in a removed one's place is
+// a new series rather than the old one continued.
+fn project_module_tag(file: string, index: u32) string {
+    let id: string = project_node_id(file, index)
+    if id == "" {
+        return ""
+    }
+    return rho_str_slice(id, 0, 8)
+}
+
+// project_area_id is a project's area: what its plan says, or the area the
+// fleet gave the mesh, which no other mesh on this machine has.
+fn project_area_id(file: string) string {
+    let value: string = state_value_in(file, "area_id")
+    if value == "" {
+        let id: string = plan_project_id(file)
+        if id != "" {
+            return fleet_area(id)
+        }
+        return WIZARD_DEFAULT_AREA
+    }
+    return value
+}
+
+// plan_project_id is the project a plan file belongs to: its folder's name.
+fn plan_project_id(file: string) string {
+    let dir: string = plan_dir(file)
+    var last: i32 = -1
+    var i: u32 = 0
+    while i < u32(rho_strlen(dir)) {
+        if rho_str_eq(rho_str_slice(dir, i, 1), "/") {
+            last = i32(i)
+        }
+        i = i + 1
+    }
+    if last < 0 {
+        return ""
+    }
+    return rho_str_slice(dir, u32(last) + 1, u32(rho_strlen(dir)) - u32(last) - 1)
+}

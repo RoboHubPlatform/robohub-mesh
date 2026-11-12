@@ -6,25 +6,13 @@ boards. It is the part of the ecosystem that knows about boards, not only about
 modules.
 
 It is a keeper-hosted application: it runs on its own port, standalone or
-launched from the keeper's `/applications` registry. The page is at `/mesh`; the
-plan wizard for a project is at `/mesh/plan`.
+launched from the keeper's `/applications` registry. Its front door is `/mesh`,
+the fleet of every mesh; a mesh opens at `/mesh/p/<project>`.
 
-The application owns its menu. The fixed top bar has Dashboard, Documentation
-and, while a project is active, the operations it acts on — Plan, Network,
-Build & program, Verify, Gateway and Settings — with the project named beside
-them. The fixed bottom bar lists every project in the workspace, with **New
-project** beside them; the active one is marked **Active** and the others are
-not.
-
-A project is made active by opening it, by **Set active** on its card, or from
-its settings page. **Make inactive** clears the selection: the operations
-disappear from the top bar and the bottom bar says **No active project**, while
-the plan, network, build and verify pages return to the dashboard and the
-projects remain listed. Creating a project when none is active makes the new
-one active.
-
-When the keeper started the application, the top bar also has **Keeper**, which
-returns to the keeper that launched it.
+The fixed top bar has Fleet, Faults, Settings and Documentation, and, for the
+mesh that is open, Live, Gateway, Apply changes and its settings. The fixed
+bottom bar lists every mesh, with **New mesh** beside them. When the keeper
+started the application, the top bar also has **Keeper**, which returns to it.
 
 ## Signing in
 
@@ -38,66 +26,95 @@ Without a keeper, `RHO_AUTH_STANDALONE=1 ./build/mesh` runs Mesh on its own: it
 answers requests from its own machine as the local user and refuses any from
 another machine or through a proxy.
 
-## Projects
+## The fleet
 
-A mesh is saved as a **project**: a folder in a workspace.
+`/mesh` shows every mesh this Mesh manages as one panel:
+
+- a card per mesh with its tree drawn small — the gateway, the boards and
+  devices under it, their modules — its counts and readings, and whether its
+  gateway answers;
+- **+ New mesh**, which takes a name and gives the mesh its own folder, area,
+  REST port and uplink port, so two meshes run side by side on one machine;
+- the inbox of faults across every mesh, and the hosts their gateways run on;
+- an activity strip with how many meshes are down and how many faults are open.
+
+A mesh is saved as a folder in a workspace:
 
 | What | Where |
 |---|---|
 | Default workspace | `~/.rho/mesh/projects` |
 | Override | `ROBOHUB_MESH_PROJECTS` |
-| Project plan | `<workspace>/<project>/plan.yml`, earlier revisions under `revisions/` |
+| Plan | `<project>/plan.yml`, earlier revisions under `revisions/` |
+| What each board runs | `<project>/deployed.txt` |
+| Jobs and their logs | `<project>/jobs/` |
+| Board sources and builds | `<project>/boards/node_<number>/` |
 | Fleet (areas and ports per mesh) | `<state>/fleet.yml` |
-| Current project pointer | `RHO_KEEPER_STATE_DIR/current-project.txt` |
 
-A project's folder holds its plan, network, build and verify state. Renaming a
-project changes its display name, not its folder; the folder is the stable
-location a person can open and copy.
+Renaming a mesh changes its display name, not its folder. Deleting it stops its
+native gateway, removes the folder and frees its place in the fleet.
 
-The dashboard lists every project with:
+## The agora
 
-- its name and folder,
-- the gateway recorded for it and the address it answers on,
-- running / not-running status,
-- the last time the gateway received a frame,
-- **Restart**, **Stop** and **Delete**, and a link to **Project settings**.
+A mesh opens as its agora: the live tree, a bar above it, an inspector beside
+it and an activity strip below.
 
-![The Mesh projects dashboard](./images/dashboard.jpg)
+- The gateway is the root, every board branches from its parent, and the badge
+  on a branch is the link and names its transport. Modules hang under the
+  board that carries them; devices under the gateway or board that owns them.
+- Each card says what the mesh reports about it: online with its last reading,
+  quiet, or no readings — and, for a board, whether it runs what is planned.
+- The bar says whether the gateway answers and offers **Apply changes** when a
+  board or the gateway differs from what it runs.
 
-**Create project** makes a new empty project and opens its plan. **Open** on a
-project loads it as the current project and opens its plan. The dashboard does
-not show the Plan/Network/Build/Verify steps; those belong to the project being
-created or edited.
+Selecting the gateway, a card or a link badge opens it in the inspector. The
+project and the selection are in the address — `/mesh/p/<project>?select=
+node:<id>` — so two tabs show two meshes and a link opens the node it names.
+The wizard's old addresses (`/mesh/plan`, `/mesh/step/...`, `/mesh/node/<n>`)
+open the agora with what they showed selected.
 
-Deleting the current project selects another project; deleting the last one
-leaves no active project. If the deleted project's native gateway is running it
-is stopped first.
+A new mesh opens on the same canvas with three prompts: choose where the
+gateway runs, add the first node, apply. Each opens the control that does it,
+and the guide goes once the mesh has a node.
 
-Every wizard page carries a **← Mesh dashboard** breadcrumb.
+On a narrow screen the inspector is a sheet at the bottom of the page.
 
-## Plan and topology
+## Editing in place
 
-![The plan wizard](./images/wizzard.jpg)
+Every edit is made in the inspector and saved at once:
 
-The plan is a graph of cards:
+- **Node** — a board's name, description, role (`node`, `relay` or
+  `gateway`), board and parent. Moving a board under another keeps its link
+  when the new parent can serve it and picks one both can otherwise.
+- **Link** — the transport and its settings, for the link the board reaches
+  its parent over.
+- **Modules** — the modules fitted to the board, with its bus plan.
+- **Data** — what the board or device last reported; a device can be polled and
+  switched here.
+- **Delete** — says what goes with the node (its modules) and asks where what
+  hangs from it moves. No other node changes its number or its id.
+- **+ node**, **+ module** and **+ device** under any card add what hangs from
+  it.
+- The gateway's own inspector sets where it runs and its ports, and builds,
+  starts and stops it.
 
-- the gateway is the root,
-- every child branches from its parent,
-- a device with no parent branches from the gateway beside the relay nodes,
-- the branch badge is the connection and names the transport,
-- each card is a frosted panel carrying the node's role and status.
+An edit builds nothing and resets nothing. What a board's image is built from —
+its board, role, parent, link and the link's settings, its modules, the links it
+serves, and the gateway's address when it dials it — is its signature, and the
+signature is recorded when the board is programmed. A board whose plan differs
+shows as out of date, with what changed: a new name changes nothing, a new
+module puts that board alone out of date, a new link puts the board out of date
+and asks the gateway or relay serving it to restart.
 
-A card opens the node or gateway editor. A node is one computer: a user-chosen
-name, a short description, a role (`node`, `relay` or `gateway`), a board, a
-parent and a link. Boards are filtered by the role.
+Each save raises the node's own revision. A form opened before the node's last
+save is refused — "changed elsewhere" — rather than written over it.
 
 ### Nodes and modules
 
 A node is one computer. A sensor module is a **node of its own** — `kind: module`
 — attached to a node, and a node can carry any number of them. The tree shows
 them as module cards under the node they extend, so the plan reads as the tree
-of hardware it describes. **+ Add module** on a node card (or **+ module** in the
-plan) opens the module editor.
+of hardware it describes. **+ module** under a board's card, or the Modules tab of its inspector, adds
+one.
 
 A module node is not a build target. It has no role, board or link of its own
 and is never built or programmed separately; it is carried by the image of the
@@ -125,7 +142,7 @@ to carries it, and the Mesh tree shows it under that parent.
 
 The device editor chooses the integration, the transport (`http` or `mqtt`), an
 HTTP address and the device id. An HTTP device can be polled and switched from
-its node page; an MQTT device is carried by the relay or gateway that owns the
+the Data tab of its inspector; an MQTT device is carried by the relay or gateway that owns the
 broker connection. A file from a device can also reach a gateway over
 `POST /api/v1/frames` as an encoded RoboHub frame, so the same device record is
 produced whether it arrived on a serial link or over the network.
@@ -142,7 +159,7 @@ board:
     cs: auto               # SPI: the node picks a chip select
 ```
 
-The node page shows a **bus plan**, which is how several modules become one
+The Modules tab shows a **bus plan**, which is how several modules become one
 node:
 
 - 1-Wire modules share `onewire0`.
@@ -155,15 +172,7 @@ A conflict is shown on the node and that module is left out of the image, so the
 parent still builds. A module that says nothing about its bus is listed without
 a plan rather than guessed at.
 
-**Accept topology** locks the tree and opens Network. **Edit topology** unlocks
-it again; editing resets the network, build and verify steps that depended on
-it.
-
-## Network is about connections
-
-Once the topology is accepted, every branch is editable as a connection. Its
-transport badge opens that connection; the node card opens the node's network
-page, which lists its incoming connection and the connections to its children.
+## Links
 
 A connection page shows both ends and offers only transports both boards can
 serve. The set is the intersection of:
@@ -186,21 +195,19 @@ The fields follow the transport:
 | Ethernet / Socket | parent interface or host, node address, port |
 | SPI / I2C | parent bus, node bus, address |
 
-The gateway's own page sets the gateway host and REST port and lists its
-outgoing connections. **Accept network** unlocks Build & Program; editing any
-connection locks it again until it is accepted.
+## Apply changes and jobs
 
-## Build and program
+**Apply changes** lists what differs from what runs and what applying will do:
+build each changed board and then flash it, and restart the gateway (or build
+and program it, when it is a board). A board's inspector can build and flash
+that board alone, and the gateway's can rebuild and restart it.
 
-The build step is the same tree with a status on every card:
-
-`not built`, `built`, `programmed`, `running` or `failed`.
-
-- Clicking a node offers **Build node** and **Program node**.
-- Clicking the gateway offers **Build gateway** and **Program gateway**. Program
-  builds first when needed, then deploys or starts the gateway.
-- The gateway page can change the gateway to another gateway board, or to
-  `native` (this host). Changing it resets the network and build steps.
+Applying queues jobs and answers at once. Each job is a script beside the
+project with its own log; one runner per mesh works through them in order, so a
+long build in one mesh never waits on another, and no page waits on a build. A
+job that depended on one that failed is skipped. The activity strip and each
+card show what is running, what waits, and what failed; a job opens its log in
+the inspector, where a failed one can be tried again.
 
 The node build carries the connection's transport into the firmware:
 
@@ -217,29 +224,25 @@ rho build -target <board> <node project>
 rho flash -target <board> -project <node project> <image>
 ```
 
-Before a Pico 2W is programmed, its page shows the boot-mode instruction and
-requires the acknowledgement. The platform flash entry:
+The commands are the ones the examples use:
 
-- attaches a Shared board to WSL for PICOBOOT,
+```sh
+rho build -target <board> <project>/boards/node_<number>
+rho flash -target <board> -project <project>/boards/node_<number> <image>
+```
+
+A flash waits on its board's card, with that board's instruction, until you say
+the board is in its programming mode — for a Pico 2 W, BOOTSEL: hold BOOT, tap
+RST, release RST, then BOOT. The platform's flash entry then:
+
+- shares the board with WSL when Windows has not yet (Windows asks an
+  administrator once) and attaches it,
 - uses passwordless `sudo` when it is already available,
 - re-attaches the board after the reboot into BOOTSEL,
 - falls back to the bootrom's drive.
 
-The console follows the action over Server-Sent Events. Each action has its own
-progress file, so a previous run cannot replay into a new one. The console keeps
-the latest line in view until you scroll away and has **Clear console**. Long
-actions are not cut off by a server write or read deadline.
-
-## Verify
-
-Verification asks the gateway for its nodes and diagnostics:
-
-- the gateway must answer,
-- at least one reading must be present.
-
-A native gateway is verified at `127.0.0.1`; a board gateway at the address
-saved for it. If the gateway answers but no reading has arrived, the step says
-so; check the connection's parent serial port and that the node is running.
+When a flash succeeds the board runs what is planned and stops showing as out
+of date; a started gateway likewise.
 
 ## Where the lists come from
 
@@ -340,16 +343,22 @@ lines and the server-side is reset before each action.
 - **Gateway answers but no readings**: the board is running but its serial path
   changed. A Pico's USB CDC is renumbered by a flash; the Mesh app uses its
   stable `/dev/serial/by-id/...` path and attaches a Shared Pico to WSL.
-- **Pico will not program**: put it in BOOTSEL (hold BOOT, tap RST/EN, release),
-  tick the acknowledgement, and press Program. The page detects when the board
-  is already in BOOTSEL.
+- **Pico will not program**: put it in BOOTSEL (hold BOOT, tap RST, release
+  RST, then BOOT), then press **The board is ready: flash it** on its flash job.
+  Under WSL the flash shares and attaches the board; if Windows asks for an
+  administrator, allow it once. The job's log says which way it was written.
+- **A board build stops at the foreign interface or the target**: the
+  `rho-cimport` and `rho-target` components installed are older than the
+  board's manifest, which names dependencies under `${ROBOHUB_WORKSPACE}`.
+  Install the current ones from the registry and enable them
+  (`rho module install rho-target@<version>`, then `rho module enable`).
 - **FAULT temperature**: the node is heard but the sensor is not answering.
   Check the DS18B20 wiring (GP28, 3V3, GND) and its 4.7 kΩ pull-up. The node
   retries the sensor every 5 seconds.
 - **The page looks stale after a rebuild**: hard-refresh the browser and restart
   the Mesh process. Templates are embedded in the binary.
 - **The native gateway address**: `127.0.0.1` on the Mesh host, and the
-  host's network address for another machine. The dashboard shows both.
+  host's network address for another machine.
 
 ## Tests
 
@@ -357,12 +366,14 @@ lines and the server-side is reset before each action.
 rho test .
 ```
 
-The Rho unit suite checks the wizard's string helpers. The smoke suite builds
-Mesh, walks its pages over HTTP, saves and accepts a two-node
-topology, edits a connection, creates, renames and deletes a project, checks the
-locked tree, and reads the event stream.
-
-
+The Rho unit suites check the string helpers and the domain: the plan as text,
+the transport rule, and the signatures that say what a board's image is built
+from. The smoke suite builds Mesh and walks it over HTTP: a mesh planned in
+place (gateway, boards, modules, links), the bus plan and its conflicts, the
+plan's revisions, numbers kept across a delete, the old addresses, the fleet
+and its ports, editing with stale saves refused, a native gateway started as a
+job and found online, and a Pico 2 W board built in the background with its
+flash waiting for BOOTSEL.
 
 ### Gateway outage behaviour
 

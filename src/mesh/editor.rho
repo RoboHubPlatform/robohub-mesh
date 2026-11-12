@@ -389,9 +389,14 @@ fn editor_modules_tab(id: string, index: u32) string {
     if list == "" {
         list = "<li class=\"agora-seen\">No modules fitted.</li>"
     }
+    // The bus plan says which pins and addresses each module takes, so a
+    // conflict is seen before the board is built.
     var conflicts: string = ""
-    if node_bus_conflicts(index) {
-        conflicts = "<p class=\"notice bad\">Two modules want the same pins or address.</p>" + node_bus_html(index)
+    if node_module_children(index) != "" {
+        conflicts = node_bus_html(index)
+        if node_bus_conflicts(index) {
+            conflicts = "<p class=\"notice bad\">Two modules want the same pins or address; the second is left out of the image.</p>" + conflicts
+        }
     }
     return "<ul class=\"inspector-list\">" + list + "</ul>" + conflicts +
         editor_form(editor_node_action(id, index), "modules", index,
@@ -412,7 +417,11 @@ fn editor_data_tab(id: string, index: u32) string {
     if source != "" {
         facts = facts + agora_fact("Last seen", agora_age(agora_last_seen(readings, source)))
     }
-    return "<dl class=\"agora-facts\">" + facts + "</dl><div class=\"agora-chips\">" + chips + "</div>"
+    var actions: string = ""
+    if is_device_node(index) {
+        actions = mesh_device_actions(index)
+    }
+    return "<dl class=\"agora-facts\">" + facts + "</dl><div class=\"agora-chips\">" + chips + "</div>" + actions
 }
 
 // editor_delete_tab says what a delete takes with it and asks where what hangs
@@ -537,7 +546,6 @@ fn editor_new_inspector(id: string, kind: string, parent: string, notice: string
 
 // editor_publish sends the tree and the bar to every page open on the mesh.
 fn editor_publish(id: string) void {
-    mesh_event_tree()
     agora_publish(agora_events_file(id), project_location(id) + "/agora-last.jsonl", agora_snapshot(id))
 }
 
