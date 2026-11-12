@@ -26,6 +26,18 @@ one active.
 When the keeper started the application, the top bar also has **Keeper**, which
 returns to the keeper that launched it.
 
+## Signing in
+
+Mesh trusts sessions and tickets the keeper issues. Started by the keeper, it
+fetches the keeper's public key from the keeper on its machine; started
+elsewhere, it is told where the keeper is with `RHO_AUTH_URL`, sends a person
+there to sign in, and fetches the key from `<RHO_AUTH_URL>/auth/public-key`,
+keeping a copy so a keeper that is briefly down locks nobody out.
+
+Without a keeper, `RHO_AUTH_STANDALONE=1 ./build/mesh` runs Mesh on its own: it
+answers requests from its own machine as the local user and refuses any from
+another machine or through a proxy.
+
 ## Projects
 
 A mesh is saved as a **project**: a folder in a workspace.
@@ -34,7 +46,8 @@ A mesh is saved as a **project**: a folder in a workspace.
 |---|---|
 | Default workspace | `~/.rho/mesh/projects` |
 | Override | `ROBOHUB_MESH_PROJECTS` |
-| Project settings | `<workspace>/<project>/project.txt` |
+| Project plan | `<workspace>/<project>/plan.yml`, earlier revisions under `revisions/` |
+| Fleet (areas and ports per mesh) | `<state>/fleet.yml` |
 | Current project pointer | `RHO_KEEPER_STATE_DIR/current-project.txt` |
 
 A project's folder holds its plan, network, build and verify state. Renaming a
