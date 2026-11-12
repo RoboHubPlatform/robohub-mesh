@@ -59,8 +59,24 @@ fn agora_project_ids() string {
 
 // agora_gateway_kind is where a mesh's gateway runs: "native" on this machine,
 // a board name, or "" when none is planned.
+// A plan that names no gateway has it on this machine, as everywhere else in
+// Mesh: its tree starts at "This host (native)".
 fn agora_gateway_kind(id: string) string {
-    return state_value_in(project_file(id), "gateway")
+    let kind: string = state_value_in(project_file(id), "gateway")
+    if kind == "" {
+        return "native"
+    }
+    return kind
+}
+
+// agora_gateway_started is whether a mesh's gateway is one anything should
+// expect to answer. A native gateway runs only when Mesh started it, which the
+// process id beside the project says; a board's runs on the board.
+fn agora_gateway_started(id: string) bool {
+    if agora_gateway_kind(id) != "native" {
+        return true
+    }
+    return rho_path_exists(fleet_pid_file(id))
 }
 
 fn agora_gateway_host(id: string) string {
@@ -88,6 +104,8 @@ fn agora_check_health(id: string) void {
         state = "offline"
         if gateway_reachable_for(kind, agora_gateway_host(id), agora_gateway_port(id)) {
             state = "online"
+        } else if !agora_gateway_started(id) {
+            state = "stopped"
         }
     }
     let now: u32 = mesh_now_seconds()
@@ -100,7 +118,8 @@ fn agora_check_health(id: string) void {
 }
 
 // agora_health is a mesh's gateway state as last checked: "online", "offline",
-// "none" (no gateway planned) or "unknown" (not checked yet).
+// "stopped" (a native gateway Mesh has not started), "none" (no gateway
+// planned) or "unknown" (not checked yet).
 fn agora_health(id: string) string {
     let state: string = field(rho_read_text(agora_health_file(id)), 0)
     if state == "" {
@@ -521,8 +540,15 @@ fn agora_bar(id: string) string {
     } else if health == "offline" {
         live = "<span class=\"agora-state down\">gateway not answering for " +
             rho_str_slice(agora_age(agora_health_since(id)), 0, u32(rho_strlen(agora_age(agora_health_since(id)))) - 4) + "</span>"
+    } else if health == "stopped" {
+        live = "<span class=\"agora-state quiet\">gateway not started</span>"
     } else if health == "none" {
         live = "<span class=\"agora-state planned\">no gateway planned</span>"
+    }
+    if rho_str_eq(state_value_in(project_file(id), "status.gateway"), "failed") {
+        live = live + " <span class=\"agora-state down\">" +
+            escape_html(state_value_in(project_file(id), "message.build")) +
+            " <a href=\"/mesh/build/gateway?project=" + escape_html(id) + "\">The output</a></span>"
     }
     var stale: string = ""
     let count: u32 = agora_out_of_date()
@@ -532,9 +558,31 @@ fn agora_bar(id: string) string {
         stale = "<span class=\"agora-pill\">" + rho_int_to_str(count) + " boards need building</span>"
     }
     return "<strong class=\"agora-name\">" + escape_html(project_name(id)) + "</strong> " + live +
+        " " + agora_gateway_actions(id, health) +
         " <span class=\"agora-pill\">area " + escape_html(project_area_id(project_file(id))) + "</span> " + stale +
         " <span class=\"agora-links\"><a href=\"/mesh/plan?project=" + escape_html(id) + "\">Edit the plan</a> · " +
         "<a href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a> · <a href=\"/mesh/fleet\">Fleet</a></span>"
+}
+
+// agora_gateway_actions are the controls of a mesh's gateway. A native one is
+// built from the gateway's sources and started here; a board's is built and
+// programmed on the gateway's build page.
+fn agora_gateway_actions(id: string, health: string) string {
+    if agora_gateway_kind(id) != "native" {
+        return "<a class=\"button quiet\" href=\"/mesh/build/gateway?project=" + escape_html(id) +
+            "\">Build and program the gateway</a>"
+    }
+    let project: string = "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
+        "<input type=\"hidden\" name=\"return\" value=\"agora\">"
+    var label: string = "Build and start the gateway"
+    var stop: string = ""
+    if health == "online" || health == "offline" {
+        label = "Rebuild and restart the gateway"
+        stop = "<form class=\"agora-action\" method=\"post\" action=\"/mesh/gateway/stop\">" + project +
+            "<button type=\"submit\" class=\"quiet\">Stop</button></form>"
+    }
+    return "<form class=\"agora-action\" method=\"post\" action=\"/mesh/gateway/restart\">" + project +
+        "<button type=\"submit\">" + label + "</button></form>" + stop
 }
 
 // agora_strip is the mesh's activity: its faults, and where its steps are.
@@ -555,7 +603,8 @@ fn agora_strip(id: string) string {
             continue
         }
         faults = faults + "<span class=\"agora-fault\">" + escape_html(agora_tab(line, 1)) + " · " +
-            escape_html(agora_tab(line, 3)) + " · " + escape_html(agora_tab(line, 2)) + "</span>"
+            escape_html(agora_fault_text(agora_tab(line, 3))) + " · " +
+            agora_ms_age(agora_tab(line, 2)) + "</span>"
         count = count + 1
     }
     if count == 0 {
@@ -587,6 +636,34 @@ fn agora_tab(line: string, index: u32) string {
     return rho_str_slice(rest, 0, u32(tab))
 }
 
+// agora_ms_age is how long ago a time in milliseconds was. The milliseconds do
+// not fit the number a string is read as, so the seconds are read instead.
+fn agora_ms_age(ms: string) string {
+    let length: u32 = u32(rho_strlen(ms))
+    if length <= 3 {
+        return "just now"
+    }
+    return agora_age(u32(rho_int_from_str(rho_str_slice(ms, 0, length - 3))))
+}
+
+// agora_fault_text is a fault's message as a person reads it: a failed poll's
+// JSON answer, which a fault recorded before kept whole, is said in words.
+fn agora_fault_text(message: string) string {
+    let at: i32 = rho_str_index_of(message, "{\"")
+    if at < 0 {
+        return message
+    }
+    return rho_str_slice(message, 0, u32(at)) +
+        mesh_poll_error_text(rho_str_slice(message, u32(at), u32(rho_strlen(message)) - u32(at)))
+}
+
+fn agora_plural(count: string, one: string, many: string) string {
+    if count == "1" {
+        return "<span><b>1</b> " + one + "</span>"
+    }
+    return "<span><b>" + count + "</b> " + many + "</span>"
+}
+
 // agora_inspector is what is known of the selected node or the gateway, with
 // the pages that change it.
 fn agora_inspector(id: string, selected: string) string {
@@ -600,7 +677,7 @@ fn agora_inspector(id: string, selected: string) string {
             agora_fact("State", agora_health(id)) +
             agora_fact("Area", project_area_id(project_file(id))) +
             agora_fact("Uplink port", fleet_uplink_port(id)) +
-            "</dl><p><a href=\"/mesh/gateway?project=" + escape_html(id) + "\">Open the gateway's page</a></p>"
+            "</dl><div class=\"actions\">" + agora_gateway_actions(id, agora_health(id)) + "</div><p><a href=\"/mesh/gateway?project=" + escape_html(id) + "\">Open the gateway's page</a></p>"
     }
     let index: u32 = u32(rho_int_from_str(selected))
     if index < 1 || index > node_count() {
@@ -646,7 +723,7 @@ fn agora_fact(label: string, value: string) string {
     return "<dt>" + escape_html(label) + "</dt><dd>" + escape_html(shown) + "</dd>"
 }
 
-const AGORA_STYLE: string = "<style>.agora-bar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem}.agora-name{font-size:1.15rem}.agora-links{margin-left:auto}.agora{display:grid;grid-template-columns:minmax(0,1fr) 20rem;gap:1rem}@media (max-width:900px){.agora{grid-template-columns:1fr}}.agora-inspector{border:1px solid var(--line,#ccc);border-radius:10px;padding:.8rem 1rem;align-self:start}.agora-live{margin-top:.35rem;font-size:.82rem}.agora-state{display:inline-block;border-radius:999px;padding:.05rem .5rem;font-weight:600;font-size:.78rem}.agora-state.online{background:#d9f2e3;color:#145c32}.agora-state.down{background:#fbe0dc;color:#8a1f12}.agora-state.stale,.agora-state.quiet{background:#eceae4;color:#555}.agora-state.planned{background:#fff1cc;color:#7a5200}.agora-seen{color:#777;font-size:.8rem}.agora-chips{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.3rem}.agora-chip{border:1px solid var(--line,#ddd);border-radius:6px;padding:.05rem .4rem;font-size:.8rem}.agora-pill{border:1px solid var(--line,#ccc);border-radius:999px;padding:.05rem .55rem;font-size:.8rem}.agora-strip{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;margin-top:1rem;border-top:1px solid var(--line,#ddd);padding-top:.6rem;font-size:.85rem}.agora-fault{color:#8a1f12}.agora-facts{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;margin:.4rem 0}.agora-facts dt{color:#777}.agora-facts dd{margin:0}.fleet{display:grid;grid-template-columns:repeat(auto-fill,minmax(17rem,1fr));gap:1rem}.fleet-card{border:1px solid var(--line,#ccc);border-radius:12px;padding:.8rem 1rem;display:block;color:inherit;text-decoration:none}.fleet-card:hover{border-color:#888}.fleet-mini{list-style:none;padding:0;margin:.4rem 0;font-size:.82rem}.fleet-mini li{padding:.05rem 0}.fleet-side{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}@media (max-width:900px){.fleet-side{grid-template-columns:1fr}}</style>"
+const AGORA_STYLE: string = "<style>.agora-bar{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1rem}.agora-name{font-size:1.15rem}.agora-action{display:inline}.agora-links{margin-left:auto}.agora{display:grid;grid-template-columns:minmax(0,1fr) 20rem;gap:1rem}@media (max-width:900px){.agora{grid-template-columns:1fr}}.agora-inspector{border:1px solid var(--line,#ccc);border-radius:10px;padding:.8rem 1rem;align-self:start}.agora-live{margin-top:.35rem;font-size:.82rem}.agora-state{display:inline-block;border-radius:999px;padding:.05rem .5rem;font-weight:600;font-size:.78rem}.agora-state.online{background:#d9f2e3;color:#145c32}.agora-state.down{background:#fbe0dc;color:#8a1f12}.agora-state.stale,.agora-state.quiet{background:#eceae4;color:#555}.agora-state.planned{background:#fff1cc;color:#7a5200}.agora-seen{color:#777;font-size:.8rem}.agora-chips{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.3rem}.agora-chip{border:1px solid var(--line,#ddd);border-radius:6px;padding:.05rem .4rem;font-size:.8rem}.agora-pill{border:1px solid var(--line,#ccc);border-radius:999px;padding:.05rem .55rem;font-size:.8rem}.agora-strip{display:flex;flex-wrap:wrap;gap:.8rem;align-items:center;margin-top:1rem;border-top:1px solid var(--line,#ddd);padding-top:.6rem;font-size:.85rem}.agora-fault{color:#8a1f12}.agora-facts{display:grid;grid-template-columns:auto 1fr;gap:.2rem .8rem;margin:.4rem 0}.agora-facts dt{color:#777}.agora-facts dd{margin:0}</style>"
 
 // mesh_agora_page is the agora of the project the link names.
 fn mesh_agora_page(req: Request) Response {
@@ -717,29 +794,120 @@ fn fleet_counts(file: string) string {
     return rho_int_to_str(boards) + "|" + rho_int_to_str(devices)
 }
 
-// fleet_mini is a mesh's tree in miniature: its boards and devices by name,
-// indented by depth.
-fn fleet_mini(file: string, parent: string, depth: u32) string {
-    if depth > 6 {
-        return ""
-    }
+// fleet_children are the rows whose parent is `parent`, as "index\n" lines.
+fn fleet_children(file: string, parent: string) string {
     var out: string = ""
     let count: u32 = project_node_count_at(file)
     var index: u32 = 1
     while index <= count {
-        let kind: string = project_node_value(file, index, "kind", "compute")
-        if kind != "module" && project_node_value(file, index, "parent", "gateway") == parent {
-            var glyph: string = "▣"
-            if kind == "device" {
-                glyph = "◇"
-            }
-            out = out + "<li style=\"padding-left:" + rho_int_to_str(depth) + "rem\">" + glyph + " " +
-                escape_html(project_node_value(file, index, "name", "Node " + rho_int_to_str(index))) + "</li>" +
-                fleet_mini(file, "node." + rho_int_to_str(index), depth + 1)
+        if project_node_value(file, index, "parent", "gateway") == parent {
+            out = out + rho_int_to_str(index) + "\n"
         }
         index = index + 1
     }
     return out
+}
+
+fn fleet_line_count(lines: string) u32 {
+    var count: u32 = 0
+    var rest: string = lines
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        if at < 0 {
+            return count + 1
+        }
+        count = count + 1
+        rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+    }
+    return count
+}
+
+fn fleet_line(lines: string, wanted: u32) string {
+    var rest: string = lines
+    var at_line: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if at_line == wanted {
+            return line
+        }
+        at_line = at_line + 1
+    }
+    return ""
+}
+
+// fleet_kind_colour is the colour a row is drawn in: the gateway gold, a board
+// blue, a device teal, a module violet, and everything grey while the gateway
+// is down.
+fn fleet_kind_colour(kind: string, down: bool) string {
+    if down {
+        return "#5a5f5c"
+    }
+    if kind == "device" {
+        return "#79c7bd"
+    }
+    if kind == "module" {
+        return "#c3aef0"
+    }
+    return "#8ab4e8"
+}
+
+// fleet_tree_svg is a mesh's tree drawn small: the gateway at the top, what
+// hangs from it below with the links between, and under each of those what
+// hangs from it in turn.
+fn fleet_tree_svg(id: string, down: bool) string {
+    let file: string = project_file(id)
+    let top: string = fleet_children(file, "gateway")
+    let n: u32 = fleet_line_count(top)
+    var lines: string = ""
+    var dots: string = ""
+    var gateway_colour: string = "#e4b866"
+    if down {
+        gateway_colour = "#5a5f5c"
+    }
+    var stroke: string = "rgba(244,239,228,.3)"
+    if down {
+        stroke = "rgba(244,239,228,.18)"
+    }
+    var i: u32 = 0
+    while i < n {
+        let index: u32 = u32(rho_int_from_str(fleet_line(top, i)))
+        let x: u32 = (200 * (2 * i + 1)) / (2 * n)
+        lines = lines + "M100 20 V30 H" + rho_int_to_str(x) + " V44 "
+        dots = dots + "<circle cx=\"" + rho_int_to_str(x) + "\" cy=\"50\" r=\"5\" fill=\"" +
+            fleet_kind_colour(project_node_value(file, index, "kind", "compute"), down) + "\"><title>" +
+            escape_html(project_node_value(file, index, "name", "Node " + rho_int_to_str(index))) + "</title></circle>"
+        let below: string = fleet_children(file, "node." + rho_int_to_str(index))
+        var m: u32 = fleet_line_count(below)
+        if m > 4 {
+            m = 4
+        }
+        var j: u32 = 0
+        while j < m {
+            let child: u32 = u32(rho_int_from_str(fleet_line(below, j)))
+            // Up to four under each, side by side under their parent.
+            let cx: u32 = u32(i32(x) + i32(9 * j) - i32((9 * (m - 1)) / 2))
+            lines = lines + "M" + rho_int_to_str(x) + " 55 V59 H" + rho_int_to_str(cx) + " V62 "
+            dots = dots + "<circle cx=\"" + rho_int_to_str(cx) + "\" cy=\"65\" r=\"3\" fill=\"" +
+                fleet_kind_colour(project_node_value(file, child, "kind", "compute"), down) + "\"><title>" +
+                escape_html(project_node_value(file, child, "name", "Node " + rho_int_to_str(child))) + "</title></circle>"
+            j = j + 1
+        }
+        i = i + 1
+    }
+    var path: string = ""
+    if lines != "" {
+        path = "<g stroke=\"" + stroke + "\" stroke-width=\"1.2\" fill=\"none\"><path d=\"" + lines + "\"/></g>"
+    }
+    return "<svg viewBox=\"0 0 200 74\" aria-hidden=\"true\">" + path +
+        "<circle cx=\"100\" cy=\"14\" r=\"6\" fill=\"" + gateway_colour + "\"><title>Gateway</title></circle>" +
+        dots + "</svg>"
 }
 
 fn fleet_card(id: string) string {
@@ -747,12 +915,18 @@ fn fleet_card(id: string) string {
     let counts: string = fleet_counts(file)
     let readings: string = agora_readings(id)
     let health: string = agora_health(id)
+    var css: string = ""
     var state: string = "<span class=\"agora-state quiet\">not checked yet</span>"
+    var down: bool = false
     if health == "online" {
         state = "<span class=\"agora-state online\">online</span>"
     } else if health == "offline" {
-        state = "<span class=\"agora-state down\">gateway down</span> <span class=\"agora-seen\">since " +
-            agora_age(agora_health_since(id)) + "</span>"
+        css = " down"
+        down = true
+        state = "<span class=\"agora-state down\">gateway down</span>"
+    } else if health == "stopped" {
+        down = true
+        state = "<span class=\"agora-state quiet\">gateway not started</span>"
     } else if health == "none" {
         state = "<span class=\"agora-state planned\">no gateway</span>"
     }
@@ -760,14 +934,28 @@ fn fleet_card(id: string) string {
     let newest: u32 = agora_newest(readings)
     if newest > 0 {
         last = "last reading " + agora_age(newest)
+    } else if health == "offline" {
+        last = "since " + agora_age(agora_health_since(id))
     }
-    return "<a class=\"fleet-card\" href=\"" + agora_url(id, "") + "\"><strong>" + escape_html(project_name(id)) +
-        "</strong> <span class=\"agora-pill\">area " + escape_html(project_area_id(file)) + "</span>" +
-        "<div class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</div>" +
-        "<div>" + field(counts, 0) + " boards · " + field(counts, 1) + " devices</div>" +
-        "<ul class=\"fleet-mini\"><li>⌂ Gateway</li>" + fleet_mini(file, "gateway", 1) + "</ul>" +
-        "<div class=\"agora-chips\">" + agora_chips(readings, "", 2) + "</div>" +
-        "<div class=\"agora-live\">" + state + " <span class=\"agora-seen\">" + last + "</span></div></a>"
+    var stale: string = ""
+    if rho_str_eq(id, current_project()) {
+        let out_of_date: u32 = agora_out_of_date()
+        if out_of_date > 0 {
+            css = css + " warn"
+            stale = "<span><b>" + rho_int_to_str(out_of_date) + "</b> to build</span>"
+        }
+    }
+    var boards: string = agora_plural(field(counts, 0), "node", "nodes")
+    if field(counts, 1) != "0" {
+        boards = boards + agora_plural(field(counts, 1), "device", "devices")
+    }
+    return "<a class=\"mesh-card" + css + "\" href=\"" + agora_url(id, "") + "\">" +
+        "<div class=\"row\"><span class=\"name\">" + escape_html(project_name(id)) + "</span>" +
+        "<span class=\"area\">area " + escape_html(project_area_id(file)) + "</span></div>" +
+        "<div class=\"sub\">" + escape_html(agora_host_label(id)) + "</div>" +
+        "<div class=\"mini-tree\">" + fleet_tree_svg(id, down) + "</div>" +
+        "<div class=\"stats\">" + boards + stale + agora_chips(readings, "", 2) + "</div>" +
+        "<div class=\"row\">" + state + "<span class=\"sub\">" + last + "</span></div></a>"
 }
 
 fn fleet_cards() string {
@@ -786,10 +974,8 @@ fn fleet_cards() string {
             out = out + fleet_card(id)
         }
     }
-    if out == "" {
-        return "<p>No meshes yet. <a href=\"/mesh#new-project\">Create one</a>.</p>"
-    }
-    return out
+    return out + "<a class=\"new-mesh\" href=\"/mesh#new-project\">+ New mesh<br>" +
+        "<small>its own area, ports and gateway</small></a>"
 }
 
 // fleet_summary is the fleet's header line: how many meshes, how many hosts,
@@ -822,10 +1008,23 @@ fn fleet_summary() string {
             host_count = host_count + 1
         }
     }
-    return "<strong class=\"agora-name\">Fleet</strong> <span class=\"agora-seen\">" + rho_int_to_str(meshes) +
-        " meshes · " + rho_int_to_str(host_count) + " hosts</span> <span class=\"agora-pill\">" +
-        rho_int_to_str(online) + " of " + rho_int_to_str(meshes) + " gateways online</span>" +
-        " <span class=\"agora-links\"><a href=\"/mesh#new-project\">New mesh</a></span>"
+    var live: string = "live"
+    if online < meshes {
+        live = "quiet"
+    }
+    var mesh_word: string = " meshes · "
+    if meshes == 1 {
+        mesh_word = " mesh · "
+    }
+    var host_word: string = " hosts"
+    if host_count == 1 {
+        host_word = " host"
+    }
+    return "<span class=\"crumbs\"><b>Fleet</b> · " + rho_int_to_str(meshes) + mesh_word +
+        rho_int_to_str(host_count) + host_word + "</span>" +
+        "<span class=\"chip " + live + "\">" + rho_int_to_str(online) + " of " + rho_int_to_str(meshes) +
+        " gateways online</span><span class=\"spacer\"></span>" +
+        "<a class=\"button quiet\" href=\"/mesh#new-project\">New mesh</a>"
 }
 
 // fleet_inbox is the faults of every mesh, newest first per mesh, each opening
@@ -846,8 +1045,9 @@ fn fleet_inbox() string {
             continue
         }
         if agora_health(id) == "offline" {
-            out = out + "<li><a href=\"" + agora_url(id, "gateway") + "\"><strong>" + escape_html(project_name(id)) +
-                "</strong> · gateway not answering</a> <span class=\"agora-seen\">" + agora_age(agora_health_since(id)) + "</span></li>"
+            out = out + "<a class=\"item bad\" href=\"" + agora_url(id, "gateway") + "\"><b>" + escape_html(project_name(id)) +
+                " · gateway not answering</b><span>" + agora_age(agora_health_since(id)) +
+                " · opens the mesh with the gateway selected</span></a>"
         }
         var faults: string = telemetry_fault_rows(id, 3)
         while faults != "" {
@@ -860,16 +1060,16 @@ fn fleet_inbox() string {
                 faults = rho_str_slice(faults, u32(end) + 1, u32(rho_strlen(faults)) - u32(end) - 1)
             }
             if line != "" {
-                out = out + "<li><a href=\"" + agora_url(id, "") + "\"><strong>" + escape_html(project_name(id)) +
-                    "</strong> · " + escape_html(agora_tab(line, 3)) + "</a> <span class=\"agora-seen\">" +
-                    escape_html(agora_tab(line, 2)) + "</span></li>"
+                out = out + "<a class=\"item bad\" href=\"" + agora_url(id, "") + "\"><b>" + escape_html(project_name(id)) +
+                    " · " + escape_html(agora_fault_text(agora_tab(line, 3))) + "</b><span>" +
+                    agora_ms_age(agora_tab(line, 2)) + "</span></a>"
             }
         }
     }
     if out == "" {
-        return "<h3>Across all meshes</h3><p class=\"agora-seen\">Nothing needs attention.</p>"
+        return "<h5>Across all meshes</h5><div class=\"item ok\"><b>Nothing needs attention.</b></div>"
     }
-    return "<h3>Across all meshes</h3><ul>" + out + "</ul>"
+    return "<h5>Across all meshes</h5>" + out
 }
 
 // fleet_hosts lists the machines the meshes' gateways run on, with each mesh's
@@ -894,8 +1094,8 @@ fn fleet_hosts() string {
         if agora_gateway_kind(id) == "native" {
             host = "this machine"
         }
-        lines = lines + host + "\t" + "<li><strong>" + escape_html(host) + "</strong> · " + escape_html(project_name(id)) +
-            " :" + escape_html(agora_gateway_port(id)) + " · uplink :" + escape_html(fleet_uplink_port(id)) + "</li>\n"
+        lines = lines + host + "\t" + "<div class=\"item\"><b>" + escape_html(host) + "</b><span>" + escape_html(project_name(id)) +
+            " :" + escape_html(agora_gateway_port(id)) + " · uplink :" + escape_html(fleet_uplink_port(id)) + "</span></div>\n"
         if rho_str_index_of(hosts, "|" + host + "|") < 0 {
             hosts = hosts + "|" + host + "|"
         }
@@ -917,24 +1117,68 @@ fn fleet_hosts() string {
         }
     }
     if out == "" {
-        return "<h3>Hosts</h3><p class=\"agora-seen\">No gateway is planned yet.</p>"
+        return "<h5>Hosts</h5><div class=\"item\"><span>No gateway is planned yet.</span></div>"
     }
-    return "<h3>Hosts</h3><ul>" + out + "</ul>"
+    return "<h5>Hosts</h5>" + out
+}
+
+// fleet_activity is the fleet's foot: how many meshes are down, and how many
+// faults are open across them.
+fn fleet_activity() string {
+    var down: u32 = 0
+    var faults: u32 = 0
+    var meshes: u32 = 0
+    var rest: string = agora_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id == "" {
+            continue
+        }
+        meshes = meshes + 1
+        if agora_health(id) == "offline" {
+            down = down + 1
+        }
+        faults = faults + fleet_line_count(telemetry_fault_rows(id, 100))
+    }
+    var out: string = "<span>" + rho_int_to_str(meshes) + " meshes</span>"
+    if meshes == 1 {
+        out = "<span>1 mesh</span>"
+    }
+    if down == 1 {
+        out = out + "<span class=\"fault\">1 mesh down</span>"
+    } else if down > 1 {
+        out = out + "<span class=\"fault\">" + rho_int_to_str(down) + " meshes down</span>"
+    }
+    if faults > 0 {
+        out = out + "<span class=\"fault\">" + rho_int_to_str(faults) + " open faults</span>"
+    }
+    return out + "<span class=\"spacer\"></span><a href=\"/faults\">Faults</a>"
 }
 
 fn fleet_regions() string {
     return mesh_event_json("fleet-bar", fleet_summary()) +
         mesh_event_json("fleet-cards", fleet_cards()) +
-        mesh_event_json("fleet-side", fleet_inbox() + fleet_hosts())
+        mesh_event_json("fleet-side", fleet_inbox() + fleet_hosts()) +
+        mesh_event_json("fleet-activity", fleet_activity())
 }
+
+const FLEET_STYLE: string = "<style>.fleet-panel{display:grid;grid-template-rows:auto 1fr auto;min-height:calc(100vh - 9rem);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--panel-strong)}.fleet-panel .fbar{display:flex;gap:.8rem;align-items:center;padding:.7rem 1.1rem;border-bottom:1px solid var(--line);background:rgba(7,15,19,.6)}.fleet-panel .crumbs{font-size:.9rem;color:var(--muted)}.fleet-panel .crumbs b{color:var(--ink)}.fleet-panel .chip{font-size:.76rem;border-radius:999px;padding:.12rem .6rem;border:1px solid var(--line)}.fleet-panel .chip.live{color:var(--teal);border-color:rgba(121,199,189,.45);background:var(--accent-soft)}.fleet-panel .chip.quiet{color:var(--muted)}.fleet-panel .spacer{flex:1}.fleet-body{display:grid;grid-template-columns:minmax(0,1fr) 300px;min-height:0}@media (max-width:900px){.fleet-body{grid-template-columns:1fr}}.fleet-grid{padding:22px;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:18px;align-content:start;background-image:radial-gradient(rgba(244,239,228,.06) 1px,transparent 1px);background-size:22px 22px}.mesh-card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px;display:grid;gap:9px;color:inherit;text-decoration:none}.mesh-card:hover{border-color:var(--line-strong)}.mesh-card.warn{border-color:rgba(240,197,106,.45)}.mesh-card.down{border-color:rgba(240,138,126,.5)}.mesh-card .row{display:flex;justify-content:space-between;align-items:center;gap:8px}.mesh-card .name{font:500 1.08rem/1.2 var(--serif);color:var(--ink)}.mesh-card .sub{font-size:.74rem;color:var(--faint)}.mini-tree{height:74px;border-radius:9px;background:rgba(244,239,228,.03);border:1px solid rgba(244,239,228,.08);display:grid;place-items:center}.mini-tree svg{width:100%;height:74px}.mesh-card .stats{display:flex;gap:12px;font-size:.74rem;color:var(--muted);flex-wrap:wrap;align-items:center}.mesh-card .stats b{color:var(--ink);font-weight:600}.mesh-card .area{font:700 .62rem/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--blue);border:1px solid rgba(138,180,232,.35);padding:3px 6px;border-radius:5px}.new-mesh{border:1.5px dashed rgba(244,239,228,.22);border-radius:14px;display:grid;place-items:center;color:var(--faint);font-size:.84rem;min-height:150px;text-align:center;padding:12px}.new-mesh:hover{color:var(--ink);border-color:var(--line-strong)}.inbox{border-left:1px solid var(--line);background:rgba(7,15,19,.78);padding:14px 16px;display:grid;gap:10px;align-content:start}.inbox h5{margin:.2rem 0 0;font:700 .66rem/1 var(--sans);letter-spacing:.13em;text-transform:uppercase;color:var(--faint)}.inbox .item{display:grid;gap:2px;font-size:.78rem;padding:8px 10px;border-radius:9px;background:rgba(244,239,228,.04);color:var(--ink)}.inbox .item span{color:var(--faint);font-size:.72rem}.inbox .item.bad{border-left:3px solid var(--stop)}.inbox .item.job{border-left:3px solid var(--gold)}.inbox .item.ok{border-left:3px solid var(--teal)}.fleet-panel .activity{display:flex;gap:22px;align-items:center;padding:9px 18px;border-top:1px solid var(--line);background:rgba(7,15,19,.82);font-size:.78rem;color:var(--muted)}.fleet-panel .activity .fault{color:var(--stop)}.fleet-panel .activity .spacer{flex:1}</style>"
 
 fn mesh_fleet_page(req: Request) Response {
     ensure_wizard_dir()
-    let body: string = AGORA_STYLE +
-        "<div hx-ext=\"sse\" sse-connect=\"/mesh/fleet/events\">" +
-        "<div class=\"agora-bar\" sse-swap=\"fleet-bar\" hx-swap=\"innerHTML\">" + fleet_summary() + "</div>" +
-        "<div class=\"fleet\" sse-swap=\"fleet-cards\" hx-swap=\"innerHTML\">" + fleet_cards() + "</div>" +
-        "<div class=\"fleet-side\" sse-swap=\"fleet-side\" hx-swap=\"innerHTML\">" + fleet_inbox() + fleet_hosts() + "</div></div>"
+    let body: string = AGORA_STYLE + FLEET_STYLE +
+        "<div class=\"fleet-panel\" hx-ext=\"sse\" sse-connect=\"/mesh/fleet/events\">" +
+        "<div class=\"fbar\" sse-swap=\"fleet-bar\" hx-swap=\"innerHTML\">" + fleet_summary() + "</div>" +
+        "<div class=\"fleet-body\"><div class=\"fleet-grid\" sse-swap=\"fleet-cards\" hx-swap=\"innerHTML\">" + fleet_cards() + "</div>" +
+        "<aside class=\"inbox\" sse-swap=\"fleet-side\" hx-swap=\"innerHTML\">" + fleet_inbox() + fleet_hosts() + "</aside></div>" +
+        "<div class=\"activity\" sse-swap=\"fleet-activity\" hx-swap=\"innerHTML\">" + fleet_activity() + "</div></div>"
     return page(req, "Fleet", body)
 }
 

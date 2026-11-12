@@ -272,3 +272,13 @@ answer kept beside the project, so drawing a page no longer waits on a gateway.
 A mesh gets its area and ports when it is created. The smoke test has Mesh start
 a native gateway on a port of the test's choosing and checks that the agora and
 the fleet see it online and that stopping it ends that process.
+
+## [0.8.1] - 2026-11-12
+
+The agora starts, rebuilds and stops a native gateway, and a restart builds it
+from its sources every time instead of starting the last build. A plan that
+names no gateway is a native one in the agora as everywhere else, and a native
+gateway Mesh has not started is shown as not started rather than polled and
+reported unreachable. Faults say what failed in words, with their age. The
+fleet is one panel as proposed: a card per mesh with its tree drawn, the inbox
+and hosts beside, and the fleet's activity below.

@@ -3421,7 +3421,17 @@ fn mesh_gateway_restart(req: Request) Response {
     // A restart builds before it starts. Pin the step so the build output
     // lands in the file the dashboard reads when the action fails.
     save_setting("current_step", "build")
-    let code: u32 = handler_program_gateway()
+    // A native gateway is built from its sources every time: a restart that
+    // reused the last build left a changed gateway running as it was.
+    var code: u32 = 0
+    if default_value("gateway", "native") == "native" {
+        code = handler_build_gateway()
+        if code == 0 {
+            code = handler_start_gateway()
+        }
+    } else {
+        code = handler_program_gateway()
+    }
     if code == 0 {
         if default_value("gateway", "native") == "native" {
             save_setting("status.gateway", "running")
@@ -3436,6 +3446,17 @@ fn mesh_gateway_restart(req: Request) Response {
         save_setting("message.build", "Gateway restart failed (build or start exited " +
             rho_int_to_str(code) + "). The output is below.")
         error("mesh", "gateway restart failed with status " + rho_int_to_str(code))
+    }
+    return mesh_gateway_return(req)
+}
+
+// mesh_gateway_return goes back to the page a gateway control was on, with the
+// gateway's state checked again so that page shows what was just done.
+fn mesh_gateway_return(req: Request) Response {
+    let id: string = current_project()
+    agora_check_health(id)
+    if rho_str_eq(form_value(request_body(req), "return"), "agora") {
+        return mesh_redirect("/mesh/agora?project=" + id)
     }
     return mesh_redirect("/mesh")
 }
@@ -3470,7 +3491,7 @@ fn mesh_gateway_stop(req: Request) Response {
     save_setting("step_verify", "pending")
     save_setting("message.build", "Gateway stopped.")
     info("mesh", "gateway stopped")
-    return mesh_redirect("/mesh")
+    return mesh_gateway_return(req)
 }
 
 fn mesh_page(req: Request) Response {

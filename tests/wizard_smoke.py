@@ -585,10 +585,10 @@ def main() -> int:
             inspected = get(base, "/mesh/agora?project=default&node=1")
             assert_contains(inspected, ["Relay one", "Edit this node", "Board", "pico2w", "agora-node-1"], "agora inspector")
             fleet_page = get(base, "/mesh/fleet")
-            assert_contains(fleet_page, ["Fleet", "Relay one", "Hosts", "192.0.2.10", "gateways online",
+            assert_contains(fleet_page, ["Fleet", "<title>Relay one</title>", "<svg", "Hosts", "192.0.2.10", "gateways online", "New mesh",
                                          "sse-connect=\"/mesh/fleet/events\""], "fleet view")
             for path, events in (("/mesh/agora/events?project=default", ["event: agora-bar", "event: agora-tree", "event: agora-strip"]),
-                                 ("/mesh/fleet/events", ["event: fleet-bar", "event: fleet-cards", "event: fleet-side"])):
+                                 ("/mesh/fleet/events", ["event: fleet-bar", "event: fleet-cards", "event: fleet-side", "event: fleet-activity"])):
                 request = urllib.request.Request(base + path)
                 request.add_header("Authorization", f"Bearer {TOKEN}")
                 with urllib.request.urlopen(request, timeout=10) as stream:
@@ -621,7 +621,7 @@ def main() -> int:
             deadline = time.time() + 20
             while not health.exists() and time.time() < deadline:
                 time.sleep(0.5)
-            if not health.exists() or health.read_text().split("|")[0] not in ("online", "offline", "none"):
+            if not health.exists() or health.read_text().split("|")[0] not in ("online", "offline", "stopped", "none"):
                 raise AssertionError("the background did not check the gateway's health")
 
             # Removing a node moves the rows after it up in one write, and each
@@ -789,8 +789,29 @@ def main() -> int:
             post(base, "/mesh/accept", {"action": "accept"})
             post(base, "/mesh/network/gateway",
                  {"action": "save_gateway", "gateway_host": "127.0.0.1", "rest_port": str(live_port)})
-            # A restart builds the gateway before it starts it.
-            post(base, "/mesh/gateway/restart", {}, timeout=300)
+            # A native gateway Mesh has not started is not down: the agora says it
+            # is not started and offers to start it, and no fault is raised.
+            live_health = Path(state) / "projects" / "Live-mesh" / "health.txt"
+            deadline = time.time() + 20
+            while time.time() < deadline and not (live_health.exists() and live_health.read_text().startswith("stopped|")):
+                time.sleep(0.5)
+            if not live_health.exists() or not live_health.read_text().startswith("stopped|"):
+                raise AssertionError("a native gateway never started is not shown as stopped: " +
+                                     (live_health.read_text() if live_health.exists() else "no health"))
+            assert_contains(get(base, "/mesh/agora?project=Live-mesh"),
+                            ["gateway not started", "Build and start the gateway", "action=\"/mesh/gateway/restart\""],
+                            "agora of a mesh whose gateway is not started")
+            if "gateway unreachable" in get(base, "/faults"):
+                raise AssertionError("a gateway nobody started was reported unreachable")
+            # A restart builds the gateway before it starts it, and returns to
+            # the agora it was asked from, showing the gateway online.
+            gateway_binary = PROJECTS / "robohub-gateway" / "build" / "robohub-gateway"
+            built_before = gateway_binary.stat().st_mtime if gateway_binary.exists() else 0
+            answered = post(base, "/mesh/gateway/restart", {"return": "agora"}, timeout=300)
+            assert_contains(answered, ["Live · gateway online", "Rebuild and restart the gateway"],
+                            "the agora after the gateway was started")
+            if not gateway_binary.exists() or gateway_binary.stat().st_mtime <= built_before:
+                raise AssertionError("starting the gateway did not build it")
             live_dir = Path(state) / "projects" / "Live-mesh"
             pid_file = live_dir / "gateway.pid"
             if "rest_port: \"" + str(live_port) + "\"" not in (live_dir / "plan.yml").read_text():
@@ -811,6 +832,14 @@ def main() -> int:
                             ["Live · gateway online", "this machine · native gateway · :" + str(live_port), "Live plug"],
                             "agora of a live mesh")
             assert_contains(get(base, "/mesh/fleet"), ["Live mesh", ":" + str(live_port)], "fleet with a live mesh")
+            # A restart of a running native gateway builds it again, rather than
+            # starting the last build, and replaces the process.
+            built_before = gateway_binary.stat().st_mtime
+            post(base, "/mesh/gateway/restart", {"return": "agora"}, timeout=300)
+            if gateway_binary.stat().st_mtime <= built_before:
+                raise AssertionError("restarting the gateway did not build it again")
+            pid = int(pid_file.read_text().strip())
+            LIVE_PIDS.append(pid)
             post(base, "/mesh/gateway/stop", {})
             deadline = time.time() + 5
             while time.time() < deadline:

@@ -280,9 +280,26 @@ fn mesh_gateway_failed(project: string, message: string) void {
     mesh_gateway_save(project, "last_error", message)
     if mesh_gateway_value(project, "fault_open") != "true" {
         ignore_u32(telemetry_fault_record(project, project + "@gateway", "gateway",
-            "ERROR", "gateway unreachable: " + message, 0, 0, 2, ""))
+            "ERROR", "gateway unreachable: " + mesh_poll_error_text(message), 0, 0, 2, ""))
         mesh_gateway_save(project, "fault_open", "true")
     }
+}
+
+// mesh_poll_error_text is what a failed poll says, in words: the "error" of
+// the JSON the poll answers, or the answer itself when it has none.
+fn mesh_poll_error_text(result: string) string {
+    let key: string = "\"error\":\""
+    let at: i32 = rho_str_index_of(result, key)
+    if at < 0 {
+        return result
+    }
+    let start: u32 = u32(at) + u32(rho_strlen(key))
+    let tail: string = rho_str_slice(result, start, u32(rho_strlen(result)) - start)
+    let end: i32 = rho_str_index_of(tail, "\"")
+    if end < 0 {
+        return tail
+    }
+    return rho_str_slice(tail, 0, u32(end))
 }
 
 fn mesh_gateway_ok(project: string) void {
@@ -315,6 +332,11 @@ fn telemetry_poll_once() void {
         }
         let url: string = mesh_project_gateway(id)
         if url == "" {
+            continue
+        }
+        // A native gateway Mesh has not started is not down; there is nothing
+        // to read, and no fault to raise about it.
+        if !agora_gateway_started(id) {
             continue
         }
         if !mesh_gateway_ready(id) {
@@ -829,7 +851,7 @@ fn mesh_fault_rows(project: string) string {
         out = out + template_fill(template_get("fault-row"),
             vars("id", id) + vars("severity", severity) +
             vars("severity_css", severity_css) + vars("created", created) +
-            vars("message", message) + vars("csrf", forms_csrf_field()))
+            vars("message", agora_fault_text(message)) + vars("csrf", forms_csrf_field()))
     }
     return out
 }
