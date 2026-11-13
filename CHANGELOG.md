@@ -426,3 +426,7 @@ Security fixes from the 2026-11 review.
 - curl is run with one argument per line and no shell (`rho_exec_args`): a client's callback URL, a device's address or a gateway URL can no longer add options. A callback is only http or https.
 - Client and token records are written readable by Mesh's user alone (0600). A client secret is 16 random bytes or registration is refused; the time-based fallback is gone, and the file openssl writes it to is emptied after reading.
 - `same_origin` refuses a form posted from another origin.
+
+## [0.18.2] - 2026-11-13
+
+The clock is read from the process (`rho_now_s`, rho 0.6.0) instead of from `date` written to a file and read back, which a request and the background loop could truncate under each other: entries dated 1970 and modes that expired at once. Built on provider-mesh 0.5.1 and rho-sql 0.2.1.

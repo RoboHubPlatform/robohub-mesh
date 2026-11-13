@@ -54,11 +54,7 @@ fn mesh_clients_file() string {
 }
 
 fn mesh_client_now() u32 {
-    let report: string = wizard_report("client-clock")
-    if rho_exec("date", "+%s", report) == 0 {
-        return rho_int_from_str(mesh_client_trim(rho_read_text(report)))
-    }
-    return 0
+    return rho_now_s()
 }
 
 // mesh_client_secret is 16 random bytes as hex, or "" when there is no source

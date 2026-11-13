@@ -238,9 +238,7 @@ fn telemetry_prune_once() void {
 }
 
 fn mesh_now_seconds() u32 {
-    let report: string = wizard_report("telemetry-now")
-    ignore_u32(rho_exec("date", "+%s", report))
-    return u32(rho_int_from_str(first_line(rho_read_text(report))))
+    return rho_now_s()
 }
 
 // Gateway health is a sidecar, not a key in the plan.

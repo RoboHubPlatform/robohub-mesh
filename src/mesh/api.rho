@@ -127,10 +127,8 @@ fn mesh_device_poll(req: Request) Response {
     if power != "" {
         save_setting("node." + rho_int_to_str(index) + ".last_value", power)
     }
-    let date_report: string = wizard_report("device-time")
-    ignore_u32(rho_exec("date", "+%Y-%m-%dT%H:%M:%S", date_report))
     save_setting("node." + rho_int_to_str(index) + ".last_checked",
-        first_line(rho_read_text(date_report)))
+        first_line(rho_exec_capture("date", "+%Y-%m-%dT%H:%M:%S\n")))
     save_setting("mesh_message", "Device read.")
     return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
 }

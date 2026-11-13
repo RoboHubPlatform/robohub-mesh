@@ -29,34 +29,14 @@ fn mesh_tokens_file(project: string) string {
 }
 
 fn mesh_token_now() u32 {
-    // The state directory and the report file are created on first use. A
-    // failed first redirect must not turn a fresh token into a 1970 token, so
-    // prepare the directory and retry the clock read.
-    ignore_u32(rho_exec("mkdir", "-p " + wizard_dir(), "/dev/null"))
-    var attempt: u32 = 0
-    while attempt < 3 {
-        let report: string = wizard_report("token-clock")
-        if rho_exec("date", "+%s", report) == 0 {
-            let value: u32 = rho_int_from_str(first_line(rho_read_text(report)))
-            if value > 0 {
-                return value
-            }
-        }
-        attempt = attempt + 1
-    }
-    return 0
+    return rho_now_s()
 }
 
 fn mesh_token_date(epoch: u32) string {
     if epoch == 0 {
         return "never"
     }
-    let report: string = wizard_report("token-date")
-    if rho_exec("date", "-d @" + rho_int_to_str(epoch) +
-            " \"+%Y-%m-%d %H:%M\"", report) == 0 {
-        return first_line(rho_read_text(report))
-    }
-    return ""
+    return first_line(rho_exec_capture("date", "-d\n@" + rho_int_to_str(epoch) + "\n+%Y-%m-%d %H:%M\n"))
 }
 
 fn mesh_token_line(name: string, token: string, created_s: u32, expires_s: u32,
