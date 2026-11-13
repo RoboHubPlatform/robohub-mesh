@@ -271,11 +271,8 @@ fn jobs_local_relay_key() string {
     if link_parent(current_project()) == "" {
         return ""
     }
-    let path: string = link_relay_key(current_project())
-    if path == "" {
-        return ""
-    }
-    return shell_quote(path)
+    // The path itself: link_env quotes it where it becomes part of a command.
+    return link_relay_key(current_project())
 }
 
 // jobs_record_shell is run_shell while a script is being recorded.

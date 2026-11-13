@@ -443,3 +443,7 @@ Access and housekeeping fixes from the 2026-11 review.
 - A page in the editor works on the mesh its address names, not the one last opened by any request.
 - Mesh's state keeps from growing: progress logs older than a week are removed, and a gateway's or a job runner's log keeps its last megabyte once it passes five; both are started appending, so trimming them under a running process is safe.
 - The smoke test checks that a ticket for another mesh is refused.
+
+## [0.18.5] - 2026-11-13
+
+A gateway started on this machine is given its key again. 0.18.1 quoted the key file's path a second time, so the gateway was handed a path with the quotes in it, read no key, and answered no board's hello: a sealed board was not heard. The key and relay-key paths are now plain values, quoted once where they become part of the command.

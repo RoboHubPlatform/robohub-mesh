@@ -305,12 +305,13 @@ fn mesh_gateway_key(project: string) string {
 }
 
 // mesh_gateway_key_path is the key file to hand a gateway started on this
-// machine, shell-quoted, or "" when no key could be made.
+// machine, or "" when no key could be made.
 fn mesh_gateway_key_path(project: string) string {
     if mesh_gateway_key(project) == "" {
         return ""
     }
-    return shell_quote(mesh_gateway_key_file(project))
+    // The path itself: gateway_env quotes what it puts in a command, once.
+    return mesh_gateway_key_file(project)
 }
 
 // mesh_node_uid is the id a planned board opens its session with: the node's

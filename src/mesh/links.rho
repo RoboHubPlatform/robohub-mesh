@@ -129,7 +129,7 @@ fn link_env(project: string, key_path: string) string {
         return ""
     }
     return " GATEWAY_MODE=relay PARENT_UPLINK=" + link_parent_uplink(project) +
-        " RELAY_UID=" + link_relay_uid(project) + " RELAY_KEY_FILE=" + key_path
+        " RELAY_UID=" + link_relay_uid(project) + " RELAY_KEY_FILE=" + shell_quote(key_path)
 }
 
 // link_listens is whether a mesh's gateway must listen on its uplink: a board
