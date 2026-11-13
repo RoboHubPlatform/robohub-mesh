@@ -362,3 +362,14 @@ gateway, as it runs and as it is planned. On a narrow screen the tree scrolls
 from its left, the tools sit above it, and the inspector folds to its title.
 The registry's lists are read at most every fifteen seconds, so a page that
 asks for them many times is quick.
+
+## [0.15.0] - 2026-11-13
+
+The activity strip shows a build's progress and the last job finished; the
+gateway's card counts its sealed links. A finished or failed job, and a flash
+waiting for the person, is a toast on every open page, through the shared
+notifications module. The pages around the agora — project settings, faults,
+the shared settings — have its buttons and say times as ages. The agora, the
+fleet and search are in the viewer's language for every whole label in the
+catalog (locales/phrases.<locale>.txt, Romanian first), including what the
+live stream redraws.

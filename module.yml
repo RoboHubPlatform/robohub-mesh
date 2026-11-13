@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.14.0
+  version: 0.15.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -57,6 +57,7 @@ sql:
 assets:
   - module.yml
   - docs/index.md
+  - locales/phrases.ro.txt
 
 deps:
   rho-log: ">=0.1.2"

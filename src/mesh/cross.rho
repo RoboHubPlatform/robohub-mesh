@@ -349,7 +349,7 @@ fn mesh_search(req: Request) Response {
     let body: string = AGORA_STYLE + FLEET_STYLE + "<div class=\"fleet-panel\"><div class=\"fbar\">" + fleet_search_form(wanted) +
         "<span class=\"spacer\"></span><a href=\"/mesh\">Fleet</a></div><aside class=\"inbox\" style=\"border-left:0\">" +
         summary + out + "</aside></div>"
-    return page(req, "Search · Fleet", body)
+    return html(status_ok(), look_translate(req, mesh_shell(req, "Search · Fleet", body)))
 }
 
 fn fleet_search_form(wanted: string) string {

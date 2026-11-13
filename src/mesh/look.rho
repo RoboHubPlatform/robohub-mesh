@@ -724,3 +724,123 @@ fn look_bar(id: string) string {
         failed + "<span class=\"ag-spacer\"></span>" + waiting + apply +
         "<a class=\"ag-btn\" href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a>"
 }
+
+// look_replace_all is text with every occurrence of one string replaced.
+fn look_replace_all(text: string, from: string, to: string) string {
+    if from == "" || rho_str_index_of(text, from) < 0 {
+        return text
+    }
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, from)
+        if at < 0 {
+            out = out + rest
+            rest = ""
+        } else {
+            out = out + rho_str_slice(rest, 0, u32(at)) + to
+            rest = rho_str_slice(rest, u32(at) + u32(rho_strlen(from)), u32(rho_strlen(rest)) - u32(at) - u32(rho_strlen(from)))
+        }
+    }
+    return out
+}
+
+// look_phrases_script is the same catalog for the browser: what the live
+// stream redraws — the bar, the tree, the strip — is the same for every
+// viewer and arrives in English, so a page in another language translates
+// whatever is put into it, whole labels only, as the server does.
+fn look_phrases_script(locale: string, catalog: string) string {
+    var pairs: string = ""
+    var rest: string = catalog
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let tab: i32 = rho_str_index_of(line, "\t")
+        if tab <= 0 || rho_str_index_of(line, "#") == 0 {
+            continue
+        }
+        if pairs != "" {
+            pairs = pairs + ","
+        }
+        pairs = pairs + json_string(rho_str_slice(line, 0, u32(tab))) + ":" +
+            json_string(rho_str_slice(line, u32(tab) + 1, u32(rho_strlen(line)) - u32(tab) - 1))
+    }
+    return "<script>(function(){var P={" + pairs + "};function tr(root){if(!root||!root.nodeType)return;" +
+        "if(root.nodeType===3){var t=root.nodeValue.trim();if(t&&P[t])root.nodeValue=root.nodeValue.replace(t,P[t]);return}" +
+        "if(root.nodeType!==1)return;var w=document.createTreeWalker(root,4);var n;while((n=w.nextNode())){var v=n.nodeValue.trim();if(v&&P[v])n.nodeValue=n.nodeValue.replace(v,P[v])}" +
+        "[root].concat(Array.prototype.slice.call(root.querySelectorAll('[placeholder],[title]'))).forEach(function(e){['placeholder','title'].forEach(function(a){var x=e.getAttribute&&e.getAttribute(a);if(x&&P[x])e.setAttribute(a,P[x])})})}" +
+        "new MutationObserver(function(list){list.forEach(function(m){m.addedNodes.forEach(tr)})}).observe(document.body,{childList:true,subtree:true})})();</script>"
+}
+
+// look_translate is a page in the language the request asks for. Mesh writes
+// its labels in English; for another language it carries a catalog of whole
+// labels (locales/phrases.<locale>.txt), and a label is replaced only where it
+// is a whole text between tags, a placeholder or a title — so a word inside a
+// sentence or a name is never touched. A label not in the catalog stays English.
+fn look_translate(req: Request, html_text: string) string {
+    let locale: string = i18n_locale(req)
+    if locale == "" || locale == "en" || rho_str_index_of(locale, "/") >= 0 {
+        return html_text
+    }
+    let catalog: string = rho_read_text(rho_asset_dir("mesh") + "/locales/phrases." + locale + ".txt")
+    if catalog == "" {
+        return html_text
+    }
+    // Each label is first replaced by a placeholder and only then by its
+    // translation, so a translation that is itself an English label (Modules
+    // is Module, Module is Modul) is not translated a second time.
+    var out: string = html_text
+    var finals: string = ""
+    var rest: string = catalog
+    var count: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let tab: i32 = rho_str_index_of(line, "\t")
+        if tab <= 0 || rho_str_index_of(line, "#") == 0 {
+            continue
+        }
+        let english: string = escape_html(rho_str_slice(line, 0, u32(tab)))
+        let mark: string = "⟦" + rho_int_to_str(count) + "⟧"
+        out = look_replace_all(out, ">" + english + "<", ">" + mark + "<")
+        out = look_replace_all(out, "placeholder=\"" + english + "\"", "placeholder=\"" + mark + "\"")
+        out = look_replace_all(out, "title=\"" + english + "\"", "title=\"" + mark + "\"")
+        finals = finals + mark + "\t" + escape_html(rho_str_slice(line, u32(tab) + 1, u32(rho_strlen(line)) - u32(tab) - 1)) + "\n"
+        count = count + 1
+    }
+    rest = finals
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let tab: i32 = rho_str_index_of(line, "\t")
+        if tab > 0 {
+            out = look_replace_all(out, rho_str_slice(line, 0, u32(tab)),
+                rho_str_slice(line, u32(tab) + 1, u32(rho_strlen(line)) - u32(tab) - 1))
+        }
+    }
+    // A whole page also carries the catalog for what the stream redraws.
+    let body_end: i32 = rho_str_index_of(out, "</body>")
+    if body_end > 0 {
+        out = rho_str_slice(out, 0, u32(body_end)) + look_phrases_script(locale, catalog) +
+            rho_str_slice(out, u32(body_end), u32(rho_strlen(out)) - u32(body_end))
+    }
+    return out
+}

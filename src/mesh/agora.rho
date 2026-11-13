@@ -818,7 +818,7 @@ fn agora_page_for(req: Request, id: string, selection: string, tab: string, kind
         editor_inspector(id, selection, tab, kind, parent, "") + "</aside></div>" +
         "<div class=\"ag-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div>" + LOOK_DRAG + "</div>"
     // The agora is the whole window, not a panel in a page.
-    return html(status_ok(), mesh_shell(req, project_name(id) + " · live", mesh_with_project(body)))
+    return html(status_ok(), look_translate(req, mesh_shell(req, project_name(id) + " · live", mesh_with_project(body))))
 }
 
 fn agora_events_file(id: string) string {
@@ -1320,7 +1320,7 @@ fn mesh_fleet_page(req: Request) Response {
         "<div class=\"fleet-body\"><div class=\"fleet-grid\" sse-swap=\"fleet-cards\" hx-swap=\"innerHTML\">" + fleet_cards() + "</div>" +
         "<aside class=\"inbox\" sse-swap=\"fleet-side\" hx-swap=\"innerHTML\">" + fleet_inbox() + fleet_hosts() + "</aside></div>" +
         "<div class=\"activity\" sse-swap=\"fleet-activity\" hx-swap=\"innerHTML\">" + fleet_activity() + "</div></div>"
-    return page(req, "Fleet", body)
+    return html(status_ok(), look_translate(req, mesh_shell(req, "Fleet", body)))
 }
 
 fn fleet_events_file() string {

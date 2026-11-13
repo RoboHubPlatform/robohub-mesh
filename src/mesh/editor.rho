@@ -688,9 +688,10 @@ fn editor_publish(id: string) void {
 fn editor_answer(req: Request, id: string, selection: string, tab: string, notice: string) Response {
     editor_publish(id)
     if htmx_is_request(req) {
-        return html(status_ok(), editor_inspector(id, selection, tab, "", "", notice) +
+        // A fragment is translated in the page it goes into (look_phrases_script).
+        return html(status_ok(), (editor_inspector(id, selection, tab, "", "", notice) +
             "<div hx-swap-oob=\"innerHTML:#agora-canvas\">" + look_tree(id, "") + "</div>" +
-            "<div hx-swap-oob=\"innerHTML:#agora-bar\">" + look_bar(id) + "</div>")
+            "<div hx-swap-oob=\"innerHTML:#agora-bar\">" + look_bar(id) + "</div>"))
     }
     var location: string = "/mesh/p/" + id
     if selection != "" {
@@ -728,8 +729,8 @@ fn mesh_p_page(req: Request) Response {
 
 fn editor_fragment(req: Request, id: string, selection: string, tab: string) Response {
     if htmx_is_request(req) {
-        return html(status_ok(), editor_inspector(id, selection, tab, request_query_param(req, "kind"),
-            request_query_param(req, "parent"), ""))
+        return html(status_ok(), (editor_inspector(id, selection, tab, request_query_param(req, "kind"),
+            request_query_param(req, "parent"), "")))
     }
     return agora_page_for(req, id, selection, tab, request_query_param(req, "kind"), request_query_param(req, "parent"))
 }
