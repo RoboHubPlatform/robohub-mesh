@@ -447,3 +447,7 @@ Access and housekeeping fixes from the 2026-11 review.
 ## [0.18.5] - 2026-11-13
 
 A gateway started on this machine is given its key again. 0.18.1 quoted the key file's path a second time, so the gateway was handed a path with the quotes in it, read no key, and answered no board's hello: a sealed board was not heard. The key and relay-key paths are now plain values, quoted once where they become part of the command.
+
+## [0.18.6] - 2026-11-13
+
+A mesh keeps its gateway key. The key file holds the key and a line break, and the trim it was read with took spaces only, so every read found 65 characters, took the key for missing and wrote a new one: each firmware build and each gateway start had a different key, and no sealed board's hello authenticated. Values read from files are trimmed of line breaks, and a key file that exists is never replaced, since every board's key is derived from it.

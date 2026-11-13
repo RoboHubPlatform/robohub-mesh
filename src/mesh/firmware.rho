@@ -297,6 +297,12 @@ fn mesh_gateway_key(project: string) string {
     if rho_strlen(key) == 64 {
         return key
     }
+    // Only a project with no key file gets a new one. A key that cannot be read
+    // as 64 hex digits is not replaced behind the boards built with it: every
+    // board's key is derived from it, so a new one silences all of them.
+    if rho_path_exists(mesh_gateway_key_file(project)) {
+        return ""
+    }
     key = rho_random_hex(32)
     if rho_strlen(key) != 64 || !rho_write_secret(mesh_gateway_key_file(project), key + "\n") {
         return ""

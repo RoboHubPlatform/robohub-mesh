@@ -421,13 +421,19 @@ fn module_rows_read() string {
 // device_paths reads robohub-devices' own list. The collection's module.yml is
 // the registry the consumer follows: a new device adds its path there, and the
 // next render sees it without a scan of the tree.
+// device_space is white space at either end of a value: a file written with
+// its value and a line break (a key, a secret) reads as the value alone.
+fn device_space(ch: string) bool {
+    return rho_str_eq(ch, " ") || rho_str_eq(ch, "\n") || rho_str_eq(ch, "\r") || rho_str_eq(ch, "\t")
+}
+
 fn device_trim(text: string) string {
     var out: string = text
-    while rho_strlen(out) > 0 && rho_str_eq(rho_str_slice(out, 0, 1), " ") {
+    while rho_strlen(out) > 0 && device_space(rho_str_slice(out, 0, 1)) {
         out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
     }
     while rho_strlen(out) > 0 &&
-        rho_str_eq(rho_str_slice(out, u32(rho_strlen(out)) - 1, 1), " ") {
+        device_space(rho_str_slice(out, u32(rho_strlen(out)) - 1, 1)) {
         out = rho_str_slice(out, 0, u32(rho_strlen(out)) - 1)
     }
     return out
