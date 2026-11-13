@@ -80,7 +80,7 @@ fn mesh_alert_list() string {
 
 // mesh_alert_set records one field of the Alerts form as a channel's setting.
 fn mesh_alert_set(body: string, provider: string, key: string, field: string) void {
-    if !alert.configure(provider, key, device_trim(form_value(body, field))) {
+    if !alert.configure(provider, key, str_trim(form_field(body, field))) {
         warn("mesh", "the alert setting " + provider + "." + key + " could not be saved")
     }
 }
@@ -200,14 +200,14 @@ fn mesh_settings_save(req: Request) Response {
         return redirect("/settings?tab=logging")
     }
     if rho_str_eq(tab, "storage") {
-        settings_set("telemetry.raw_days", device_trim(form_value(body, "raw_days")))
-        settings_set("telemetry.minute_days", device_trim(form_value(body, "minute_days")))
-        settings_set("telemetry.hour_days", device_trim(form_value(body, "hour_days")))
-        settings_set("telemetry.fault_days", device_trim(form_value(body, "fault_days")))
-        settings_set("telemetry.checkpoint_minutes", device_trim(form_value(body, "checkpoint_minutes")))
-        settings_set("telemetry.prune_hours", device_trim(form_value(body, "prune_hours")))
-        settings_set("telemetry.vacuum_mode", device_trim(form_value(body, "vacuum_mode")))
-        settings_set("telemetry.backoff_max_s", device_trim(form_value(body, "backoff_max_s")))
+        settings_set("telemetry.raw_days", str_trim(form_field(body, "raw_days")))
+        settings_set("telemetry.minute_days", str_trim(form_field(body, "minute_days")))
+        settings_set("telemetry.hour_days", str_trim(form_field(body, "hour_days")))
+        settings_set("telemetry.fault_days", str_trim(form_field(body, "fault_days")))
+        settings_set("telemetry.checkpoint_minutes", str_trim(form_field(body, "checkpoint_minutes")))
+        settings_set("telemetry.prune_hours", str_trim(form_field(body, "prune_hours")))
+        settings_set("telemetry.vacuum_mode", str_trim(form_field(body, "vacuum_mode")))
+        settings_set("telemetry.backoff_max_s", str_trim(form_field(body, "backoff_max_s")))
         return redirect("/settings?tab=storage")
     }
     if rho_str_eq(tab, "alerts") {
@@ -222,6 +222,6 @@ fn mesh_settings_save(req: Request) Response {
         mesh_alert_set(body, "robohub-provider-telegram", "severity_threshold", "telegram_threshold")
         return redirect("/settings?tab=alerts")
     }
-    settings_set("ui.tabs", device_trim(form_value(body, "tabs")))
+    settings_set("ui.tabs", str_trim(form_field(body, "tabs")))
     return redirect("/settings?tab=general")
 }

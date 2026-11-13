@@ -121,7 +121,7 @@ fn mesh_p_node_move(req: Request) Response {
     let nid: string = param(req, "node")
     let index: u32 = project_node_by_id(project_file(id), nid)
     let body: string = request_body(req)
-    let target: string = form_value(body, "target")
+    let target: string = form_field(body, "target")
     if index == 0 || is_module_node(index) {
         return editor_answer(req, id, "", "", editor_notice("That node is not in this mesh any more.", true))
     }
@@ -220,11 +220,11 @@ fn mesh_project_copy(req: Request) Response {
         return mesh_denied(req)
     }
     let body: string = request_body(req)
-    let source: string = form_value(body, "project")
+    let source: string = form_field(body, "project")
     if !rho_path_exists(project_file(source)) {
         return mesh_redirect("/mesh")
     }
-    var name: string = form_value(body, "name")
+    var name: string = form_field(body, "name")
     if name == "" {
         name = project_name(source) + " copy"
     }
@@ -314,7 +314,7 @@ fn cross_matches(text: string, wanted: string) bool {
 
 // mesh_search finds nodes by name, id, board, module or device in every mesh.
 fn mesh_search(req: Request) Response {
-    let wanted: string = device_trim(request_query_param(req, "q"))
+    let wanted: string = str_trim(request_query_param(req, "q"))
     var out: string = ""
     var found: u32 = 0
     var rest: string = project_ids()
@@ -345,7 +345,7 @@ fn mesh_search(req: Request) Response {
                 }
                 out = out + "<a class=\"item\" href=\"" + href + "\"><b>" + escape_html(name) + "</b><span>" +
                     escape_html(project_name(id)) + " · " + escape_html(project_node_value(file, index, "kind", "compute")) +
-                    " · " + escape_html(device_trim(what)) + "</span></a>"
+                    " · " + escape_html(str_trim(what)) + "</span></a>"
                 found = found + 1
             }
             index = index + 1

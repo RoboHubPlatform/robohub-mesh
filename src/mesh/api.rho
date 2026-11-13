@@ -90,7 +90,7 @@ fn mesh_device_poll(req: Request) Response {
         return mesh_project_refused()
     }
     let body: string = request_body(req)
-    let index: u32 = rho_int_from_str(form_value(body, "id"))
+    let index: u32 = rho_int_from_str(form_field(body, "id"))
     if index < 1 || index > node_count() || !is_device_node(index) {
         return mesh_redirect("/mesh/plan")
     }
@@ -149,8 +149,8 @@ fn mesh_device_set(req: Request) Response {
         return mesh_project_refused()
     }
     let body: string = request_body(req)
-    let index: u32 = rho_int_from_str(form_value(body, "id"))
-    let state: string = form_value(body, "state")
+    let index: u32 = rho_int_from_str(form_field(body, "id"))
+    let state: string = form_field(body, "state")
     if index < 1 || index > node_count() || !is_device_node(index) {
         return mesh_redirect("/mesh/plan")
     }
@@ -717,7 +717,7 @@ fn mesh_api_source_action(req: Request) Response {
     }
     var state: string = request_query_param(req, "state")
     if state == "" {
-        state = form_value(request_body(req), "state")
+        state = form_field(request_body(req), "state")
     }
     if mesh_source_action(param(req, "project"), param(req, "source"), state) {
         return json(200, "{\"ok\":true}")
@@ -829,7 +829,7 @@ fn mesh_api_device_switch(req: Request) Response {
     }
     let index: u32 = rho_int_from_str(param(req, "id"))
     let body: string = request_body(req)
-    var state: string = form_value(body, "state")
+    var state: string = form_field(body, "state")
     if rho_strlen(state) == 0 {
         state = request_query_param(req, "state")
     }

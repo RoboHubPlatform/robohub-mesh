@@ -463,3 +463,7 @@ A device whose address the plan writes without a scheme (`192.168.100.99`) is re
 ## [0.18.9] - 2026-11-13
 
 A board's sensor that fails a read is brought up again every five seconds at most, with one fault reported per try. The generated firmware re-initialised it on every poll, twice a second, which kept a struggling DS18B20 from settling (each re-initialisation wrote its EEPROM) and filled the history with faults while the chart held the last good value. Boards pick this up when they are rebuilt.
+
+## [0.18.10] - 2026-11-14
+
+Trimming, URL decoding and form fields come from the toolchain (rho 0.7.0) rather than four copies of each in Mesh's own sources; a `%` not followed by two hex digits in a form is kept as written instead of becoming a zero byte. Needs rho 0.7.0.

@@ -241,7 +241,7 @@ fn mesh_project_new(req: Request) Response {
     if !mesh_may(req, "", true) {
         return mesh_denied(req)
     }
-    let name: string = form_value(request_body(req), "name")
+    let name: string = form_field(request_body(req), "name")
     let id: string = new_project(name)
     info("mesh", "created project " + id + " at " + project_location(id))
     return mesh_redirect("/mesh/p/" + id)
@@ -313,15 +313,15 @@ fn mesh_project_settings_post(req: Request) Response {
         return mesh_redirect("/mesh")
     }
     let body: string = request_body(req)
-    var name: string = form_value(body, "name")
+    var name: string = form_field(body, "name")
     if name == "" {
         name = id
     }
     save_setting_at(file, "project.name", name)
-    save_setting_at(file, "project.description", form_value(body, "description"))
-    save_setting_at(file, "gateway_url", device_trim(form_value(body, "gateway_url")))
+    save_setting_at(file, "project.description", form_field(body, "description"))
+    save_setting_at(file, "gateway_url", str_trim(form_field(body, "gateway_url")))
     save_setting_at(file, "telemetry_retention_days",
-        device_trim(form_value(body, "telemetry_retention_days")))
+        str_trim(form_field(body, "telemetry_retention_days")))
     save_setting_at(file, "message.project", "Project settings saved.")
     info("mesh", "project " + id + " settings saved")
     return mesh_redirect("/mesh/project/" + param(req, "id") + "/settings")
@@ -331,7 +331,7 @@ fn mesh_project_delete(req: Request) Response {
     if !mesh_may(req, "", true) {
         return mesh_denied(req)
     }
-    let id: string = sanitize(form_value(request_body(req), "project"))
+    let id: string = sanitize(form_field(request_body(req), "project"))
     if id == "" || rho_str_index_of(id, "/") >= 0 || rho_str_index_of(id, "..") >= 0 {
         return mesh_redirect("/mesh")
     }
@@ -477,7 +477,7 @@ fn mesh_follow_project(req: Request) void {
 // refused rather than written into the wrong mesh. A form without the field —
 // an htmx fragment, an API client — is not refused.
 fn mesh_project_mismatch(req: Request) bool {
-    let sent: string = form_value(request_body(req), "project")
+    let sent: string = form_field(request_body(req), "project")
     return sent != "" && sent != current_project()
 }
 

@@ -463,7 +463,7 @@ fn jobs_percent(project: string, seq: string) string {
         let window: string = rho_str_slice(rest, start, u32(at) - start)
         let open: i32 = rho_str_index_of(window, "[")
         if open >= 0 {
-            found = device_trim(rho_str_slice(window, u32(open) + 1, u32(rho_strlen(window)) - u32(open) - 1))
+            found = str_trim(rho_str_slice(window, u32(open) + 1, u32(rho_strlen(window)) - u32(open) - 1))
         }
         rest = rho_str_slice(rest, u32(at) + 2, u32(rho_strlen(rest)) - u32(at) - 2)
     }
@@ -794,7 +794,7 @@ fn mesh_p_apply_post(req: Request) Response {
     if id == "" {
         return mesh_redirect("/mesh/fleet")
     }
-    let only: string = form_value(request_body(req), "only")
+    let only: string = form_field(request_body(req), "only")
     let result: string = jobs_apply(id, only)
     let problems: string = field(result, 1)
     var said: string = "Nothing to apply."

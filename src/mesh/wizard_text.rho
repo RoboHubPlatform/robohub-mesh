@@ -12,7 +12,6 @@
 
 module mesh.wizard_text
 
-
 // String helpers the wizard uses before it knows anything about a page.
 //
 // They are in a file of their own so a Rho test can include them without the
@@ -37,50 +36,6 @@ fn sanitize(value: string) string {
     return out
 }
 
-fn hex_value(ch: string) u32 {
-    if rho_str_eq(ch, "0") { return 0 }
-    if rho_str_eq(ch, "1") { return 1 }
-    if rho_str_eq(ch, "2") { return 2 }
-    if rho_str_eq(ch, "3") { return 3 }
-    if rho_str_eq(ch, "4") { return 4 }
-    if rho_str_eq(ch, "5") { return 5 }
-    if rho_str_eq(ch, "6") { return 6 }
-    if rho_str_eq(ch, "7") { return 7 }
-    if rho_str_eq(ch, "8") { return 8 }
-    if rho_str_eq(ch, "9") { return 9 }
-    if rho_str_eq(ch, "a") || rho_str_eq(ch, "A") { return 10 }
-    if rho_str_eq(ch, "b") || rho_str_eq(ch, "B") { return 11 }
-    if rho_str_eq(ch, "c") || rho_str_eq(ch, "C") { return 12 }
-    if rho_str_eq(ch, "d") || rho_str_eq(ch, "D") { return 13 }
-    if rho_str_eq(ch, "e") || rho_str_eq(ch, "E") { return 14 }
-    if rho_str_eq(ch, "f") || rho_str_eq(ch, "F") { return 15 }
-    return 0
-}
-
-fn url_decode(value: string) string {
-    var out: string = ""
-    var i: u32 = 0
-    let length: u32 = u32(rho_strlen(value))
-    while i < length {
-        let ch: string = rho_str_slice(value, i, 1)
-        if rho_str_eq(ch, "+") {
-            out = out + " "
-            i = i + 1
-            continue
-        }
-        if rho_str_eq(ch, "%") && i + 2 < length {
-            let high: u32 = hex_value(rho_str_slice(value, i + 1, 1))
-            let low: u32 = hex_value(rho_str_slice(value, i + 2, 1))
-            out = out + rho_str_from_byte(u8(high * 16 + low))
-            i = i + 3
-            continue
-        }
-        out = out + ch
-        i = i + 1
-    }
-    return out
-}
-
 fn line_in_list(text: string, wanted: string) bool {
     var rest: string = text + "\n"
     while rho_strlen(rest) > 0 {
@@ -95,31 +50,6 @@ fn line_in_list(text: string, wanted: string) bool {
         }
     }
     return false
-}
-
-fn form_value(body: string, name: string) string {
-    var rest: string = body + "&"
-    while rho_strlen(rest) > 0 {
-        let amp: i32 = rho_str_index_of(rest, "&")
-        if amp < 0 {
-            break
-        }
-        let pair: string = rho_str_slice(rest, 0, u32(amp))
-        rest = rho_str_slice(rest, u32(amp) + 1, u32(rho_strlen(rest)) - u32(amp) - 1)
-        if rho_strlen(pair) == 0 {
-            continue
-        }
-        let equals: i32 = rho_str_index_of(pair, "=")
-        if equals < 0 {
-            continue
-        }
-        let key: string = url_decode(rho_str_slice(pair, 0, u32(equals)))
-        if rho_str_eq(key, name) {
-            return url_decode(rho_str_slice(pair, u32(equals) + 1,
-                u32(rho_strlen(pair)) - u32(equals) - 1))
-        }
-    }
-    return ""
 }
 
 // form_values is the same reader for a field that may be sent more than once,
@@ -142,9 +72,9 @@ fn form_values(body: string, name: string) string {
         if equals < 0 {
             continue
         }
-        let key: string = url_decode(rho_str_slice(pair, 0, u32(equals)))
+        let key: string = str_url_decode(rho_str_slice(pair, 0, u32(equals)))
         if rho_str_eq(key, name) {
-            let value: string = url_decode(rho_str_slice(pair, u32(equals) + 1,
+            let value: string = str_url_decode(rho_str_slice(pair, u32(equals) + 1,
                 u32(rho_strlen(pair)) - u32(equals) - 1))
             if rho_strlen(out) > 0 {
                 out = out + " "

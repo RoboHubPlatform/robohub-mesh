@@ -421,24 +421,6 @@ fn module_rows_read() string {
 // device_paths reads robohub-devices' own list. The collection's module.yml is
 // the registry the consumer follows: a new device adds its path there, and the
 // next render sees it without a scan of the tree.
-// device_space is white space at either end of a value: a file written with
-// its value and a line break (a key, a secret) reads as the value alone.
-fn device_space(ch: string) bool {
-    return rho_str_eq(ch, " ") || rho_str_eq(ch, "\n") || rho_str_eq(ch, "\r") || rho_str_eq(ch, "\t")
-}
-
-fn device_trim(text: string) string {
-    var out: string = text
-    while rho_strlen(out) > 0 && device_space(rho_str_slice(out, 0, 1)) {
-        out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
-    }
-    while rho_strlen(out) > 0 &&
-        device_space(rho_str_slice(out, u32(rho_strlen(out)) - 1, 1)) {
-        out = rho_str_slice(out, 0, u32(rho_strlen(out)) - 1)
-    }
-    return out
-}
-
 fn device_paths() string {
     let entry: string = registry_entry("robohub-devices")
     if !rho_path_exists(entry) {
@@ -460,7 +442,7 @@ fn device_paths() string {
             end = i + u32(at)
         }
         let line: string = rho_str_slice(text, i, end - i)
-        let trimmed: string = device_trim(line)
+        let trimmed: string = str_trim(line)
         if rho_strlen(trimmed) > 0 && rho_str_index_of(line, " ") != 0 {
             break
         }
@@ -761,18 +743,18 @@ fn catalog_folded(manifest: string, key: string) string {
         }
         if inside {
             if rho_str_index_of(line, "    ") == 0 {
-                out = out + " " + device_trim(line)
+                out = out + " " + str_trim(line)
                 continue
             }
-            return device_trim(out)
+            return str_trim(out)
         }
         if rho_str_eq(line, "  " + key + ": >") || rho_str_eq(line, "  " + key + ": >-") {
             inside = true
         } else if rho_str_index_of(line, "  " + key + ": ") == 0 {
-            return device_trim(rho_str_slice(line, u32(rho_strlen(key)) + 4, u32(rho_strlen(line)) - u32(rho_strlen(key)) - 4))
+            return str_trim(rho_str_slice(line, u32(rho_strlen(key)) + 4, u32(rho_strlen(line)) - u32(rho_strlen(key)) - 4))
         }
     }
-    return device_trim(out)
+    return str_trim(out)
 }
 
 // catalog_cached is one of the registry's lists, read again at most every
@@ -1611,7 +1593,7 @@ fn transport_options_for(index: u32) string {
 }
 
 fn signal_clean(value: string) string {
-    var out: string = device_trim(value)
+    var out: string = str_trim(value)
     if rho_strlen(out) >= 2 {
         let first: string = rho_str_slice(out, 0, 1)
         let last: string = rho_str_slice(out, u32(rho_strlen(out)) - 1, 1)
@@ -1634,7 +1616,7 @@ fn signal_block_value(block: string, key: string) string {
         } else {
             rest = ""
         }
-        let trimmed: string = device_trim(line)
+        let trimmed: string = str_trim(line)
         if rho_str_starts_with(trimmed, key + ":") {
             return signal_clean(rho_str_slice(trimmed, u32(rho_strlen(key)) + 1,
                 u32(rho_strlen(trimmed)) - u32(rho_strlen(key)) - 1))
@@ -1699,7 +1681,7 @@ fn signal_rows(path: string) string {
             end = i + u32(at)
         }
         let line: string = rho_str_slice(text, i, end - i)
-        let trimmed: string = device_trim(line)
+        let trimmed: string = str_trim(line)
         let indent: u32 = u32(rho_strlen(line)) - u32(rho_strlen(trimmed))
         if rho_strlen(trimmed) > 0 && indent == 0 &&
             !rho_str_starts_with(trimmed, "- ") {
@@ -1732,7 +1714,7 @@ fn signal_rows(path: string) string {
 fn manifest_list_items(path: string, key: string) string {
     let inline: string = yaml.value(path, key)
     if inline != "" {
-        var body: string = device_trim(inline)
+        var body: string = str_trim(inline)
         if rho_strlen(body) >= 2 && rho_str_starts_with(body, "[") &&
             rho_str_slice(body, u32(rho_strlen(body)) - 1, 1) == "]" {
             body = rho_str_slice(body, 1, u32(rho_strlen(body)) - 2)
@@ -1747,7 +1729,7 @@ fn manifest_list_items(path: string, key: string) string {
                 item = rho_str_slice(body, 0, u32(at))
                 body = rho_str_slice(body, u32(at) + 1, u32(rho_strlen(body)) - u32(at) - 1)
             }
-            let trimmed: string = device_trim(item)
+            let trimmed: string = str_trim(item)
             if trimmed != "" {
                 out = out + trimmed + "\n"
             }
@@ -1775,7 +1757,7 @@ fn manifest_list_items(path: string, key: string) string {
             end = i + u32(at)
         }
         let line: string = rho_str_slice(text, i, end - i)
-        let trimmed: string = device_trim(line)
+        let trimmed: string = str_trim(line)
         let indent: u32 = u32(rho_strlen(line)) - u32(rho_strlen(trimmed))
         if rho_strlen(trimmed) > 0 && indent == 0 {
             break
@@ -1790,7 +1772,7 @@ fn manifest_list_items(path: string, key: string) string {
 }
 
 fn signal_function_row(name: string) string {
-    let fn_name: string = device_trim(name)
+    let fn_name: string = str_trim(name)
     if fn_name == "temperature" { return "temperature|Temperature|input|°C|temperature_c|numeric chart table" }
     if fn_name == "humidity" { return "humidity|Humidity|input|%|humidity|numeric chart table" }
     if fn_name == "pressure" { return "pressure|Pressure|input|hPa|pressure_hpa|numeric chart table" }

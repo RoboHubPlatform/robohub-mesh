@@ -126,7 +126,6 @@ fn editor_next_rev(index: u32) string {
     return rho_int_to_str(u32(rho_int_from_str(editor_rev(index))) + 1)
 }
 
-
 fn editor_notice(text: string, bad: bool) string {
     if text == "" {
         return ""
@@ -172,12 +171,9 @@ fn editor_tabs(id: string, index: u32, current: string) string {
     return out + "</nav>"
 }
 
-
 /* -------------------------------------------------------------------------- */
 /*  The inspector                                                             */
 /* -------------------------------------------------------------------------- */
-
-
 
 fn editor_node_action(id: string, index: u32) string {
     return editor_base(id) + "/node/" + editor_node_id(id, index)
@@ -220,9 +216,6 @@ fn editor_role_options(role: string) string {
     return option("node", "node", "measures", role) + option("relay", "relay", "also carries boards under it", role) +
         option("gateway", "gateway", "another host", role)
 }
-
-
-
 
 fn editor_form(action: string, tab: string, index: u32, inner: string, submit: string) string {
     return look_form(action, tab, index, inner, "", submit)
@@ -585,9 +578,6 @@ fn editor_delete_tab(id: string, index: u32) string {
     return text + editor_form(editor_node_action(id, index) + "/delete", "delete", index, inner, "Delete")
 }
 
-
-
-
 /* -------------------------------------------------------------------------- */
 /*  Answers                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -794,7 +784,7 @@ fn editor_line(key: string, value: string) string {
 
 // editor_stale refuses a save from a form opened before the node's last save.
 fn editor_stale(body: string, index: u32) bool {
-    let sent: string = form_value(body, "rev")
+    let sent: string = form_field(body, "rev")
     return sent != "" && !rho_str_eq(sent, editor_rev(index))
 }
 
@@ -839,7 +829,7 @@ fn mesh_p_node_post(req: Request) Response {
         return editor_answer(req, id, "", "", editor_notice("That node is not in this mesh any more.", true))
     }
     let body: string = request_body(req)
-    let tab: string = form_value(body, "tab")
+    let tab: string = form_field(body, "tab")
     if editor_stale(body, index) {
         return editor_answer(req, id, selection, tab,
             editor_notice("This node was changed elsewhere since you opened it. Here it is as it is now.", true))
@@ -848,9 +838,9 @@ fn mesh_p_node_post(req: Request) Response {
     let before: string = deployed_node_reason(id, index)
     var lines: string = editor_line(prefix + "rev", editor_next_rev(index))
     if tab == "modules" {
-        let action: string = form_value(body, "action")
+        let action: string = form_field(body, "action")
         if action == "add" {
-            let module_name: string = form_value(body, "module")
+            let module_name: string = form_field(body, "module")
             if module_name == "" {
                 return editor_answer(req, id, selection, tab, editor_notice("Choose a module to fit.", true))
             }
@@ -866,7 +856,7 @@ fn mesh_p_node_post(req: Request) Response {
                 editor_now_out_of_date(id, index, before), false))
         }
         if action == "remove" {
-            let child: u32 = project_node_by_id(project_file(id), form_value(body, "module_node"))
+            let child: u32 = project_node_by_id(project_file(id), form_field(body, "module_node"))
             if child == 0 || !is_module_node(child) {
                 return editor_answer(req, id, selection, tab, editor_notice("That module is not fitted any more.", true))
             }
@@ -878,33 +868,33 @@ fn mesh_p_node_post(req: Request) Response {
         }
         return editor_answer(req, id, selection, tab, "")
     }
-    let name: string = form_value(body, "name")
+    let name: string = form_field(body, "name")
     lines = lines + editor_line(prefix + "name", name) +
-        editor_line(prefix + "description", form_value(body, "description"))
-    let parent: string = form_value(body, "parent")
+        editor_line(prefix + "description", form_field(body, "description"))
+    let parent: string = form_field(body, "parent")
     if is_device_node(index) {
-        if form_value(body, "device") == "" || !device_parent_valid(parent) {
+        if form_field(body, "device") == "" || !device_parent_valid(parent) {
             return editor_answer(req, id, selection, "node", editor_notice("A device needs an integration and a parent.", true))
         }
-        lines = lines + editor_line(prefix + "device", form_value(body, "device")) +
-            editor_line(prefix + "transport", form_value(body, "transport")) +
-            editor_line(prefix + "address", form_value(body, "address")) +
-            editor_line(prefix + "device_id", form_value(body, "device_id")) +
+        lines = lines + editor_line(prefix + "device", form_field(body, "device")) +
+            editor_line(prefix + "transport", form_field(body, "transport")) +
+            editor_line(prefix + "address", form_field(body, "address")) +
+            editor_line(prefix + "device_id", form_field(body, "device_id")) +
             editor_line(prefix + "parent", parent)
     } else if is_module_node(index) {
-        if form_value(body, "module") == "" || !module_parent_valid(parent) {
+        if form_field(body, "module") == "" || !module_parent_valid(parent) {
             return editor_answer(req, id, selection, "node", editor_notice("A module needs a module and a board.", true))
         }
-        lines = lines + editor_line(prefix + "module", form_value(body, "module")) + editor_line(prefix + "parent", parent)
+        lines = lines + editor_line(prefix + "module", form_field(body, "module")) + editor_line(prefix + "parent", parent)
     } else {
-        let board: string = form_value(body, "board")
+        let board: string = form_field(body, "board")
         let target: u32 = editor_index_of_parent(parent)
         if board == "" || (parent != "gateway" && (target == 0 || target == index || !editor_is_board(target) ||
             editor_below(target, index))) {
             return editor_answer(req, id, selection, "node",
                 editor_notice("A node needs a board, and a parent that is the gateway or a board not under it.", true))
         }
-        lines = lines + editor_line(prefix + "role", form_value(body, "role")) + editor_line(prefix + "board", board) +
+        lines = lines + editor_line(prefix + "role", form_field(body, "role")) + editor_line(prefix + "board", board) +
             editor_line(prefix + "parent", parent) + editor_line(prefix + "link", editor_fit_link(index, parent, board))
     }
     ignore_bool(plan_set_many(wizard_file(), lines))
@@ -923,41 +913,41 @@ fn mesh_p_node_new(req: Request) Response {
         return mesh_redirect("/mesh/fleet")
     }
     let body: string = request_body(req)
-    let kind: string = form_value(body, "kind")
-    let parent: string = form_value(body, "parent")
+    let kind: string = form_field(body, "kind")
+    let parent: string = form_field(body, "parent")
     let index: u32 = node_count() + 1
     if index > 64 {
         return editor_answer(req, id, "", "", editor_notice("A mesh holds at most 64 nodes.", true))
     }
     let prefix: string = "node." + rho_int_to_str(index) + "."
-    var name: string = form_value(body, "name")
+    var name: string = form_field(body, "name")
     var lines: string = editor_line("node.count", rho_int_to_str(index)) +
-        editor_line(prefix + "description", form_value(body, "description")) + editor_line(prefix + "parent", parent)
+        editor_line(prefix + "description", form_field(body, "description")) + editor_line(prefix + "parent", parent)
     if kind == "device" {
-        if form_value(body, "device") == "" || !device_parent_valid(parent) {
+        if form_field(body, "device") == "" || !device_parent_valid(parent) {
             return html(status_ok(), editor_new_inspector(id, kind, parent,
                 editor_notice("A device needs an integration and a parent.", true)))
         }
         if name == "" {
-            name = device_label(form_value(body, "device"))
+            name = device_label(form_field(body, "device"))
         }
         lines = lines + editor_line(prefix + "kind", "device") + editor_line(prefix + "role", "device") +
-            editor_line(prefix + "device", form_value(body, "device")) +
-            editor_line(prefix + "transport", form_value(body, "transport")) +
-            editor_line(prefix + "address", form_value(body, "address")) +
-            editor_line(prefix + "device_id", form_value(body, "device_id"))
+            editor_line(prefix + "device", form_field(body, "device")) +
+            editor_line(prefix + "transport", form_field(body, "transport")) +
+            editor_line(prefix + "address", form_field(body, "address")) +
+            editor_line(prefix + "device_id", form_field(body, "device_id"))
     } else if kind == "module" {
-        if form_value(body, "module") == "" || !module_parent_valid(parent) {
+        if form_field(body, "module") == "" || !module_parent_valid(parent) {
             return html(status_ok(), editor_new_inspector(id, kind, parent,
                 editor_notice("A module needs a module and a board to be fitted to.", true)))
         }
         if name == "" {
-            name = module_label(form_value(body, "module"))
+            name = module_label(form_field(body, "module"))
         }
         lines = lines + editor_line(prefix + "kind", "module") + editor_line(prefix + "role", "module") +
-            editor_line(prefix + "module", form_value(body, "module"))
+            editor_line(prefix + "module", form_field(body, "module"))
     } else {
-        let board: string = form_value(body, "board")
+        let board: string = form_field(body, "board")
         let target: u32 = editor_index_of_parent(parent)
         if board == "" || (parent != "gateway" && (target == 0 || !editor_is_board(target))) {
             return html(status_ok(), editor_new_inspector(id, "compute", parent,
@@ -966,11 +956,11 @@ fn mesh_p_node_new(req: Request) Response {
         if name == "" {
             name = "Node " + rho_int_to_str(index)
         }
-        var link: string = form_value(body, "link")
+        var link: string = form_field(body, "link")
         if link == "" || !transport_allowed(link, endpoint_board(parent), board) {
             link = editor_fit_link(index, parent, board)
         }
-        lines = lines + editor_line(prefix + "kind", "compute") + editor_line(prefix + "role", form_value(body, "role")) +
+        lines = lines + editor_line(prefix + "kind", "compute") + editor_line(prefix + "role", form_field(body, "role")) +
             editor_line(prefix + "board", board) + editor_line(prefix + "link", link)
     }
     lines = lines + editor_line(prefix + "name", name)
@@ -1007,7 +997,7 @@ fn mesh_p_node_delete(req: Request) Response {
     }
     let name: string = editor_name(index)
     let row: string = "node." + rho_int_to_str(index)
-    var target: string = form_value(body, "children_to")
+    var target: string = form_field(body, "children_to")
     if target == "" {
         target = node_value(index, "parent", "gateway")
     }
@@ -1074,7 +1064,7 @@ fn mesh_p_edge_post(req: Request) Response {
     let before: string = deployed_node_reason(id, index)
     var lines: string = editor_line(prefix + "rev", editor_next_rev(index))
     var link: string = node_value(index, "link", "uart")
-    let transport: string = form_value(body, "transport")
+    let transport: string = form_field(body, "transport")
     if transport != "" && !rho_str_eq(transport, link) {
         if !transport_allowed(transport, endpoint_board(node_value(index, "parent", "gateway")), node_value(index, "board", "")) {
             return editor_answer(req, id, selection, "", editor_notice("Both ends must be able to serve that transport.", true))
@@ -1082,7 +1072,7 @@ fn mesh_p_edge_post(req: Request) Response {
         link = transport
         lines = lines + editor_line(prefix + "link", transport)
     }
-    if form_value(body, "tab") == "transport" {
+    if form_field(body, "tab") == "transport" {
         ignore_bool(plan_set_many(wizard_file(), lines))
         return editor_answer(req, id, selection, "",
             editor_notice("Transport set to " + transport_label(link) + ". Check its settings below.", false))
@@ -1107,7 +1097,7 @@ fn mesh_p_edge_post(req: Request) Response {
             field = rho_str_slice(rest, 0, u32(at))
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        lines = lines + editor_line(prefix + field, form_value(body, prefix + field))
+        lines = lines + editor_line(prefix + field, form_field(body, prefix + field))
     }
     ignore_bool(plan_set_many(wizard_file(), lines))
     info("mesh", "link of node " + rho_int_to_str(index) + " saved as " + transport_label(link))
@@ -1125,19 +1115,19 @@ fn mesh_p_gateway_post(req: Request) Response {
         return mesh_redirect("/mesh/fleet")
     }
     let body: string = request_body(req)
-    let gateway: string = form_value(body, "gateway")
-    let rest_port: string = form_value(body, "rest_port")
-    let uplink_port: string = form_value(body, "uplink_port")
+    let gateway: string = form_field(body, "gateway")
+    let rest_port: string = form_field(body, "rest_port")
+    let uplink_port: string = form_field(body, "uplink_port")
     if gateway == "" || u32(rho_int_from_str(rest_port)) == 0 || u32(rho_int_from_str(uplink_port)) == 0 {
         return editor_answer(req, id, "gateway", "", editor_notice("The gateway needs a place to run and two ports.", true))
     }
     var lines: string = editor_line("gateway", gateway) + editor_line("rest_port", rest_port) +
         editor_line("uplink_port", uplink_port)
     if gateway != "native" {
-        lines = lines + editor_line("gateway_host", form_value(body, "gateway_host"))
+        lines = lines + editor_line("gateway_host", form_field(body, "gateway_host"))
     }
     ignore_bool(plan_set_many(wizard_file(), lines))
-    let linked: string = link_set(id, form_value(body, "mesh_parent"))
+    let linked: string = link_set(id, form_field(body, "mesh_parent"))
     if linked != "" {
         return editor_answer(req, id, "gateway", "", editor_notice("Gateway saved, but " + linked + ".", true))
     }
@@ -1163,7 +1153,7 @@ fn mesh_p_node_parent(req: Request) Response {
     }
     let nid: string = param(req, "node")
     let index: u32 = project_node_by_id(project_file(id), nid)
-    let parent: string = form_value(request_body(req), "parent")
+    let parent: string = form_field(request_body(req), "parent")
     let selection: string = "node:" + nid
     if index == 0 || is_module_node(index) {
         return editor_answer(req, id, "", "", editor_notice("That node is not in this mesh any more.", true))
@@ -1243,7 +1233,7 @@ fn editor_impact(index: u32, lines: string) string {
     if out == "" {
         return "Nothing is rebuilt: what changed lives in Mesh, not in any board's image."
     }
-    return device_trim(out)
+    return str_trim(out)
 }
 
 // mesh_p_node_impact answers a form as it stands with what saving it would do.
@@ -1262,10 +1252,10 @@ fn mesh_p_node_impact(req: Request) Response {
     let body: string = request_body(req)
     let prefix: string = "node." + rho_int_to_str(index) + "."
     var lines: string = ""
-    if form_value(body, "tab") == "link" {
+    if form_field(body, "tab") == "link" {
         var link: string = node_value(index, "link", "uart")
-        if form_value(body, "transport") != "" {
-            link = form_value(body, "transport")
+        if form_field(body, "transport") != "" {
+            link = form_field(body, "transport")
         }
         lines = editor_line(prefix + "link", link)
         var rest: string = DEPLOY_LINK_FIELDS
@@ -1278,14 +1268,14 @@ fn mesh_p_node_impact(req: Request) Response {
                 field = rho_str_slice(rest, 0, u32(at))
                 rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
             }
-            if form_value(body, prefix + field) != "" {
-                lines = lines + editor_line(prefix + field, form_value(body, prefix + field))
+            if form_field(body, prefix + field) != "" {
+                lines = lines + editor_line(prefix + field, form_field(body, prefix + field))
             }
         }
     } else if editor_is_board(index) {
-        let parent: string = form_value(body, "parent")
-        let board: string = form_value(body, "board")
-        lines = editor_line(prefix + "role", form_value(body, "role")) + editor_line(prefix + "board", board) +
+        let parent: string = form_field(body, "parent")
+        let board: string = form_field(body, "board")
+        lines = editor_line(prefix + "role", form_field(body, "role")) + editor_line(prefix + "board", board) +
             editor_line(prefix + "parent", parent) + editor_line(prefix + "link", editor_fit_link(index, parent, board))
     }
     return html(status_ok(), look_impact(editor_impact(index, lines)))

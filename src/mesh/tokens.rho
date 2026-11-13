@@ -124,12 +124,12 @@ fn mesh_project_token_generate(req: Request) Response {
         return mesh_redirect("/mesh")
     }
     let body: string = request_body(req)
-    var name: string = sanitize(device_trim(form_value(body, "name")))
+    var name: string = sanitize(str_trim(form_field(body, "name")))
     if name == "" {
         name = "application"
     }
     var days: u32 = 90
-    let days_text: string = device_trim(form_value(body, "days"))
+    let days_text: string = str_trim(form_field(body, "days"))
     if days_text != "" {
         let parsed: u32 = rho_int_from_str(days_text)
         if parsed > 0 && parsed <= 3650 {
@@ -164,7 +164,7 @@ fn mesh_project_token_revoke(req: Request) Response {
     if id == "" || !rho_path_exists(file) {
         return mesh_redirect("/mesh")
     }
-    let name: string = sanitize(device_trim(form_value(request_body(req), "name")))
+    let name: string = sanitize(str_trim(form_field(request_body(req), "name")))
     if name == "" {
         return mesh_redirect("/mesh/project/" + id + "/settings")
     }

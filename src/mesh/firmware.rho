@@ -35,7 +35,7 @@ fn firmware_unquote_fields(fields: string) string {
             line = rho_str_slice(rest, 0, u32(at))
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        line = device_trim(line)
+        line = str_trim(line)
         if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") &&
             rho_str_slice(line, u32(rho_strlen(line)) - 1, 1) == "\"" {
             line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
@@ -301,7 +301,7 @@ fn mesh_gateway_key_file(project: string) string {
 // mesh_gateway_key is the project's gateway key as hex, made the first time it is
 // asked for, or "" when no random source could make one.
 fn mesh_gateway_key(project: string) string {
-    var key: string = device_trim(rho_read_text(mesh_gateway_key_file(project)))
+    var key: string = str_trim(rho_read_text(mesh_gateway_key_file(project)))
     if rho_strlen(key) == 64 {
         return key
     }

@@ -53,8 +53,6 @@ extern fn telemetry_fault_rows(project: string, limit: u32) string
 extern fn telemetry_fault_max_id(project: string) u32
 extern fn telemetry_fault_new(project: string, after_id: u32, limit: u32) string
 
-
-
 // telemetry_path is where the store lives. A deployment names it; a workstation
 // keeps it under the Mesh state directory.
 fn telemetry_path() string {
@@ -88,7 +86,7 @@ fn mesh_scope_has(scopes: string, needle: string) bool {
             rest = rho_str_slice(rest, u32(at) + 1,
                 u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        token = device_trim(token)
+        token = str_trim(token)
         if token == needle {
             return true
         }
@@ -123,7 +121,6 @@ fn mesh_scoped(req: Request, project: string) bool {
 fn mesh_scope_denied() Response {
     return json(403, "{\"ok\":false,\"error\":\"insufficient scope\"}")
 }
-
 
 // A project's live feed: the readings it stored, one named SSE event per line.
 // Each project has its own, because a reader is allowed one project, and a feed
@@ -412,7 +409,7 @@ fn telemetry_record_fields(project: string, source: string, body: string, fields
             rest = rho_str_slice(rest, u32(at) + 1,
                 u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        line = device_trim(line)
+        line = str_trim(line)
         if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") &&
             rho_str_slice(line, u32(rho_strlen(line)) - 1, 1) == "\"" {
             line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
@@ -955,7 +952,7 @@ fn mesh_fault_clear(req: Request) Response {
         return page(req, i18n_t(req, "faults.title"),
             "<p class=\"notice\">" + i18n_t(req, "settings.csrf_refused") + "</p>")
     }
-    let id: u32 = u32(rho_int_from_str(form_value(body, "id")))
+    let id: u32 = u32(rho_int_from_str(form_field(body, "id")))
     let project: string = current_project()
     if project != "" {
         ignore_string(telemetry_fault_clear(project, id))

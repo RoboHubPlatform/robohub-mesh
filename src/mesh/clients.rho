@@ -26,28 +26,6 @@ module mesh
 // callback is something Mesh can retry and report on. The handshake carries the
 // same facts your socket frame would: app, project, instance and topics.
 
-fn mesh_client_trim(text: string) string {
-    var out: string = text
-    while rho_strlen(out) > 0 &&
-        (rho_str_eq(rho_str_slice(out, 0, 1), " ") ||
-         rho_str_eq(rho_str_slice(out, 0, 1), "\n") ||
-         rho_str_eq(rho_str_slice(out, 0, 1), "\r") ||
-         rho_str_eq(rho_str_slice(out, 0, 1), "\t")) {
-        out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 1)
-    }
-    while rho_strlen(out) > 0 {
-        let at: u32 = u32(rho_strlen(out)) - 1
-        let last: string = rho_str_slice(out, at, 1)
-        if rho_str_eq(last, " ") || rho_str_eq(last, "\n") ||
-            rho_str_eq(last, "\r") || rho_str_eq(last, "\t") {
-            out = rho_str_slice(out, 0, at)
-        } else {
-            break
-        }
-    }
-    return out
-}
-
 fn mesh_clients_file() string {
     ensure_wizard_dir()
     return wizard_dir() + "/clients.jsonl"
@@ -64,7 +42,7 @@ fn mesh_client_secret() string {
     let report: string = wizard_report("client-secret")
     var text: string = ""
     if rho_exec("openssl", "rand -hex 16", report) == 0 {
-        text = mesh_client_trim(rho_read_text(report))
+        text = str_trim(rho_read_text(report))
     }
     ignore_bool(rho_write_secret(report, ""))
     if rho_strlen(text) != 32 {
@@ -124,11 +102,11 @@ fn mesh_client_rewrite(match_app: string, match_instance: string,
 
 fn mesh_client_register(req: Request) Response {
     let body: string = request_body(req)
-    let app_name: string = mesh_client_trim(mesh_json_string_field(body, "app_name"))
-    let project: string = mesh_client_trim(mesh_json_string_field(body, "project"))
-    let instance_id: string = mesh_client_trim(mesh_json_string_field(body, "instance_id"))
-    let callback_url: string = mesh_client_trim(mesh_json_string_field(body, "callback_url"))
-    let topics: string = mesh_client_trim(mesh_json_string_field(body, "topics"))
+    let app_name: string = str_trim(mesh_json_string_field(body, "app_name"))
+    let project: string = str_trim(mesh_json_string_field(body, "project"))
+    let instance_id: string = str_trim(mesh_json_string_field(body, "instance_id"))
+    let callback_url: string = str_trim(mesh_json_string_field(body, "callback_url"))
+    let topics: string = str_trim(mesh_json_string_field(body, "topics"))
     if app_name == "" || project == "" || callback_url == "" {
         return json(400, "{\"ok\":false,\"error\":\"app_name, project and callback_url are required\"}")
     }
@@ -188,7 +166,7 @@ fn mesh_client_register(req: Request) Response {
 
 fn mesh_client_heartbeat(req: Request) Response {
     let body: string = request_body(req)
-    let client_id: string = mesh_client_trim(mesh_json_string_field(body, "client_id"))
+    let client_id: string = str_trim(mesh_json_string_field(body, "client_id"))
     if client_id == "" {
         return json(400, "{\"ok\":false,\"error\":\"client_id is required\"}")
     }
@@ -304,7 +282,7 @@ fn mesh_topics_match(topics: string, topic: string) bool {
             rest = rho_str_slice(rest, u32(comma) + 1,
                 u32(rho_strlen(rest)) - u32(comma) - 1)
         }
-        pattern = mesh_client_trim(pattern)
+        pattern = str_trim(pattern)
         if pattern != "" && mesh_topic_matches(pattern, topic) {
             return true
         }
@@ -338,8 +316,8 @@ fn mesh_client_deliver(project: string, app_name: string, client_id: string,
 
 fn mesh_publish(req: Request) Response {
     let body: string = request_body(req)
-    let project: string = mesh_client_trim(mesh_json_string_field(body, "project"))
-    let topic: string = mesh_client_trim(mesh_json_string_field(body, "topic"))
+    let project: string = str_trim(mesh_json_string_field(body, "project"))
+    let topic: string = str_trim(mesh_json_string_field(body, "topic"))
     let payload: string = mesh_json_string_field(body, "payload")
     if topic == "" {
         return json(400, "{\"ok\":false,\"error\":\"topic is required\"}")

@@ -41,12 +41,12 @@ fn check(condition: bool, what: string) void {
 }
 
 test fn decodes_percent_escapes() void {
-    check(rho_str_eq(url_decode("a%20b%2Fc"), "a b/c"), "percent escapes")
+    check(rho_str_eq(str_url_decode("a%20b%2Fc"), "a b/c"), "percent escapes")
     print("[PASS] decodes_percent_escapes\n")
 }
 
 test fn decodes_plus_as_space() void {
-    check(rho_str_eq(url_decode("two+words"), "two words"), "plus as space")
+    check(rho_str_eq(str_url_decode("two+words"), "two words"), "plus as space")
     print("[PASS] decodes_plus_as_space\n")
 }
 
@@ -77,9 +77,9 @@ test fn words_are_the_module_names() void {
 }
 
 test fn reads_a_form_value_once() void {
-    check(rho_str_eq(form_value("gateway=uno-q&link=uart", "gateway"), "uno-q"), "first field")
-    check(rho_str_eq(form_value("b=two+words&b=last", "b"), "two words"), "first duplicate")
-    check(rho_strlen(form_value("b=two+words&b=last", "missing")) == 0, "missing field")
+    check(rho_str_eq(form_field("gateway=uno-q&link=uart", "gateway"), "uno-q"), "first field")
+    check(rho_str_eq(form_field("b=two+words&b=last", "b"), "two words"), "first duplicate")
+    check(rho_strlen(form_field("b=two+words&b=last", "missing")) == 0, "missing field")
     print("[PASS] reads_a_form_value_once\n")
 }
 
@@ -89,10 +89,7 @@ test fn sanitize_keeps_one_line() void {
 }
 
 test fn hex_digits_are_values() void {
-    check(hex_value("0") == 0, "zero")
-    check(hex_value("9") == 9, "nine")
-    check(hex_value("A") == 10, "upper a")
-    check(hex_value("f") == 15, "lower f")
+    check(rho_str_eq(str_url_decode("a%2Fb%3d+c"), "a/b= c"), "escapes of either case")
     print("[PASS] hex_digits_are_values\n")
 }
 
