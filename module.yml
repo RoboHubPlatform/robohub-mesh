@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.15.0
+  version: 0.17.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -64,10 +64,13 @@ deps:
   robohub:
     logging: ">=0.1.0"
     htmx: ">=0.1.0"
-    i18n: ">=0.1.0"
+    i18n: ">=0.4.0"
     settings: ">=0.1.0"
     forms: ">=0.1.0"
     notifications: ">=0.1.0"
+    ui: ">=0.1.1"
+    robohub-bus: ">=0.2.0"
+    robohub-provider-mqtt: ">=0.2.0"
     robohub-auth: ">=0.1.0"
     robohub-alert: ">=1.0.0"
     robohub-provider-log: ">=0.2.0"
@@ -92,7 +95,16 @@ plugins:
 # Settings page changes them on a running installation (bind.conf in Mesh's
 # workspace, or ~/.rho/apps/mesh when it is started by hand); these are the
 # defaults.
+# The bus reaches MQTT devices: the broker the keeper runs (robohub-mqtt), as the
+# broker user the keeper made for Mesh.
+bus:
+  publish: [+/rpc, mesh/+/telemetry]
+  subscribe: [+/status/#, +/online]
+
 bind:
+  robohub.bus:
+    providers:
+      - robohub-provider-mqtt
   robohub.alert:
     providers:
       - robohub-provider-log
@@ -127,3 +139,30 @@ docs:
   index: docs/index.md
   sources:
     - docs/index.md
+
+# What Mesh needs from the machine. Firmware for a board is built and flashed
+# through rho-target and the board's platform, which declare their own toolchains;
+# these are what Mesh itself runs.
+system_deps:
+  executables:
+    - name: curl
+      description: gateways and devices are asked with it
+      install:
+        apt: curl
+        brew: curl
+    - name: openssl
+      description: the keys of gateways and links are made with it
+      install:
+        apt: openssl
+        brew: openssl
+    - name: flock
+      description: one job at a time per mesh
+      install:
+        apt: util-linux
+        brew: flock
+    - name: ssh
+      description: a gateway on another host is reached with it
+      required: false
+      install:
+        apt: openssh-client
+        brew: openssh

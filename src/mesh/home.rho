@@ -82,6 +82,9 @@ fn mesh_old_build_page(req: Request) Response {
 }
 
 fn mesh_project_open_page(req: Request) Response {
+    if !mesh_may(req, param(req, "id"), false) {
+        return mesh_denied(req)
+    }
     let id: string = param(req, "id")
     if !load_project(id) {
         return mesh_redirect("/mesh")

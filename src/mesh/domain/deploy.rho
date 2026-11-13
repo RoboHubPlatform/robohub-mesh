@@ -1,3 +1,15 @@
+//
+// @file deploy.rho
+// @brief What a board was built from, and what differs from it now.
+//
+// @module mesh.domain.deploy
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.domain.deploy
 
 // What a board was built from, and what differs from it now.

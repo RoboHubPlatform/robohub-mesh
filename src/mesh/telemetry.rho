@@ -1,3 +1,15 @@
+//
+// @file telemetry.rho
+// @brief The telemetry store Mesh offers other applications.
+//
+// @module mesh.telemetry
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-05
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.telemetry
 
 // The telemetry store Mesh offers other applications.
@@ -383,6 +395,13 @@ fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
     if source == "" {
         return 0
     }
+    return telemetry_record_fields(project, source, body, fields)
+}
+
+// telemetry_record_fields stores the fields a manifest's field map describes —
+// `signal|field|unit|kind|json path|scale`, one per line — from a device's JSON
+// answer, whichever transport brought it, and answers how many were written.
+fn telemetry_record_fields(project: string, source: string, body: string, fields: string) u32 {
     var rest: string = fields
     var recorded: u32 = 0
     while rest != "" {
@@ -504,7 +523,11 @@ fn telemetry_device_poll_once() void {
         var index: u32 = 1
         while index <= count {
             if project_node_value(file, index, "kind", "") == "device" {
-                ignore_u32(telemetry_poll_http_device(project, file, index))
+                if project_node_value(file, index, "transport", "http") == "mqtt" {
+                    ignore_u32(telemetry_poll_mqtt_device(project, file, index))
+                } else {
+                    ignore_u32(telemetry_poll_http_device(project, file, index))
+                }
             }
             index = index + 1
         }
@@ -537,6 +560,7 @@ fn telemetry_worker() void {
         }
         if device_ticks == 0 {
             mesh_fault_emit_once()
+            mesh_relay_feeds()
             // Every six seconds: each mesh's gateway health, and the live
             // regions of the fleet and the open agora.
             agora_tick()
@@ -620,6 +644,9 @@ fn mesh_spec_coordinates(project: string, spec: string) string {
 }
 
 fn mesh_api_telemetry_status(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let project: string = param(req, "project")
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
@@ -628,6 +655,9 @@ fn mesh_api_telemetry_status(req: Request) Response {
 }
 
 fn mesh_api_telemetry_latest(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let project: string = param(req, "project")
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
@@ -642,6 +672,9 @@ fn mesh_api_telemetry_latest(req: Request) Response {
 }
 
 fn mesh_api_telemetry_series(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let project: string = param(req, "project")
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
@@ -660,6 +693,9 @@ fn mesh_api_telemetry_series(req: Request) Response {
         request_query_param(req, "step")), "application/json", "" }
 }
 fn mesh_api_telemetry_stream(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let project: string = param(req, "project")
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
@@ -807,6 +843,9 @@ fn mesh_gateway_status_json(project: string) string {
 }
 
 fn mesh_api_gateway_status(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let project: string = param(req, "project")
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()
@@ -874,6 +913,9 @@ fn mesh_faults_page(req: Request) Response {
 }
 
 fn mesh_fault_clear(req: Request) Response {
+    if !mesh_may(req, current_project(), true) {
+        return mesh_denied(req)
+    }
     let body: string = request_body(req)
     if !forms_csrf_ok(body) {
         return page(req, i18n_t(req, "faults.title"),
@@ -895,6 +937,9 @@ fn mesh_fault_clear(req: Request) Response {
 }
 
 fn mesh_api_telemetry_faults(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let project: string = param(req, "project")
     if !mesh_scoped(req, project) {
         return mesh_scope_denied()

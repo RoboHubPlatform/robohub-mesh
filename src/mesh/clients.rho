@@ -1,3 +1,15 @@
+//
+// @file clients.rho
+// @brief Application clients that attach to a Mesh project.
+//
+// @module mesh
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-09
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh
 
 // Application clients that attach to a Mesh project.

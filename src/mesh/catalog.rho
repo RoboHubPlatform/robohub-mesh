@@ -12,10 +12,117 @@
 
 module mesh.catalog
 
+// The orchestrator's registry — which modules there are, what each is for and
+// where it is on this machine — comes from the keeper (/api/v1/registry), asked
+// with Mesh's own client credential, so Mesh does not read the orchestrator's
+// checkout. The answer is kept as one small file per module, the shape the
+// orchestrator's own entries have, so everything that reads an entry reads it the
+// same way. Mesh started without a keeper reads the checkout as before.
+
+const REGISTRY_FRESH_SECONDS: u32 = 60
+
+fn registry_cache_dir() string {
+    return wizard_dir() + "/registry"
+}
+
+fn mesh_keeper_url() string {
+    var keeper: string = getenv("ROBOHUB_KEEPER_URL")
+    if keeper == "" {
+        keeper = getenv("RHO_AUTH_URL")
+    }
+    return keeper
+}
+
+// registry_yaml_value is a value as one double-quoted YAML scalar.
+fn registry_yaml_value(value: string) string {
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(value)) {
+        let ch: string = rho_str_slice(value, i, 1)
+        if rho_str_eq(ch, "\"") || rho_str_eq(ch, "\\") {
+            out = out + "\\" + ch
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return "\"" + out + "\""
+}
+
+// registry_from_keeper is whether the registry is the keeper's: asked again
+// after REGISTRY_FRESH_SECONDS, and the last answer kept while the keeper cannot
+// be reached.
+fn registry_from_keeper() bool {
+    let dir: string = registry_cache_dir()
+    let stamp: string = dir + "/.fetched"
+    let now: u32 = mesh_now_seconds()
+    let fetched: u32 = u32(rho_int_from_str(first_line(rho_read_text(stamp))))
+    if fetched > 0 && now < fetched + REGISTRY_FRESH_SECONDS {
+        return true
+    }
+    let keeper: string = mesh_keeper_url()
+    if keeper == "" || getenv("RHO_CLIENT_ID") == "" {
+        return false
+    }
+    let report: string = wizard_report("keeper-registry")
+    let status: u32 = rho_http_request("GET", keeper + "/api/v1/registry?format=tsv", "", "", "keeper", "keeper:read", report)
+    if status != 200 {
+        return fetched > 0
+    }
+    ignore_u32(rho_exec("mkdir", "-p " + dir, wizard_report("mkdir-registry")))
+    var rest: string = rho_read_text(report)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
+        let kind: string = tsv_part(line, 0)
+        if rho_str_eq(kind, "workspace") {
+            ignore_bool(rho_write_text(dir + "/.workspace", tsv_part(line, 1) + "\n"))
+        } else if rho_str_eq(kind, "module") {
+            let name: string = tsv_part(line, 1)
+            if name != "" && rho_str_index_of(name, "/") < 0 && rho_str_index_of(name, "..") < 0 {
+                ignore_bool(rho_write_text(dir + "/" + name + ".yml",
+                    "name: " + registry_yaml_value(name) + "\nrole: " + registry_yaml_value(tsv_part(line, 2)) +
+                    "\npath: " + registry_yaml_value(tsv_part(line, 3)) + "\ngit: " + registry_yaml_value(tsv_part(line, 4)) +
+                    "\nsummary: " + registry_yaml_value(tsv_part(line, 5)) + "\n"))
+            }
+        }
+    }
+    ignore_bool(rho_write_text(stamp, rho_int_to_str(now) + "\n"))
+    return true
+}
+
+// tsv_part is one tab-separated field of a line.
+fn tsv_part(line: string, index: u32) string {
+    var rest: string = line
+    var i: u32 = 0
+    while i < index {
+        let at: i32 = rho_str_index_of(rest, "\t")
+        if at < 0 {
+            return ""
+        }
+        rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        i = i + 1
+    }
+    let end: i32 = rho_str_index_of(rest, "\t")
+    if end < 0 {
+        return rest
+    }
+    return rho_str_slice(rest, 0, u32(end))
+}
+
+// registry_folder is where the registry's entries are read from: the keeper's
+// answer, or the orchestrator's checkout.
+fn registry_folder() string {
+    if registry_from_keeper() {
+        return registry_cache_dir()
+    }
+    return robohub_root() + "/registry/modules"
+}
+
 fn registry_names() string {
     ensure_wizard_dir()
-    let code: u32 = rho_exec("ls", robohub_root() + "/registry/modules",
-        wizard_report("ls-registry"))
+    let code: u32 = rho_exec("ls", registry_folder(), wizard_report("ls-registry"))
     if code != 0 {
         return ""
     }
@@ -23,7 +130,20 @@ fn registry_names() string {
 }
 
 fn registry_entry(name: string) string {
-    return robohub_root() + "/registry/modules/" + name + ".yml"
+    return registry_folder() + "/" + name + ".yml"
+}
+
+// mesh_workspace is the folder that holds the ecosystem's checkouts, which a
+// board's manifest names its dependencies under: the keeper's word for it, or
+// beside the orchestrator.
+fn mesh_workspace() string {
+    if registry_from_keeper() {
+        let said: string = first_line(rho_read_text(registry_cache_dir() + "/.workspace"))
+        if said != "" {
+            return said
+        }
+    }
+    return canonical_path(robohub_root() + "/..")
 }
 
 fn find_manifests(root: string, name: string) string {
@@ -1738,4 +1858,12 @@ fn signal_row_for(path: string, is_device: bool, signal: string) string {
         }
     }
     return ""
+}
+
+// mesh_registry_source says where the registry was read from, for Settings.
+fn mesh_registry_source() string {
+    if registry_from_keeper() {
+        return "the keeper, " + mesh_keeper_url() + "/api/v1/registry"
+    }
+    return robohub_root() + "/registry/modules"
 }

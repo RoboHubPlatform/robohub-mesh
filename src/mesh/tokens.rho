@@ -1,3 +1,15 @@
+//
+// @file tokens.rho
+// @brief Per-project application tokens.
+//
+// @module mesh
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-09
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh
 
 // Per-project application tokens.
@@ -120,6 +132,9 @@ fn mesh_admin_request(req: Request) bool {
 }
 
 fn mesh_project_token_generate(req: Request) Response {
+    if !mesh_may(req, param(req, "id"), true) {
+        return mesh_denied(req)
+    }
     if !mesh_admin_request(req) {
         return mesh_scope_denied()
     }
@@ -158,6 +173,9 @@ fn mesh_project_token_generate(req: Request) Response {
 }
 
 fn mesh_project_token_revoke(req: Request) Response {
+    if !mesh_may(req, param(req, "id"), true) {
+        return mesh_denied(req)
+    }
     if !mesh_admin_request(req) {
         return mesh_scope_denied()
     }

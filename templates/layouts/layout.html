@@ -1,6 +1,7 @@
 <!doctype html>
-<html lang="{{ locale }}">
+<html lang="{{ locale }}" data-theme="dark">
 <head>
+{{{ ui_head }}}
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 {{{ htmx }}}
@@ -48,6 +49,9 @@
     border-bottom: 1px solid var(--line);
   }
   .topbar { top: 0; }
+  /* The RoboHub top bar (robohub.ui), fixed where Mesh's own bar was. */
+  .rh-top { position: fixed; top: 0; left: 0; right: 0; z-index: 50; min-height: 3.05rem; --panel: #0b171c; }
+  .rh-top .topnav { margin-left: .4rem; }
   .bottombar { bottom: 0; border-top: 1px solid var(--line); border-bottom: 0; font-size: .78rem; color: var(--muted); }
   .brand {
     flex: 0 0 auto; font-family: var(--serif); font-size: 1.08rem; letter-spacing: .045em;
@@ -362,11 +366,7 @@
 </style>
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="/mesh">RoboHub <em>Mesh</em></a>
-  <nav class="topnav" aria-label="Mesh navigation">{{{ menu }}}
-      {{{ locale_switch }}}</nav>
-</header>
+{{{ topbar }}}
 <main class="page">
   <div class="crumb" id="crumb">{{ title }}</div>
   {{{ body }}}

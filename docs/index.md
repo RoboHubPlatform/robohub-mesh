@@ -634,3 +634,18 @@ Every frame between a board and its gateway is authenticated (robohub-transport'
 A board built that way says hello to its gateway, opens a session, and sends only
 sealed frames; its gateway accepts nothing else unless `ALLOW_PLAIN_FRAMES=1`.
 
+## Who may do what
+
+Mesh reads the grants the keeper put in a person's ticket:
+
+| Grant | May |
+| --- | --- |
+| `mesh:*` | everything |
+| `mesh:read` | read every mesh |
+| `mesh:<mesh>` | read and change that mesh |
+| `mesh:<mesh>:read` | read that mesh |
+
+A new mesh, copying one, applying in every mesh and Mesh's own settings need
+`mesh:*`. Someone granted particular meshes sees a fleet of those only. Grants are
+given in the keeper, under Users & access.
+

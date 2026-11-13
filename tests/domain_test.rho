@@ -1,3 +1,15 @@
+//
+// @file domain_test.rho
+// @brief The unit tests of Mesh's domain: transports, impact, deploy signatures and the plan as text.
+//
+// @module mesh.domain_test
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.domain_test
 
 include "../src/mesh/domain/plan_text.rho"

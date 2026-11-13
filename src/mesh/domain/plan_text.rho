@@ -1,3 +1,15 @@
+//
+// @file plan_text.rho
+// @brief The plan as text.
+//
+// @module mesh.domain.plan_text
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.domain.plan_text
 
 // The plan as text: flat key=value lines, and the pure operations on them that

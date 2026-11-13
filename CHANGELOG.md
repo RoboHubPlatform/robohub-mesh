@@ -373,3 +373,38 @@ the shared settings — have its buttons and say times as ages. The agora, the
 fleet and search are in the viewer's language for every whole label in the
 catalog (locales/phrases.<locale>.txt, Romanian first), including what the
 live stream redraws.
+
+## [0.16.0] - 2026-11-13
+
+Mesh draws the RoboHub top bar from the shared `robohub.ui` module: the brand,
+the app switcher — filled from the keeper, so the keeper and every other
+application are one click away — Mesh's own places in the middle, and the
+person's menu with the language and signing out at the keeper. The keeper link
+in Mesh's own menu is gone; the switcher is the way there. Mesh stays dark.
+
+Mesh follows the grants in a person's ticket: `mesh:*` is everything, `mesh:read`
+reads every mesh, `mesh:<mesh>` reads and changes that mesh and
+`mesh:<mesh>:read` reads it. Someone granted particular meshes sees a fleet of
+those, without the live stream of the others, and is refused the rest; a new mesh,
+copying one, applying in every mesh and Mesh's settings need `mesh:*`.
+
+Mesh asks the keeper for the orchestrator's registry (`/api/v1/registry`, with
+its own client credential) instead of reading the orchestrator's checkout, and
+keeps the answer for a minute — and while the keeper cannot be reached. Started
+without a keeper, it reads the checkout as before. Settings says which.
+
+MQTT devices: a device on `transport: mqtt` is reached through the bus
+(robohub.bus, bound to the keeper's broker), its address being its topic prefix — its
+readings from the newest status it published, its switch by publishing what its
+manifest says. What a device can be told is its manifest's `actions` for both
+transports, so Shelly's Switch.Set is no longer written into Mesh, and a device read
+directly is read by its manifest's HTTP path and field map.
+
+
+## [0.17.0] - 2026-11-13
+
+Each project's live telemetry feed is also relayed on the bus, as
+`mesh/<project>/telemetry`, a line per message exactly as the HTTP stream sends
+it. An application whose gateway provider uses the broker (robohub-provider-mesh
+0.4.0, `transport: auto` or `bus`) follows that topic instead of holding an HTTP
+stream to Mesh. Mesh's broker user may now publish there.

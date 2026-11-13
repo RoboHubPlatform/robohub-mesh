@@ -102,3 +102,5 @@ Link saved.	Legătură salvată.
 Moved under Gateway.	Mutat sub gateway.
 Nothing is rebuilt: what changed lives in Mesh, not in any board's image.	Nu se recompilează nimic: ce s-a schimbat e păstrat în Mesh, nu în imaginea vreunei plăci.
 Builds run in the background. Flashing a board asks you to put it in its programming mode — BOOTSEL for a Pico — when it is that board's turn, on its card.	Compilările rulează în fundal. Când vine rândul unei plăci, cardul ei îți cere s-o pui în modul de programare — BOOTSEL pentru un Pico.
+Applications	Aplicații
+Language	Limbă

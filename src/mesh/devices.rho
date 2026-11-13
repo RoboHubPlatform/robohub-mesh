@@ -1,0 +1,165 @@
+//
+// @file devices.rho
+// @brief Devices as their manifests describe them: reading one over MQTT, and telling one what to do over either transport.
+//
+// @module mesh.devices
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.devices
+
+// A device's manifest says how it is read and what it can be told, for every
+// transport it speaks; Mesh does what it says, so no device's protocol is written
+// here. Over MQTT a device is reached through the bus (robohub.bus, bound to the
+// keeper's broker): its address in the plan is its topic prefix, Mesh follows
+// `<prefix>/#`, reads the newest status message and publishes commands.
+
+// mesh_relay_feeds puts every project's live telemetry feed on the bus, as
+// `mesh/<project>/telemetry`, a line per message exactly as the HTTP stream sends
+// it; an application whose gateway provider uses the broker follows that topic
+// instead of the stream. The relay starts once per project and holds its place
+// in the feed, so this is cheap to call on every pass. Without a broker there is
+// nothing to do: the HTTP stream is the only way, as before.
+fn mesh_relay_feeds() void {
+    var rest: string = telemetry_project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" {
+            ignore_bool(bus.relay(telemetry_event_stream(id), "mesh/" + id + "/telemetry"))
+        }
+    }
+}
+
+/// The name a command says it comes from, where a device's protocol asks for one.
+const MESH_DEVICE_CLIENT: string = "robohub-mesh"
+
+// device_replace is text with every occurrence of one string replaced.
+fn device_replace(text: string, from: string, to: string) string {
+    if from == "" || rho_str_index_of(text, from) < 0 {
+        return text
+    }
+    var out: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, from)
+        if at < 0 {
+            out = out + rest
+            rest = ""
+        } else {
+            out = out + rho_str_slice(rest, 0, u32(at)) + to
+            rest = rho_str_slice(rest, u32(at) + u32(rho_strlen(from)), u32(rho_strlen(rest)) - u32(at) - u32(rho_strlen(from)))
+        }
+    }
+    return out
+}
+
+// device_fill puts a device's values into a manifest's template: {prefix}, {on}
+// and {client}.
+fn device_fill(text: string, prefix: string, on: string) string {
+    var out: string = device_replace(text, "{prefix}", prefix)
+    out = device_replace(out, "{on}", on)
+    return device_replace(out, "{client}", MESH_DEVICE_CLIENT)
+}
+
+// telemetry_poll_mqtt_device reads one MQTT device from the newest status it
+// published and stores the fields its manifest describes. The first read starts
+// following the device, so a reading is there from its next message on.
+fn telemetry_poll_mqtt_device(project: string, file: string, index: u32) u32 {
+    let name: string = project_node_value(file, index, "device", "")
+    let prefix: string = project_node_value(file, index, "address", "")
+    if name == "" || prefix == "" || rho_str_index_of(prefix, "#") >= 0 || rho_str_index_of(prefix, "+") >= 0 {
+        return 0
+    }
+    let manifest: string = device_manifest(name)
+    let topic: string = device_fill(yaml.value(manifest, "telemetry_mqtt.status_topic"), prefix, "")
+    let fields: string = manifest_list_items(manifest, "telemetry_mqtt_fields")
+    if topic == "" || fields == "" {
+        return 0
+    }
+    ignore_bool(bus.follow(prefix + "/#", ""))
+    let body: string = bus.latest(topic)
+    if body == "" {
+        return 0
+    }
+    let source: string = project_node_id(file, index)
+    if source == "" {
+        return 0
+    }
+    return telemetry_record_fields(project, source, body, fields)
+}
+
+// mesh_device_command tells a device to do something its manifest's `actions`
+// names — `switch`, on or off — over the transport the plan says it speaks, and
+// answers whether it was taken.
+fn mesh_device_command(project: string, index: u32, action: string, on: bool) bool {
+    let file: string = project_file(project)
+    let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
+    let transport: string = project_node_value(file, index, "transport", "http")
+    let address: string = project_node_value(file, index, "address", "")
+    var value: string = "false"
+    if on {
+        value = "true"
+    }
+    if address == "" {
+        return false
+    }
+    if rho_str_eq(transport, "mqtt") {
+        let topic: string = device_fill(yaml.value(manifest, "actions." + action + ".mqtt_topic"), address, value)
+        let payload: string = device_fill(yaml.value(manifest, "actions." + action + ".mqtt_payload"), address, value)
+        if topic == "" || payload == "" {
+            return false
+        }
+        return bus.publish(topic, payload, false)
+    }
+    var path: string = yaml.value(manifest, "actions." + action + ".http")
+    if path == "" {
+        return false
+    }
+    let report: string = wizard_report("device-command-" + rho_int_to_str(index))
+    return rho_exec("curl", "-fsS -m 4 " + mesh_quote(address + device_fill(path, address, value)), report) == 0
+}
+
+// mesh_device_read_field reads one field of an HTTP device directly, by its
+// manifest's path and field map, for a device the store has no reading of yet.
+fn mesh_device_read_field(project: string, index: u32, wanted: string) string {
+    let file: string = project_file(project)
+    let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
+    let address: string = project_node_value(file, index, "address", "")
+    let path: string = yaml.value(manifest, "telemetry.http_path")
+    if address == "" || path == "" {
+        return ""
+    }
+    let report: string = wizard_report("device-read-" + rho_int_to_str(index))
+    if rho_exec("curl", "-fsS -m 3 " + mesh_quote(address + path), report) != 0 {
+        return ""
+    }
+    let body: string = rho_read_text(report)
+    var rest: string = manifest_list_items(manifest, "telemetry_http_fields")
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
+        line = device_trim(line)
+        if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") {
+            line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
+        }
+        if rho_str_eq(field(line, 1), wanted) {
+            if rho_str_eq(field(line, 3), "bool") {
+                return telemetry_json_bool(body, field(line, 4))
+            }
+            return telemetry_json_number(body, field(line, 4), field(line, 5))
+        }
+    }
+    return ""
+}

@@ -1,3 +1,15 @@
+//
+// @file plan.rho
+// @brief A mesh plan as plan.yml: the nodes, links and devices, read and written with a revision.
+//
+// @module mesh.plan
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.plan
 
 include "domain/plan_text.rho"

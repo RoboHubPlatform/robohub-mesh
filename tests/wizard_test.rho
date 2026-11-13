@@ -1,3 +1,15 @@
+//
+// @file wizard_test.rho
+// @brief The unit tests of the string helpers Mesh's pages are built with.
+//
+// @module mesh.wizard_test
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-02
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.wizard_test
 
 include "../src/mesh/wizard_text.rho"

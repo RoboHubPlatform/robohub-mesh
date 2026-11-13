@@ -1,3 +1,15 @@
+//
+// @file storage.rho
+// @brief The host primitives Mesh calls: files, programs, HTTP and the telemetry store.
+//
+// @module mesh.storage
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-02
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.storage
 
 extern fn rho_arg(index: i32) string

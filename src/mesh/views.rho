@@ -238,6 +238,9 @@ fn mesh_redirect(location: string) Response {
 }
 
 fn mesh_project_new(req: Request) Response {
+    if !mesh_may(req, "", true) {
+        return mesh_denied(req)
+    }
     let name: string = form_value(request_body(req), "name")
     let id: string = new_project(name)
     info("mesh", "created project " + id + " at " + project_location(id))
@@ -245,6 +248,9 @@ fn mesh_project_new(req: Request) Response {
 }
 
 fn mesh_project_settings_page(req: Request) Response {
+    if !mesh_may(req, param(req, "id"), false) {
+        return mesh_denied(req)
+    }
     return mesh_project_settings_for(req, param(req, "id"))
 }
 
@@ -298,6 +304,9 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
 }
 
 fn mesh_project_settings_post(req: Request) Response {
+    if !mesh_may(req, param(req, "id"), true) {
+        return mesh_denied(req)
+    }
     let id: string = param(req, "id")
     let file: string = project_file(id)
     if !rho_path_exists(file) {
@@ -319,6 +328,9 @@ fn mesh_project_settings_post(req: Request) Response {
 }
 
 fn mesh_project_delete(req: Request) Response {
+    if !mesh_may(req, "", true) {
+        return mesh_denied(req)
+    }
     let id: string = sanitize(form_value(request_body(req), "project"))
     if id == "" || rho_str_index_of(id, "/") >= 0 || rho_str_index_of(id, "..") >= 0 {
         return mesh_redirect("/mesh")
@@ -432,7 +444,7 @@ fn mesh_project_menu(req: Request) string {
             id = rho_str_slice(ids, 0, u32(at))
             ids = rho_str_slice(ids, u32(at) + 1, u32(rho_strlen(ids)) - u32(at) - 1)
         }
-        if id == "" {
+        if id == "" || !mesh_may(req, id, false) {
             continue
         }
         var classes: string = "nav-link project-link"
@@ -523,13 +535,8 @@ fn mesh_bottom_menu(req: Request) string {
 
 fn mesh_menu(req: Request) string {
     ensure_wizard_dir()
+    // The keeper and the other applications are in the switcher.
     var out: string = ""
-    let keeper_port: string = getenv("RHO_KEEPER_PORT")
-    if keeper_port != "" {
-        out = out + "<a class=\"nav-link keeper-link\" href=\"#\" data-keeper-port=\"" +
-            escape_html(keeper_port) + "\"><span class=\"ico\" aria-hidden=\"true\">↑</span>" + i18n_t(req, "nav.keeper") + "</a>"
-        out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
-    }
     out = out + mesh_menu_link(i18n_t(req, "nav.fleet"), "/mesh", "▦")
     out = out + mesh_menu_link(i18n_t(req, "nav.faults"), "/faults", "!")
     out = out + "<span class=\"nav-divider\" aria-hidden=\"true\"></span>"
@@ -538,9 +545,30 @@ fn mesh_menu(req: Request) string {
     return out
 }
 
+// mesh_topbar is the RoboHub top bar: the switcher, Mesh's own places in the
+// middle, and the person's menu. Signing out is the keeper's; Mesh has no light
+// look yet, so its menu offers no theme.
+fn mesh_topbar(req: Request) string {
+    let keeper_port: string = getenv("RHO_KEEPER_PORT")
+    var who: string = header_str(req, "X-Rho-Subject")
+    if who == "" {
+        who = "Signed in"
+    }
+    var signout: string = ""
+    if keeper_port != "" {
+        signout = "<a class=\"app-open\" href=\"#\" data-app-port=\"" + escape_html(keeper_port) +
+            "\" data-app-route=\"/logout\">" + i18n_t(req, "nav.sign_out") + "</a>"
+    }
+    let links: string = ui_language(i18n_locale(req), request_path(req))
+    return ui_topbar_remote("mesh", "Mesh", keeper_port,
+        "<nav class=\"topnav\" aria-label=\"Mesh navigation\">" + mesh_menu(req) + "</nav>",
+        ui_person(req, who, "", links, signout, false))
+}
+
 fn mesh_shell(req: Request, title: string, content: string) string {
     return template_fill(template_get("layout"),
-        vars("title", title) + vars("htmx", htmx_head()) + i18n_vars(req) + vars("menu", mesh_menu(req)) +
+        vars("title", title) + vars("htmx", htmx_head()) + vars("ui_head", ui_head()) + vars("topbar", mesh_topbar(req)) +
+        i18n_vars(req) + vars("menu", mesh_menu(req)) +
         vars("context", mesh_context(req)) + vars("projects", mesh_bottom_menu(req)) +
         vars("notifications", notification_embed()) + vars("body", content))
 }

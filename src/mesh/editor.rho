@@ -688,7 +688,7 @@ fn editor_publish(id: string) void {
 fn editor_answer(req: Request, id: string, selection: string, tab: string, notice: string) Response {
     editor_publish(id)
     if htmx_is_request(req) {
-        // A fragment is translated in the page it goes into (look_phrases_script).
+        // A fragment is translated in the page it goes into (i18n_phrases in the shared i18n module).
         return html(status_ok(), (editor_inspector(id, selection, tab, "", "", notice) +
             "<div hx-swap-oob=\"innerHTML:#agora-canvas\">" + look_tree(id, "") + "</div>" +
             "<div hx-swap-oob=\"innerHTML:#agora-bar\">" + look_bar(id) + "</div>"))
@@ -719,6 +719,9 @@ fn editor_open_project(req: Request) string {
 /* -------------------------------------------------------------------------- */
 
 fn mesh_p_page(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -736,6 +739,9 @@ fn editor_fragment(req: Request, id: string, selection: string, tab: string) Res
 }
 
 fn mesh_p_node_page(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -748,6 +754,9 @@ fn mesh_p_node_page(req: Request) Response {
 }
 
 fn mesh_p_edge_page(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -756,6 +765,9 @@ fn mesh_p_edge_page(req: Request) Response {
 }
 
 fn mesh_p_gateway_page(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -810,6 +822,9 @@ fn editor_fit_link(index: u32, parent: string, board: string) string {
 }
 
 fn mesh_p_node_post(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     // The project is the one the address names; a form cannot be for another.
     let id: string = editor_open_project(req)
     if id == "" {
@@ -897,6 +912,9 @@ fn mesh_p_node_post(req: Request) Response {
 }
 
 fn mesh_p_node_new(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     // The project is the one the address names; a form cannot be for another.
     let id: string = editor_open_project(req)
     if id == "" {
@@ -967,6 +985,9 @@ fn mesh_p_node_new(req: Request) Response {
 }
 
 fn mesh_p_node_delete(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     // The project is the one the address names; a form cannot be for another.
     let id: string = editor_open_project(req)
     if id == "" {
@@ -1028,6 +1049,9 @@ fn mesh_p_node_delete(req: Request) Response {
 }
 
 fn mesh_p_edge_post(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     // The project is the one the address names; a form cannot be for another.
     let id: string = editor_open_project(req)
     if id == "" {
@@ -1090,6 +1114,9 @@ fn mesh_p_edge_post(req: Request) Response {
 }
 
 fn mesh_p_gateway_post(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     // The project is the one the address names; a form cannot be for another.
     let id: string = editor_open_project(req)
     if id == "" {
@@ -1125,6 +1152,9 @@ fn mesh_p_gateway_post(req: Request) Response {
 // canvas asks. A board keeps its link when the new parent can serve it, and is
 // out of date until it is built for its new place.
 fn mesh_p_node_parent(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -1216,6 +1246,9 @@ fn editor_impact(index: u32, lines: string) string {
 
 // mesh_p_node_impact answers a form as it stands with what saving it would do.
 fn mesh_p_node_impact(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return html(status_ok(), "")

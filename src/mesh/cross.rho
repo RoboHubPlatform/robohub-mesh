@@ -111,6 +111,9 @@ fn cross_move_form(id: string, index: u32) string {
 }
 
 fn mesh_p_node_move(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -213,6 +216,9 @@ fn cross_template_lines(text: string) string {
 }
 
 fn mesh_project_copy(req: Request) Response {
+    if !mesh_may(req, "", true) {
+        return mesh_denied(req)
+    }
     let body: string = request_body(req)
     let source: string = form_value(body, "project")
     if !rho_path_exists(project_file(source)) {
@@ -233,6 +239,9 @@ fn mesh_project_copy(req: Request) Response {
 
 // mesh_apply_all applies what is out of date in every mesh.
 fn mesh_apply_all(req: Request) Response {
+    if !mesh_may(req, "", true) {
+        return mesh_denied(req)
+    }
     var rest: string = project_ids()
     var queued: u32 = 0
     while rest != "" {

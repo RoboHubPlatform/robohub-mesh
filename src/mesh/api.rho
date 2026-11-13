@@ -74,6 +74,9 @@ fn mesh_device_state(index: u32) string {
 }
 
 fn mesh_device_poll(req: Request) Response {
+    if !mesh_may(req, current_project(), true) {
+        return mesh_denied(req)
+    }
     if mesh_project_mismatch(req) {
         return mesh_project_refused()
     }
@@ -86,10 +89,15 @@ fn mesh_device_poll(req: Request) Response {
     let file: string = project_file(project)
     let address: string = node_device_address(index)
     if rho_strlen(address) == 0 {
-        save_setting("mesh_message", "This device has no HTTP address.")
+        save_setting("mesh_message", "This device has no address.")
         return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
     }
-    let recorded: u32 = telemetry_poll_http_device(project, file, index)
+    var recorded: u32 = 0
+    if rho_str_eq(project_node_value(file, index, "transport", "http"), "mqtt") {
+        recorded = telemetry_poll_mqtt_device(project, file, index)
+    } else {
+        recorded = telemetry_poll_http_device(project, file, index)
+    }
     if recorded == 0 {
         save_setting("mesh_message",
             "The device did not answer or its manifest names no HTTP telemetry.")
@@ -119,21 +127,17 @@ fn mesh_device_poll(req: Request) Response {
 }
 
 fn mesh_device_switch(index: u32, state: string) bool {
-    let address: string = node_device_address(index)
-    let on: string = "false"
-    if rho_str_eq(state, "on") {
-        on = "true"
-    }
-    let report: string = wizard_report("device-set-" + rho_int_to_str(index))
-    let url: string = address + "/rpc/Switch.Set?id=0&on=" + on
-    let code: u32 = rho_exec("curl", "-fsS -m 3 " + mesh_quote(url), report)
-    if code == 0 {
+    let ok: bool = mesh_device_command(current_project(), index, "switch", rho_str_eq(state, "on"))
+    if ok {
         save_setting("node." + rho_int_to_str(index) + ".state", state)
     }
-    return code == 0
+    return ok
 }
 
 fn mesh_device_set(req: Request) Response {
+    if !mesh_may(req, current_project(), true) {
+        return mesh_denied(req)
+    }
     if mesh_project_mismatch(req) {
         return mesh_project_refused()
     }
@@ -505,20 +509,11 @@ fn mesh_source_value(project: string, source: string) string {
     }
     if kind == "device" && address != "" &&
         (transport == "http" || rho_str_index_of(address, "http") == 0) {
-        // A device the plan reaches directly is read the same way Mesh's own
-        // device page reads it, so a plug works before it is registered on a
-        // gateway.
-        let report: string = wizard_report("mesh-source-device")
-        if rho_exec("curl", "-fsS -m 3 " + mesh_quote(address + "/rpc/Shelly.GetStatus"),
-            report) == 0 {
-            let text: string = rho_read_text(report)
-            if field_name == "state" {
-                return mesh_json_bool(text, "output")
-            }
-            if field_name == "power_w" {
-                return mesh_json_number(text, "apower")
-            }
-            return mesh_json_number(text, field_name)
+        // A device the plan reaches directly is read by its manifest, so a plug
+        // works before it is registered on a gateway.
+        let direct: string = mesh_device_read_field(project, rho_int_from_str(field(spec, 1)), field_name)
+        if direct != "" {
+            return direct
         }
     }
     if kind == "module" {
@@ -569,16 +564,10 @@ fn mesh_source_action(project: string, source: string, state: string) bool {
     if desired != "on" && desired != "off" {
         desired = "on"
     }
-    if address != "" && (transport == "http" || rho_str_index_of(address, "http") == 0) {
+    if address != "" && (transport == "http" || transport == "mqtt" || rho_str_index_of(address, "http") == 0) {
         // Drive the device the plan names, not only one the gateway already
-        // knows; this is the same RPC Mesh's device page uses.
-        var on: string = "false"
-        if desired == "on" {
-            on = "true"
-        }
-        let direct: string = wizard_report("mesh-source-switch")
-        if rho_exec("curl", "-fsS -m 4 " +
-            mesh_quote(address + "/rpc/Switch.Set?id=0&on=" + on), direct) == 0 {
+        // knows, by what its manifest says it can be told.
+        if mesh_device_command(project, rho_int_from_str(field(spec, 1)), "switch", desired == "on") {
             return true
         }
     }
@@ -610,6 +599,9 @@ fn mesh_api_sources(req: Request) Response {
 }
 
 fn mesh_api_project_sources(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     if !mesh_scoped(req, param(req, "project")) {
         return mesh_scope_denied()
     }
@@ -618,6 +610,9 @@ fn mesh_api_project_sources(req: Request) Response {
 }
 
 fn mesh_api_source_value(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     if !mesh_scoped(req, param(req, "project")) {
         return mesh_scope_denied()
     }
@@ -626,6 +621,9 @@ fn mesh_api_source_value(req: Request) Response {
 }
 
 fn mesh_api_source_action(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), rho_str_eq(request_method(req), "POST")) {
+        return mesh_denied(req)
+    }
     if !mesh_scoped(req, param(req, "project")) {
         return mesh_scope_denied()
     }
@@ -677,6 +675,9 @@ fn mesh_api_projects(req: Request) Response {
 }
 
 fn mesh_api_project_gateway(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = param(req, "project")
     let url: string = mesh_project_gateway(id)
     if url == "" {
@@ -732,6 +733,9 @@ fn mesh_api_devices(req: Request) Response {
 }
 
 fn mesh_api_device_switch(req: Request) Response {
+    if !mesh_may(req, current_project(), true) {
+        return mesh_denied(req)
+    }
     if !mesh_scoped(req, current_project()) {
         return mesh_scope_denied()
     }

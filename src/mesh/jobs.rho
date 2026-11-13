@@ -161,7 +161,7 @@ fn jobs_add(project: string, kind: string, target: string, label: string, script
     rho_unlock("mesh.jobs:" + project)
     // A board's manifest names its dependencies under the workspace, and a job
     // runs with whatever environment Mesh was started with: it is said here.
-    let workspace: string = canonical_path(robohub_root() + "/..")
+    let workspace: string = mesh_workspace()
     ignore_bool(rho_write_text(jobs_path(project, seq, "sh"), "set -e\nexport ROBOHUB_WORKSPACE=\"${ROBOHUB_WORKSPACE:-" +
         workspace + "}\"\n" + script))
     if after != "" {
@@ -724,6 +724,9 @@ fn jobs_apply_inspector(project: string, notice: string) string {
 /* -------------------------------------------------------------------------- */
 
 fn mesh_p_apply_page(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -787,6 +790,9 @@ fn jobs_apply(id: string, only: string) string {
 }
 
 fn mesh_p_apply_post(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -808,6 +814,9 @@ fn mesh_p_apply_post(req: Request) Response {
 }
 
 fn mesh_p_job_page(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")
@@ -816,6 +825,9 @@ fn mesh_p_job_page(req: Request) Response {
 }
 
 fn mesh_p_job_post(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
     let id: string = editor_open_project(req)
     if id == "" {
         return mesh_redirect("/mesh/fleet")

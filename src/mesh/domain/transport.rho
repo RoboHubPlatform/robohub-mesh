@@ -1,3 +1,15 @@
+//
+// @file transport.rho
+// @brief Which link may join a parent and a child board.
+//
+// @module mesh.domain.transport
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-12
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.domain.transport
 
 // Which link may join a parent and a child board.

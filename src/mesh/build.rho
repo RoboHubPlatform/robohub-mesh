@@ -15,7 +15,7 @@ module mesh.build
 fn gateway_project() string {
     let entry: string = registry_entry("robohub-gateway")
     if !rho_path_exists(entry) {
-        return robohub_root() + "/../robohub-gateway"
+        return mesh_workspace() + "/robohub-gateway"
     }
     return resolve_path(yaml.value(entry, "path"))
 }
@@ -35,7 +35,7 @@ fn canonical_path(path: string) string {
 fn drivers_root() string {
     let entry: string = registry_entry("robohub-drivers")
     if !rho_path_exists(entry) {
-        return canonical_path(robohub_root() + "/../robohub-drivers")
+        return canonical_path(mesh_workspace() + "/robohub-drivers")
     }
     return canonical_path(resolve_path(yaml.value(entry, "path")))
 }
@@ -857,6 +857,9 @@ fn update_build_step() void {
 }
 
 fn mesh_gateway_restart(req: Request) Response {
+    if !mesh_may(req, current_project(), true) {
+        return mesh_denied(req)
+    }
     if mesh_project_mismatch(req) {
         return mesh_project_refused()
     }
@@ -908,6 +911,9 @@ fn mesh_gateway_return(req: Request) Response {
 }
 
 fn mesh_gateway_stop(req: Request) Response {
+    if !mesh_may(req, current_project(), true) {
+        return mesh_denied(req)
+    }
     if mesh_project_mismatch(req) {
         return mesh_project_refused()
     }

@@ -1,3 +1,15 @@
+//
+// @file settings.rho
+// @brief Mesh's own settings page and the shared settings it keeps.
+//
+// @module mesh.settings
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-08
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.settings
 
 fn mesh_settings_tab(req: Request) string {
@@ -141,7 +153,7 @@ fn mesh_settings_form(req: Request, tab: string) string {
     }
     if rho_str_eq(tab, "configuration") {
         return "<dl class=\"settings\"><dt>Application</dt><dd>mesh</dd>" +
-            "<dt>Workspace</dt><dd><code>" + escape_html(robohub_root()) + "</code></dd>" +
+            "<dt>Registry</dt><dd><code>" + escape_html(mesh_registry_source()) + "</code></dd>" +
             "<dt>Plugins</dt><dd>robohub-auth</dd>" +
             "<dt>Alert channels</dt><dd>" + escape_html(mesh_alert_list()) + "</dd></dl>"
     }
@@ -173,6 +185,9 @@ fn mesh_settings_page(req: Request) Response {
 }
 
 fn mesh_settings_save(req: Request) Response {
+    if !mesh_may(req, "", true) {
+        return mesh_denied(req)
+    }
     let body: string = request_body(req)
     let tab: string = mesh_settings_tab(req)
     if !forms_csrf_ok(body) {

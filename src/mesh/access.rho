@@ -1,0 +1,66 @@
+//
+// @file access.rho
+// @brief What the person signed in may do in Mesh, from the grants in their ticket.
+//
+// @module mesh.access
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.access
+
+// What the person signed in may do in Mesh, from the grants the keeper put in
+// their ticket (the X-Rho-Scopes the auth middleware sets):
+//
+//   *, mesh:*              everything
+//   mesh:read              read every mesh
+//   mesh:<mesh>            read and change that mesh
+//   mesh:<mesh>:read       read that mesh
+//
+// Changing what is Mesh's as a whole — a new mesh, copying one, applying in every
+// mesh, Mesh's settings — needs `mesh:*`. The middleware already refuses a change
+// from someone whose grants all end in ":read"; this is the part only Mesh knows,
+// which mesh a request is about.
+
+import std.web.http
+
+fn mesh_scopes(req: Request) string {
+    return header_str(req, "X-Rho-Scopes")
+}
+
+// mesh_scope_held is whether a comma-separated list holds a scope.
+fn mesh_scope_held(scopes: string, wanted: string) bool {
+    return rho_str_index_of("," + scopes + ",", "," + wanted + ",") >= 0
+}
+
+// mesh_may is whether a request may read (`write` false) or change (`write`
+// true) a mesh; the mesh "" is Mesh as a whole. A request with no scopes at all
+// came through a path the middleware does not guard, which answers for itself.
+fn mesh_may(req: Request, project: string, write: bool) bool {
+    let scopes: string = mesh_scopes(req)
+    if scopes == "" || mesh_scope_held(scopes, "*") || mesh_scope_held(scopes, "mesh:*") {
+        return true
+    }
+    if project == "" {
+        return !write && (mesh_scope_held(scopes, "mesh:read") || rho_str_index_of(scopes, "mesh:") >= 0)
+    }
+    if mesh_scope_held(scopes, "mesh:" + project) {
+        return true
+    }
+    if write {
+        return false
+    }
+    return mesh_scope_held(scopes, "mesh:read") || mesh_scope_held(scopes, "mesh:" + project + ":read")
+}
+
+fn mesh_denied(req: Request) Response {
+    if has_header(req, "HX-Request") || rho_str_index_of(request_path(req), "/api/") >= 0 {
+        return Response{ 403, "{\"ok\":false,\"error\":\"your grants do not allow that\"}", "application/json", "" }
+    }
+    return html(403, mesh_shell(req, "Not allowed",
+        "<section class=\"mesh-form-panel page-panel\"><h1>Not allowed</h1><p>Your grants do not allow that. " +
+        "An admin of the keeper can change them under Users &amp; access.</p><p><a href=\"/mesh\">Back to the fleet</a></p></section>"))
+}
