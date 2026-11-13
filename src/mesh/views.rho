@@ -542,7 +542,7 @@ fn mesh_shell(req: Request, title: string, content: string) string {
     return template_fill(template_get("layout"),
         vars("title", title) + vars("htmx", htmx_head()) + i18n_vars(req) + vars("menu", mesh_menu(req)) +
         vars("context", mesh_context(req)) + vars("projects", mesh_bottom_menu(req)) +
-        vars("body", content))
+        vars("notifications", notification_embed()) + vars("body", content))
 }
 
 fn mesh_docs_page(req: Request) Response {

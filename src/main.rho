@@ -3,6 +3,7 @@ module mesh
 // The RoboHub Mesh application: projects, plans, connections, build and verify.
 // It is standalone on its own port and can be launched by the keeper.
 
+include "notifications"
 include "mesh/storage.rho"
 include "mesh/domain/transport.rho"
 include "mesh/domain/impact.rho"

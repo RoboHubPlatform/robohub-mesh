@@ -347,10 +347,19 @@ fn jobs_finish(project: string) bool {
             }
             agora_check_health(project)
         }
+        // Every open page hears it, through the shared notifications module.
+        let said: string = project_name(project) + ": " + jobs_meta(project, seq, "label")
         if ok {
             info("mesh", project + ": " + jobs_meta(project, seq, "label") + " done")
+            notification_live_event("ok", said + " done")
+            let next: string = jobs_open_for(project, target, "flash")
+            if kind == "build" && next != "" && jobs_state(project, next) == "waiting" {
+                notification_live_event("info", project_name(project) + ": " + jobs_meta(project, next, "label") +
+                    " waits for you. " + jobs_read(project, next, "wait"))
+            }
         } else if jobs_state(project, seq) == "failed" {
             warn("mesh", project + ": " + jobs_meta(project, seq, "label") + " failed")
+            notification_live_event("err", said + " failed")
         }
         ignore_bool(rho_write_text(jobs_path(project, seq, "done"), "\n"))
         changed = true
