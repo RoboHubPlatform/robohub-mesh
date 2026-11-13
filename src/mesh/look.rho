@@ -368,10 +368,20 @@ fn look_seen(readings: string, source: string) string {
 // newest reading when it has one.
 fn look_module_chip(id: string, board: u32, fitted: u32, readings: string) string {
     let source: string = state_value("node." + rho_int_to_str(board) + ".id")
+    // A board's firmware names a module's readings by the module's tag (the
+    // first eight digits of its id) since modules have stable ids; one built
+    // before names them by the module's number. The tag is preferred, so a
+    // board reflashed since does not keep showing the reading it sent before.
     let prefix: string = "m" + state_value("node." + rho_int_to_str(fitted) + ".number") + "."
+    let module_id: string = state_value("node." + rho_int_to_str(fitted) + ".id")
+    var tag_prefix: string = ""
+    if rho_strlen(module_id) >= 8 {
+        tag_prefix = rho_str_slice(module_id, 0, 8) + "."
+    }
     var value: string = ""
+    var tagged: string = ""
     var rest: string = readings
-    while rest != "" && value == "" {
+    while rest != "" && tagged == "" {
         let at: i32 = rho_str_index_of(rest, "\n")
         var line: string = rest
         if at < 0 {
@@ -381,10 +391,16 @@ fn look_module_chip(id: string, board: u32, fitted: u32, readings: string) strin
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         let name: string = field(line, 1)
-        if rho_str_eq(field(line, 0), source) && rho_str_index_of(name, prefix) == 0 {
+        if rho_str_eq(field(line, 0), source) && tag_prefix != "" && rho_str_index_of(name, tag_prefix) == 0 {
+            let bare: string = rho_str_slice(name, u32(rho_strlen(tag_prefix)), u32(rho_strlen(name)) - u32(rho_strlen(tag_prefix)))
+            tagged = agora_value(bare, field(line, 2))
+        } else if rho_str_eq(field(line, 0), source) && value == "" && rho_str_index_of(name, prefix) == 0 {
             let bare: string = rho_str_slice(name, u32(rho_strlen(prefix)), u32(rho_strlen(name)) - u32(rho_strlen(prefix)))
             value = agora_value(bare, field(line, 2))
         }
+    }
+    if tagged != "" {
+        value = tagged
     }
     var shown: string = ""
     if value != "" {

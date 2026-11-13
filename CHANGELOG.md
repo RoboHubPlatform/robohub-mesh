@@ -451,3 +451,7 @@ A gateway started on this machine is given its key again. 0.18.1 quoted the key 
 ## [0.18.6] - 2026-11-13
 
 A mesh keeps its gateway key. The key file holds the key and a line break, and the trim it was read with took spaces only, so every read found 65 characters, took the key for missing and wrote a new one: each firmware build and each gateway start had a different key, and no sealed board's hello authenticated. Values read from files are trimmed of line breaks, and a key file that exists is never replaced, since every board's key is derived from it.
+
+## [0.18.7] - 2026-11-13
+
+A module's chip on its board's card shows the board's newest reading: firmware built since modules have stable ids names a reading by the module's tag (`042fda5b.temperature_c`), and the chip read only the number-prefixed name (`m2.temperature_c`) an earlier build sent, so a reflashed board kept showing its last reading from before. The tag is preferred, the number kept for boards not reflashed yet.
