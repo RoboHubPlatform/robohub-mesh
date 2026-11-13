@@ -1,3 +1,15 @@
+//
+// @file firmware.rho
+// @brief The node firmware generator: the sources, keys and build a node is flashed with.
+//
+// @module mesh.firmware
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-05
+//
+// SPDX-License-Identifier: MIT
+//
+
 module mesh.firmware
 
 // The node firmware generator.
