@@ -48,7 +48,7 @@ fn jobs_set_node(index: u32) void {
     ignore_bool(rho_write_text(wizard_dir() + "/job-node.txt", value + "\n"))
 }
 
-const JOB_RUNNER: string = "#!/bin/sh\n# The job runner of one mesh: each job in order, a flash once the person\n# says the board is ready, and nothing that depended on a job that failed.\ncd \"$(dirname \"$0\")\" || exit 1\nwhile :; do\n  next=\"\"\n  for f in $(ls [0-9]*.sh 2>/dev/null | sort); do\n    n=\"${f%.sh}\"\n    [ -f \"$n.exit\" ] && continue\n    next=\"$n\"\n    break\n  done\n  [ -z \"$next\" ] && exit 0\n  if [ -f \"$next.cancel\" ]; then echo 130 > \"$next.exit\"; continue; fi\n  if [ -f \"$next.after\" ]; then\n    after=\"$(cat \"$next.after\")\"\n    if [ -f \"$after.exit\" ] && [ \"$(cat \"$after.exit\")\" != 0 ]; then echo 125 > \"$next.exit\"; continue; fi\n  fi\n  if [ -f \"$next.wait\" ] && [ ! -f \"$next.go\" ]; then sleep 1; continue; fi\n  date +%s > \"$next.started\"\n  sh \"$next.sh\" > \"$next.log\" 2>&1\n  echo $? > \"$next.exit\"\ndone\n"
+const JOB_RUNNER: string = "#!/bin/sh\n# The job runner of one mesh: each job in order, a flash once the person\n# says the board is ready, and nothing that depended on a job that failed.\ncd \"$(dirname \"$0\")\" || exit 1\nwhile :; do\n  next=\"\"\n  for f in $(ls [0-9]*.sh 2>/dev/null | sort); do\n    n=\"${f%.sh}\"\n    [ -f \"$n.exit\" ] && continue\n    next=\"$n\"\n    break\n  done\n  [ -z \"$next\" ] && exit 0\n  if [ -f \"$next.cancel\" ]; then echo 130 > \"$next.exit\"; continue; fi\n  if [ -f \"$next.after\" ]; then\n    after=\"$(cat \"$next.after\")\"\n    if [ -f \"$after.exit\" ] && [ \"$(cat \"$after.exit\")\" != 0 ]; then echo 125 > \"$next.exit\"; continue; fi\n  fi\n  if [ -f \"$next.wait\" ] && [ ! -f \"$next.go\" ]; then sleep 1; continue; fi\n  date +%s > \"$next.started\"\n  sh \"$next.sh\" > \"$next.log\" 2>&1\n  code=$?\n  date +%s > \"$next.finished\"\n  echo $code > \"$next.exit\"\ndone\n"
 
 fn jobs_dir(project: string) string {
     return project_location(project) + "/jobs"
@@ -439,12 +439,39 @@ fn jobs_open_attrs(project: string, seq: string) string {
     return editor_open(jobs_url(project, seq), editor_page_url(project, "job:" + seq))
 }
 
-// jobs_strip is the activity strip's jobs: the one running, the ones waiting
-// for the person, and the last that failed, each opening its log.
+// jobs_percent is how far a build has come, from the last `[ NN%]` its log
+// printed, or "" when it printed none.
+fn jobs_percent(project: string, seq: string) string {
+    var rest: string = rho_read_text(jobs_path(project, seq, "log"))
+    var found: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "%]")
+        if at < 0 {
+            break
+        }
+        // The digits between the `[` and the `%`, at most three of them.
+        var start: u32 = 0
+        if u32(at) > 4 {
+            start = u32(at) - 4
+        }
+        let window: string = rho_str_slice(rest, start, u32(at) - start)
+        let open: i32 = rho_str_index_of(window, "[")
+        if open >= 0 {
+            found = device_trim(rho_str_slice(window, u32(open) + 1, u32(rho_strlen(window)) - u32(open) - 1))
+        }
+        rest = rho_str_slice(rest, u32(at) + 2, u32(rho_strlen(rest)) - u32(at) - 2)
+    }
+    return found
+}
+
+// jobs_strip is the activity strip's jobs: the one running with how far it
+// has come, those waiting for the person, the last one finished, and the log.
 fn jobs_strip(project: string) string {
     var out: string = ""
     var rest: string = jobs_list(project)
     var queued: u32 = 0
+    var last: string = ""
+    var newest: string = ""
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
         var seq: string = rest
@@ -457,21 +484,46 @@ fn jobs_strip(project: string) string {
         if seq == "" {
             continue
         }
+        newest = seq
         let state: string = jobs_state(project, seq)
         let label: string = escape_html(jobs_meta(project, seq, "label"))
         if state == "running" {
-            out = out + "<a class=\"agora-job running\"" + jobs_open_attrs(project, seq) + ">" + label + " · running</a>"
+            let percent: string = jobs_percent(project, seq)
+            var bar: string = "<span class=\"ag-bar-track\"><i class=\"run\"></i></span>"
+            var shown: string = "running"
+            if percent != "" {
+                bar = "<span class=\"ag-bar-track\"><i style=\"width:" + escape_html(percent) + "%\"></i></span>"
+                shown = escape_html(percent) + " %"
+            }
+            out = out + "<a class=\"agora-job running\"" + jobs_open_attrs(project, seq) + "><b>" + label + "</b>" + bar +
+                shown + "</a>"
         } else if state == "waiting" {
-            out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label +
-                " · waiting for you</a>"
+            out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label + " · waiting for you</a>"
         } else if state == "queued" {
             queued = queued + 1
-        } else if state == "failed" && !jobs_exists(project, seq, "seen") {
-            out = out + "<a class=\"agora-job failed\"" + jobs_open_attrs(project, seq) + ">" + label + " · failed</a>"
+        } else {
+            last = seq
         }
     }
     if queued > 0 {
-        out = out + "<span class=\"agora-seen\">" + rho_int_to_str(queued) + " queued</span>"
+        out = out + "<span>" + rho_int_to_str(queued) + " queued</span>"
+    }
+    if last != "" {
+        let state: string = jobs_state(project, last)
+        var css: string = ""
+        if state == "failed" {
+            css = " failed"
+        }
+        let finished: u32 = u32(rho_int_from_str(jobs_read(project, last, "finished")))
+        var when: string = ""
+        if finished > 0 {
+            when = " · " + agora_age(finished)
+        }
+        out = out + "<a class=\"agora-job" + css + "\"" + jobs_open_attrs(project, last) + ">" +
+            escape_html(jobs_meta(project, last, "label")) + " · " + state + when + "</a>"
+    }
+    if newest != "" {
+        out = out + "<a class=\"ag-log\"" + jobs_open_attrs(project, newest) + ">Log ▴</a>"
     }
     return out
 }
