@@ -127,7 +127,11 @@ fn mesh_device_command(project: string, index: u32, action: string, on: bool) bo
         return false
     }
     let report: string = wizard_report("device-command-" + rho_int_to_str(index))
-    return rho_exec("curl", "-fsS -m 4 " + mesh_quote(address + device_fill(path, address, value)), report) == 0
+    let url: string = address + device_fill(path, address, value)
+    if !mesh_arg_ok(url) {
+        return false
+    }
+    return mesh_curl("-fsS\n-m\n4\n" + url + "\n", report) == 0
 }
 
 // mesh_device_read_field reads one field of an HTTP device directly, by its
@@ -141,7 +145,7 @@ fn mesh_device_read_field(project: string, index: u32, wanted: string) string {
         return ""
     }
     let report: string = wizard_report("device-read-" + rho_int_to_str(index))
-    if rho_exec("curl", "-fsS -m 3 " + mesh_quote(address + path), report) != 0 {
+    if !mesh_arg_ok(address + path) || mesh_curl("-fsS\n-m\n3\n" + address + path + "\n", report) != 0 {
         return ""
     }
     let body: string = rho_read_text(report)

@@ -25,6 +25,9 @@ extern fn rho_random_hex(bytes: u32) string
 extern fn rho_http_request(method: string, url: string, body: string, content_type: string,
     audience: string, scopes: string, output_path: string) u32
 extern fn rho_exec(program: string, arguments: string, output_path: string) u32
+// One argument per line, run with no shell between: nothing in an argument is
+// read as a quote, a space or an option boundary.
+extern fn rho_exec_args(program: string, arguments: string, output_path: string) u32
 extern fn rho_strlen(s: string) u64
 extern fn rho_str_slice(s: string, start: u32, length: u32) string
 extern fn rho_str_index_of(s: string, needle: string) i32

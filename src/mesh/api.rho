@@ -12,8 +12,17 @@
 
 module mesh.api
 
-fn mesh_quote(value: string) string {
-    return "\"" + value + "\""
+// mesh_arg_ok is whether a value can be one argument of curl: no line break,
+// which would make it two, and no leading dash, which would make it an option.
+fn mesh_arg_ok(value: string) bool {
+    return value != "" && !rho_str_starts_with(value, "-") && rho_str_index_of(value, "\n") < 0 &&
+        rho_str_index_of(value, "\r") < 0
+}
+
+// mesh_curl runs curl with one argument per line of `args` and no shell, the
+// output in report. A URL or header is passed as it is, never re-split.
+fn mesh_curl(args: string, report: string) u32 {
+    return rho_exec_args("curl", args, report)
 }
 
 fn mesh_json_bool(text: string, key: string) string {
@@ -183,8 +192,10 @@ fn mesh_gateway_answers(url: string) bool {
         return false
     }
     let report: string = wizard_report("gateway-health")
-    let code: u32 = rho_exec("curl", "-fsS -m 2 -o /dev/null " +
-        mesh_quote(url + "/healthz"), report)
+    if !mesh_arg_ok(url) {
+        return false
+    }
+    let code: u32 = mesh_curl("-fsS\n-m\n2\n-o\n/dev/null\n" + url + "/healthz\n", report)
     return code == 0
 }
 
@@ -348,9 +359,10 @@ fn mesh_url_get_auth(base: string, path: string, token: string) string {
         return mesh_url_get(base, path)
     }
     let report: string = wizard_report("mesh-source")
-    if rho_exec("curl", "-fsS -m 4 -H " +
-        mesh_quote("Authorization: Bearer " + token) + " " +
-        mesh_quote(base + path), report) != 0 {
+    if !mesh_arg_ok(base + path) || !mesh_arg_ok(token) {
+        return ""
+    }
+    if mesh_curl("-fsS\n-m\n4\n-H\nAuthorization: Bearer " + token + "\n" + base + path + "\n", report) != 0 {
         return ""
     }
     return rho_read_text(report)

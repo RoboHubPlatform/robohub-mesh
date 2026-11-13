@@ -417,3 +417,12 @@ each with its stable id, its parent's id, what it is (its board, device or
 module, its transport) and its state. The gateway interface's `nodes()` reads
 it, so an application can draw the mesh (energy draws it from the energy side)
 without reading the plan.
+
+## [0.18.1] - 2026-11-13
+
+Security fixes from the 2026-11 review.
+
+- `shell_quote` escapes a quote inside a value; before, a value holding one ended the quoting, and a gateway host, a deployment path or a port setting could run commands as Mesh's user. The values inside the commands run on a remote host (ssh, adb) are quoted as well, and a deployment's user and host must be plain words and its path a path, so neither can become an option of ssh.
+- curl is run with one argument per line and no shell (`rho_exec_args`): a client's callback URL, a device's address or a gateway URL can no longer add options. A callback is only http or https.
+- Client and token records are written readable by Mesh's user alone (0600). A client secret is 16 random bytes or registration is refused; the time-based fallback is gone, and the file openssl writes it to is emptied after reading.
+- `same_origin` refuses a form posted from another origin.

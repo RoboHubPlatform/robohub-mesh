@@ -98,7 +98,7 @@ fn mesh_token_rewrite(project: string, match_name: string,
     if replacement != "" {
         out = out + replacement + "\n"
     }
-    ignore_bool(rho_write_text(file, out))
+    ignore_bool(rho_write_secret(file, out))
 }
 
 // A legacy project kept one `gateway_token` in project.txt. It becomes a named
@@ -110,7 +110,7 @@ fn mesh_tokens_migrate(project: string) void {
     }
     let legacy: string = state_value_in(project_file(project), "gateway_token")
     if legacy != "" {
-        ignore_bool(rho_write_text(file,
+        ignore_bool(rho_write_secret(file,
             mesh_token_line("gateway", legacy, mesh_token_now(), 0, 0) + "\n"))
     }
 }
@@ -214,7 +214,7 @@ fn mesh_project_token_revoke(req: Request) Response {
         }
         out = out + line + "\n"
     }
-    ignore_bool(rho_write_text(mesh_tokens_file(id), out))
+    ignore_bool(rho_write_secret(mesh_tokens_file(id), out))
     save_setting_at(file, "message.project",
         if found { "Token " + name + " revoked." } else { "No token named " + name + "." })
     info("mesh", "revoked token " + name + " on project " + id)

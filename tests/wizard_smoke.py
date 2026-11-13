@@ -814,6 +814,32 @@ def main() -> int:
 
             check_cross(base, Path(state))
 
+            # The holes of the 2026-11 review stay closed. A form posted from
+            # another origin is refused before any handler.
+            cross = urllib.request.Request(base + "/mesh/project/new", data=b"name=Cross", method="POST")
+            cross.add_header("Content-Type", "application/x-www-form-urlencoded")
+            cross.add_header("Authorization", f"Bearer {TOKEN}")
+            cross.add_header("Origin", "http://evil.example")
+            try:
+                with urllib.request.urlopen(cross, timeout=20) as response:
+                    raise AssertionError(f"a cross-origin form was answered {response.status}")
+            except urllib.error.HTTPError as error:
+                if error.code != 403:
+                    raise AssertionError(f"a cross-origin form was answered {error.code}")
+            # A registered client's secret is readable by Mesh's user alone.
+            register = urllib.request.Request(base + "/mesh/api/clients/register", method="POST",
+                data=json.dumps({"app_name": "smoke", "project": "default", "instance_id": "one",
+                                 "callback_url": "http://127.0.0.1:9/callback"}, separators=(",", ":")).encode())
+            register.add_header("Content-Type", "application/json")
+            register.add_header("Authorization", f"Bearer {TOKEN}")
+            with urllib.request.urlopen(register, timeout=20) as response:
+                registered = json.loads(response.read().decode())
+            if len(registered.get("secret", "")) != 32:
+                raise AssertionError(f"a client secret is not 16 random bytes: {registered}")
+            mode = os.stat(os.path.join(state, "clients.jsonl")).st_mode & 0o777
+            if mode != 0o600:
+                raise AssertionError(f"clients.jsonl is {oct(mode)}")
+
             print("mesh smoke test ok")
             return 0
         finally:

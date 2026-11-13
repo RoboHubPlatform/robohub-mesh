@@ -128,8 +128,56 @@ fn node_link() string {
     return node_value(selected_node(), "link", "uart")
 }
 
+// shell_quote makes a value one word of a shell command, whatever it holds: a
+// quote inside it is closed, escaped and reopened.
 fn shell_quote(value: string) string {
-    return "'" + value + "'"
+    var out: string = "'"
+    let length: u32 = u32(rho_strlen(value))
+    var i: u32 = 0
+    while i < length {
+        let ch: string = rho_str_slice(value, i, 1)
+        if rho_str_eq(ch, "'") {
+            out = out + "'\\''"
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out + "'"
+}
+
+// deploy_word_ok is whether a user or host a deployment names is a plain word:
+// letters, digits, dot, dash and underscore, not starting with a dash, so it
+// can be neither a second word nor an option of ssh or scp.
+fn deploy_word_ok(value: string) bool {
+    if value == "" || rho_str_starts_with(value, "-") {
+        return false
+    }
+    var i: u32 = 0
+    while i < u32(rho_strlen(value)) {
+        let ch: string = rho_str_slice(value, i, 1)
+        if rho_str_index_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", ch) < 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// deploy_path_ok is whether a remote directory is a path and nothing else.
+fn deploy_path_ok(value: string) bool {
+    if value == "" || rho_str_starts_with(value, "-") {
+        return false
+    }
+    var i: u32 = 0
+    while i < u32(rho_strlen(value)) {
+        let ch: string = rho_str_slice(value, i, 1)
+        if rho_str_index_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/~", ch) < 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
 }
 
 fn progress_path_for(stage: string, run: string) string {
@@ -596,9 +644,9 @@ fn gateway_env(key_file: string, relay_key: string) string {
     if area == "" {
         area = WIZARD_DEFAULT_AREA
     }
-    var env: string = "GATEWAY_MODE=" + mesh_gateway_mode() +
-        " GATEWAY_AREA=" + area +
-        " RHO_HTTP_ADDR=:" + rest + " REST_PORT=" + rest +
+    var env: string = "GATEWAY_MODE=" + shell_quote(mesh_gateway_mode()) +
+        " GATEWAY_AREA=" + shell_quote(area) +
+        " RHO_HTTP_ADDR=" + shell_quote(":" + rest) + " REST_PORT=" + shell_quote(rest) +
         " PLOTJUGGLER_ADDR=127.0.0.1:9870"
     // The gateway trusts keeper's tokens, verified with keeper's public key,
     // which is installed beside it; it names itself so a token's scopes can.
@@ -606,17 +654,17 @@ fn gateway_env(key_file: string, relay_key: string) string {
     // The key boards' keys are derived from, as a file only the gateway's user
     // can read on the machine it runs on.
     if key_file != "" {
-        env = env + " GATEWAY_KEY_FILE=" + key_file
+        env = env + " GATEWAY_KEY_FILE=" + shell_quote(key_file)
     }
     // It listens on its uplink when a board dials in over the network, or a
     // mesh reports through it.
     if link == "wifi" || link == "socket" {
-        env = env + " SERIAL_PORT=/nonexistent UPLINK_PORT=" + uplink
+        env = env + " SERIAL_PORT=/nonexistent UPLINK_PORT=" + shell_quote(uplink)
     } else if link_listens(current_project()) {
-        env = env + " SERIAL_PORT=" + port + " UPLINK_PORT=" +
-            default_value("uplink_port", fleet_uplink_port(current_project()))
+        env = env + " SERIAL_PORT=" + shell_quote(port) + " UPLINK_PORT=" +
+            shell_quote(default_value("uplink_port", fleet_uplink_port(current_project())))
     } else {
-        env = env + " SERIAL_PORT=" + port + " UPLINK_PORT=0"
+        env = env + " SERIAL_PORT=" + shell_quote(port) + " UPLINK_PORT=0"
     }
     // A mesh that reports through another runs its gateway as a relay.
     return env + link_env(current_project(), relay_key)
@@ -668,8 +716,8 @@ fn handler_start_native() u32 {
         return started
     }
     let probe: string = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do " +
-        "if curl -fsS -m 1 http://127.0.0.1:" + rest + "/healthz >/dev/null 2>&1; then exit 0; fi; " +
-        "sleep 0.25; done; echo 'gateway did not answer at http://127.0.0.1:" + rest + "'; exit 1"
+        "if curl -fsS -m 1 " + shell_quote("http://127.0.0.1:" + rest + "/healthz") + " >/dev/null 2>&1; then exit 0; fi; " +
+        "sleep 0.25; done; echo " + shell_quote("gateway did not answer at http://127.0.0.1:" + rest) + "; exit 1"
     let probed: u32 = run_shell(probe, "start-gateway-probe")
     if probed == 0 {
         // The gateway Mesh started is the one Mesh reads; recording it here is
@@ -698,7 +746,7 @@ fn handler_start_board() u32 {
     }
     if method == "adb" {
         let apps_dir: string = yaml.value(manifest, "deployment.apps_dir")
-        if apps_dir == "" {
+        if !deploy_path_ok(apps_dir) {
             return 1
         }
         // A host that has shared the same board twice gives adb two transports
@@ -731,17 +779,19 @@ fn handler_start_board() u32 {
             }
             device_relay = apps_dir + "/relay.key"
         }
-        let command: string = adb + " shell 'pkill -x robohub-gateway 2>/dev/null || true; " +
-            "chmod +x " + apps_dir + "/robohub-gateway; cd " + apps_dir + " && " +
+        let command: string = adb + " shell " + shell_quote("pkill -x robohub-gateway 2>/dev/null || true; " +
+            "chmod +x " + shell_quote(apps_dir + "/robohub-gateway") + "; cd " + shell_quote(apps_dir) + " && " +
             "nohup env " + gateway_env(device_key, device_relay) +
-            " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &'"
+            " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &")
         return run_shell(command, "start-gateway")
     }
     if method == "ssh" {
         let user: string = yaml.value(manifest, "deployment.user")
         let remote: string = yaml.value(manifest, "deployment.path")
         let host: string = default_value("gateway_host", "127.0.0.1")
-        if user == "" || remote == "" || host == "" {
+        // Each is a word or a path and nothing more: a host starting with a
+        // dash would be an option of ssh.
+        if !deploy_word_ok(user) || !deploy_word_ok(host) || !deploy_path_ok(remote) {
             return 1
         }
         let target: string = user + "@" + host
@@ -765,7 +815,7 @@ fn handler_start_board() u32 {
         if mesh_gateway_key_path(current_project()) != "" {
             let secret_code: u32 = run_shell("scp " + shell_quote(mesh_gateway_key_file(current_project())) + " " +
                 shell_quote(target + ":" + remote + "/gateway.key") + " && ssh " + shell_quote(target) + " " +
-                shell_quote("chmod 600 " + remote + "/gateway.key"), "push-gateway-secret")
+                shell_quote("chmod 600 " + shell_quote(remote + "/gateway.key")), "push-gateway-secret")
             if secret_code != 0 {
                 return secret_code
             }
@@ -775,7 +825,7 @@ fn handler_start_board() u32 {
         if link_parent(current_project()) != "" && link_relay_key(current_project()) != "" {
             let relay_code: u32 = run_shell("scp " + shell_quote(link_relay_key_file(current_project())) + " " +
                 shell_quote(target + ":" + remote + "/relay.key") + " && ssh " + shell_quote(target) + " " +
-                shell_quote("chmod 600 " + remote + "/relay.key"), "push-relay-secret")
+                shell_quote("chmod 600 " + shell_quote(remote + "/relay.key")), "push-relay-secret")
             if relay_code != 0 {
                 return relay_code
             }
@@ -783,7 +833,7 @@ fn handler_start_board() u32 {
         }
         let command: string = "ssh " + shell_quote(target) + " " +
             shell_quote("pkill -x robohub-gateway 2>/dev/null || true; chmod +x " +
-                remote + "/robohub-gateway; cd " + remote + " && nohup env " +
+                shell_quote(remote + "/robohub-gateway") + "; cd " + shell_quote(remote) + " && nohup env " +
                 gateway_env(remote_key, remote_relay) + " ./robohub-gateway > /tmp/robohub-gateway.log 2>&1 < /dev/null &")
         let started: u32 = run_shell(command, "start-gateway")
         if started == 0 {
@@ -804,7 +854,11 @@ fn gateway_reachable_for(gateway: string, host: string, rest: string) bool {
         address = "127.0.0.1"
     }
     let report: string = wizard_report("gateway-health")
-    let code: u32 = rho_exec("curl", "-fsS -m 1 http://" + address + ":" + rest + "/healthz", report)
+    let url: string = "http://" + address + ":" + rest + "/healthz"
+    if !deploy_word_ok(address) || !mesh_arg_ok(url) {
+        return false
+    }
+    let code: u32 = mesh_curl("-fsS\n-m\n1\n" + url + "\n", report)
     return code == 0
 }
 

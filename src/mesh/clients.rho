@@ -61,16 +61,20 @@ fn mesh_client_now() u32 {
     return 0
 }
 
+// mesh_client_secret is 16 random bytes as hex, or "" when there is no source
+// of randomness: a secret anyone could work out from the time is no secret.
+// The file openssl writes it to is emptied once it is read.
 fn mesh_client_secret() string {
     let report: string = wizard_report("client-secret")
+    var text: string = ""
     if rho_exec("openssl", "rand -hex 16", report) == 0 {
-        let text: string = mesh_client_trim(rho_read_text(report))
-        if text != "" {
-            return text
-        }
+        text = mesh_client_trim(rho_read_text(report))
     }
-    return rho_int_to_str(mesh_client_now()) +
-        rho_int_to_str(u32(rho_strlen(rho_read_text(mesh_clients_file()))))
+    ignore_bool(rho_write_secret(report, ""))
+    if rho_strlen(text) != 32 {
+        return ""
+    }
+    return text
 }
 
 fn mesh_client_id(app_name: string, instance_id: string) string {
@@ -119,7 +123,7 @@ fn mesh_client_rewrite(match_app: string, match_instance: string,
     if replacement != "" {
         out = out + replacement + "\n"
     }
-    ignore_bool(rho_write_text(file, out))
+    ignore_bool(rho_write_secret(file, out))
 }
 
 fn mesh_client_register(req: Request) Response {
@@ -170,6 +174,9 @@ fn mesh_client_register(req: Request) Response {
     }
     if secret == "" {
         secret = mesh_client_secret()
+        if secret == "" {
+            return json(500, "{\"ok\":false,\"error\":\"no source of randomness for a client secret\"}")
+        }
     }
     let now: u32 = mesh_client_now()
     if created == 0 {
@@ -226,7 +233,7 @@ fn mesh_client_heartbeat(req: Request) Response {
         }
         out = out + line + "\n"
     }
-    ignore_bool(rho_write_text(file, out))
+    ignore_bool(rho_write_secret(file, out))
     if !found {
         return json(404, "{\"ok\":false,\"error\":\"unknown client\"}")
     }
@@ -321,11 +328,16 @@ fn mesh_client_deliver(project: string, app_name: string, client_id: string,
     let report: string = wizard_report("deliver-" + client_id)
     let body_file: string = wizard_report("deliver-body-" + client_id)
     ignore_bool(rho_write_text(body_file, body))
-    let command: string = "-fsS -m 4 -X POST -H " +
-        mesh_quote("Authorization: Bearer " + secret) +
-        " -H " + mesh_quote("Content-Type: application/json") +
-        " --data @" + mesh_quote(body_file) + " " + mesh_quote(callback_url)
-    return rho_exec("curl", command, report) == 0
+    if !mesh_arg_ok(callback_url) || !mesh_arg_ok(secret) {
+        return false
+    }
+    // Only http and https: curl would also follow file://, dict:// and the rest.
+    if !rho_str_starts_with(callback_url, "http://") && !rho_str_starts_with(callback_url, "https://") {
+        return false
+    }
+    let command: string = "-fsS\n-m\n4\n--proto\n=http,https\n-X\nPOST\n-H\nAuthorization: Bearer " + secret +
+        "\n-H\nContent-Type: application/json\n--data-binary\n@" + body_file + "\n" + callback_url + "\n"
+    return mesh_curl(command, report) == 0
 }
 
 fn mesh_publish(req: Request) Response {

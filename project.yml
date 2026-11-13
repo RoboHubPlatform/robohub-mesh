@@ -7,6 +7,11 @@ targets:
     api:
       public_paths: "/, /mesh, /mesh/docs"
     middleware:
+      # A form posted from another origin is refused before anything else:
+      # keeper and the other applications are other ports of the same host,
+      # which a SameSite cookie does not tell apart. Programs that post here
+      # send no browser headers and are not affected.
+      - name: same_origin
       - name: auth
         options:
           issuer: keeper
