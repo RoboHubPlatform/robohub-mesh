@@ -1,7 +1,7 @@
-<p class="mesh-nav"><a href="/mesh">← Mesh dashboard</a> · <a href="/mesh/project/{{ project }}">← Project</a></p>
+<p class="mesh-nav"><a href="/mesh/p/{{ project }}">← Open the mesh</a> · <a href="/mesh">Fleet</a></p>
 <h1>{{t "nav.project_settings"}}</h1>
 <p>Folder <code>{{ location }}</code></p>
-<p class="notice">{{{ notice }}}</p>
+{{#if notice}}<p class="notice">{{{ notice }}}</p>{{/if}}
 {{{ active }}}
 {{{ form }}}
 {{{ actions }}}

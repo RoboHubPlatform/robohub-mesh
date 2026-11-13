@@ -235,11 +235,19 @@
   .ack input { margin-top: .2rem; }
   .form-actions { display: flex; justify-content: flex-start; margin: 1rem 0 1.2rem; }
   .form-actions button { min-width: 10rem; }
+  .inline-row { display: flex; gap: .6rem; align-items: center; margin: .4rem 0 1.4rem; }
+  .inline-row input { flex: 1; min-width: 0; font: inherit; font-size: .9rem; color: var(--ink); background: rgba(244,239,228,.05);
+    border: 1px solid var(--line); border-radius: 8px; padding: .55rem .7rem; }
+  .inline-row input:focus { outline: none; border-color: var(--gold); }
 
   .button, button {
     cursor: pointer; font-family: inherit; font-size: .82rem; font-weight: 700; border-radius: 8px;
     transition: transform .12s ease, box-shadow .12s ease, background .12s ease, border-color .12s ease;
   }
+  /* A button nothing else styles — a shared module's form, say — is still
+     one of this application's buttons, not the browser's white one. */
+  button { padding: .45rem .9rem; border: 1px solid var(--gold); background: var(--gold); color: #241a06; }
+  button:hover { background: #f0c97a; }
   .button, .grid button, .action button {
     display: inline-flex; align-items: center; justify-content: center; gap: .35rem;
     padding: .5rem .85rem; border: 1px solid var(--gold); background: var(--gold); color: #241a06;
