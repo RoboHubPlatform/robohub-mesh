@@ -1,0 +1,664 @@
+//
+// @file look.rho
+// @brief How the agora looks: the full-height frame, compact cards, link badges, and the inspector's parts.
+//
+// The agora is one panel the height of the window: a bar with the mesh, its
+// state and Apply changes; the canvas with the live tree and its zoom; the
+// inspector on the right; the activity strip below. A card says one thing about
+// its node in its pill — building, waiting for you, needs build, online, quiet —
+// and carries its modules as chips, so the tree is the hardware and nothing
+// else. The inspector's fields, tiles and segmented choices are drawn here so
+// every form in it looks the same.
+//
+// @module mesh.look
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-13
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.look
+
+const LOOK_STYLE: string = "<style>.page:has(.ag-app){max-width:none;padding:3.45rem 0 2.7rem}.page:has(.ag-app)>.crumb{display:none}.ag-app{display:grid;grid-template-rows:auto 1fr auto;height:calc(100vh - 6.15rem);border-top:1px solid var(--line);background:#081317}.ag-bar{display:flex;align-items:center;gap:.7rem;padding:.65rem 1.1rem;border-bottom:1px solid var(--line);background:rgba(7,15,19,.7);flex-wrap:wrap}.ag-mesh{font:500 1.15rem/1.2 var(--serif);color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:9px;padding:.3rem .6rem}.ag-mesh option{background:#0f1d22}.ag-chip{display:inline-flex;align-items:center;gap:.4rem;border:1px solid var(--line);border-radius:999px;padding:.22rem .7rem;font-size:.8rem;color:var(--muted);white-space:nowrap}.ag-chip.live{color:var(--teal);border-color:rgba(121,199,189,.4)}.ag-chip.down{color:var(--stop);border-color:rgba(240,138,126,.45)}.ag-chip.warn{color:var(--warn);border-color:rgba(240,197,106,.45)}.ag-dot{width:.5rem;height:.5rem;border-radius:50%;background:currentColor;display:inline-block}.ag-spacer{flex:1}.ag-btn{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--line-strong);border-radius:9px;padding:.42rem .9rem;font:600 .84rem var(--sans);color:var(--ink);background:rgba(244,239,228,.04);cursor:pointer;text-decoration:none}.ag-btn:hover{border-color:var(--gold);color:var(--ink)}.ag-btn.primary{background:var(--gold);color:#1d1406;border-color:var(--gold)}.ag-btn.primary:hover{background:#f0c97f;color:#1d1406}.ag-btn.small{padding:.25rem .6rem;font-size:.76rem}.ag-btn.danger{color:var(--stop);border-color:rgba(240,138,126,.45)}.ag-body{display:grid;grid-template-columns:minmax(0,1fr) 22rem;min-height:0}.ag-canvas{position:relative;overflow:auto;background-image:radial-gradient(rgba(244,239,228,.07) 1px,transparent 1px);background-size:22px 22px}.ag-tools{position:sticky;top:.7rem;float:right;margin:.7rem .9rem 0 0;display:flex;gap:.35rem;z-index:5}.ag-zoom{transform-origin:top center;padding:1.4rem 1rem 3rem}.ag-zoom .mesh-tree{padding-top:.4rem}.ag-body .agora-inspector{border:0;border-left:1px solid var(--line);border-radius:0;padding:0;align-self:stretch;background:#0b171c;overflow:auto;display:flex;flex-direction:column}.agora-inspector .actions{display:flex;gap:.4rem;flex-wrap:wrap}.agora-inspector .actions button,.agora-inspector .ins-rows button{border:1px solid var(--line-strong);border-radius:9px;padding:.38rem .8rem;font:600 .8rem var(--sans);color:var(--ink);background:rgba(244,239,228,.04);cursor:pointer}.agora-inspector .agora-action{display:inline}.ag-strip a{color:var(--muted)}.ag-strip .agora-job{border-radius:999px;padding:.12rem .6rem;border:1px solid var(--line)}.ag-strip .agora-job.waiting{color:var(--warn);border-color:rgba(240,197,106,.6);font-weight:600}.ag-strip .agora-job.running{color:var(--gold)}.ag-strip .agora-job.failed{color:var(--stop)}.inspector-move{border-top:1px solid var(--line);padding-top:.7rem}.inspector-move summary{cursor:pointer;font-size:.82rem;color:var(--muted)}.inspector-move .ins-foot{position:static;margin:0;border:0;padding:0;background:none}.job-log{max-height:24rem;overflow:auto;font-size:.72rem;white-space:pre-wrap;background:rgba(0,0,0,.3);padding:.6rem;border-radius:8px;margin:0}.ag-strip{display:flex;gap:1.2rem;align-items:center;padding:.5rem 1.1rem;border-top:1px solid var(--line);background:rgba(7,15,19,.86);font-size:.8rem;color:var(--muted);overflow-x:auto;white-space:nowrap}.ag-strip .fault{color:var(--stop)}.ag-node{display:inline-flex;flex-direction:column;align-items:center;gap:.3rem}.ag-card{width:12.5rem;text-align:left;background:var(--panel-strong);border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:12px;padding:.65rem .75rem;display:grid;gap:.4rem;cursor:pointer;color:var(--ink)}.ag-card:hover{border-color:var(--line-strong)}.ag-card.gateway{border-left-color:var(--gold);width:14rem}.ag-card.device{border-left-color:var(--teal)}.ag-card.selected{outline:2px solid var(--gold);outline-offset:2px}.ag-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.4rem}.ag-head a{color:var(--ink);font-weight:650;font-size:.95rem;line-height:1.25}.ag-pill{font:700 .6rem/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;border-radius:5px;padding:.25rem .4rem;white-space:nowrap;border:1px solid var(--line);color:var(--muted)}.ag-pill.online{color:var(--teal);border-color:rgba(121,199,189,.4);background:rgba(121,199,189,.08)}.ag-pill.warn{color:var(--warn);border-color:rgba(240,197,106,.45);background:rgba(240,197,106,.08)}.ag-pill.down{color:var(--stop);border-color:rgba(240,138,126,.45);background:rgba(240,138,126,.08)}.ag-pill.busy{color:var(--gold);border-color:rgba(228,184,102,.45)}.ag-meta{font-size:.76rem;color:var(--faint);line-height:1.35}.ag-chips{display:flex;flex-wrap:wrap;gap:.3rem}.ag-mod{display:inline-flex;gap:.35rem;align-items:baseline;border:1px solid rgba(195,174,240,.35);background:rgba(195,174,240,.08);border-radius:6px;padding:.12rem .4rem;font-size:.74rem;color:#d8cbf5}.ag-mod b{color:var(--ink)}.ag-add-chip{border:1px dashed var(--line-strong);border-radius:6px;padding:.12rem .4rem;font-size:.74rem;color:var(--faint)}.ag-add-chip:hover{color:var(--ink);border-color:var(--gold)}.ag-read{font-size:.76rem;color:var(--muted)}.ag-read b{color:var(--ink);font-weight:650}.ag-stats{display:flex;gap:.9rem;font-size:.76rem;color:var(--faint)}.ag-stats b{color:var(--ink);display:block;font-size:.9rem}.ag-progress{height:3px;border-radius:2px;background:rgba(244,239,228,.08);overflow:hidden}.ag-progress i{display:block;height:100%;width:40%;background:var(--gold);animation:agslide 1.4s linear infinite}@keyframes agslide{from{margin-left:-40%}to{margin-left:100%}}.ag-plus{width:1.4rem;height:1.4rem;border-radius:50%;border:1px dashed var(--line-strong);display:grid;place-items:center;color:var(--faint);font-size:.85rem;opacity:.5}.ag-node:hover .ag-plus,.ag-plus:focus{opacity:1}.ag-newcard{width:10rem;min-height:4.5rem;border:1.5px dashed var(--line-strong);border-radius:12px;display:grid;place-items:center;color:var(--faint);font-size:.85rem}.ag-newcard:hover{color:var(--ink);border-color:var(--gold)}a.ag-badge,.ag-badge{font:700 .62rem/1 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--blue);border:1px solid rgba(138,180,232,.35);border-radius:999px;padding:.25rem .5rem;background:#0b171c;white-space:nowrap}a.ag-badge:hover{border-color:var(--gold);color:var(--gold)}.ag-badge.dev{color:var(--teal);border-color:rgba(121,199,189,.35)}.ag-badge.mesh{color:var(--violet);border-color:rgba(195,174,240,.4)}.ins-head{padding:.95rem 1.1rem .5rem}.ins-kicker{font:700 .64rem/1.2 var(--sans);letter-spacing:.13em;text-transform:uppercase;color:var(--blue)}.ins-head h2{margin:.3rem 0 0;font:500 1.3rem/1.25 var(--serif);color:var(--ink)}.ins-state{margin-top:.45rem;display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;font-size:.78rem;color:var(--faint)}.agora-inspector .inspector-tabs{display:flex;gap:0;padding:0 1.1rem;margin:0;border-bottom:1px solid var(--line)}.agora-inspector .inspector-tabs a{padding:.55rem .6rem;font-size:.82rem;color:var(--muted);border-bottom:2px solid transparent}.agora-inspector .inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.ins-body{padding:.9rem 1.1rem 1rem;display:grid;gap:.85rem;align-content:start;flex:1}.ins-form{display:grid;gap:.85rem}.agora-inspector label{display:grid;gap:.35rem;font:700 .64rem/1.2 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}.agora-inspector input[type=text],.agora-inspector input[type=password],.agora-inspector input[type=search],.agora-inspector input:not([type]),.agora-inspector select,.agora-inspector textarea{font:400 .88rem/1.35 var(--sans);text-transform:none;letter-spacing:normal;color:var(--ink);background:rgba(244,239,228,.04);border:1px solid var(--line);border-radius:8px;padding:.5rem .65rem;width:100%;box-sizing:border-box}.agora-inspector textarea{min-height:3.6rem;resize:vertical}.agora-inspector select option{background:#0f1d22;color:var(--ink)}.agora-inspector input:focus,.agora-inspector select:focus,.agora-inspector textarea:focus{outline:none;border-color:var(--gold)}.agora-inspector label small{font:400 .74rem/1.4 var(--sans);letter-spacing:normal;text-transform:none;color:var(--faint)}.ins-foot{position:sticky;bottom:0;display:flex;gap:.5rem;justify-content:flex-end;padding:.7rem 1.1rem;border-top:1px solid var(--line);background:rgba(7,15,19,.96);margin:0 -1.1rem -1rem}.ins-impact{border:1px solid rgba(240,197,106,.35);background:rgba(240,197,106,.07);border-radius:9px;padding:.6rem .75rem;font-size:.78rem;color:var(--muted);display:grid;gap:.25rem}.ins-impact b{color:var(--warn)}.ins-section{font:700 .64rem/1.2 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-top:.2rem}.seg{display:grid;grid-template-columns:repeat(auto-fill,minmax(4.6rem,1fr));border:1px solid var(--line);border-radius:8px;overflow:hidden;gap:1px;background:var(--line)}.seg input{position:absolute;opacity:0;pointer-events:none}.seg label{text-align:center;font:500 .8rem/1 var(--sans);letter-spacing:normal;text-transform:none;padding:.55rem .3rem;color:var(--muted);cursor:pointer;display:block;background:#0b171c}.seg input:checked+label{background:rgba(228,184,102,.16);color:var(--gold);font-weight:650}.seg input:disabled+label{opacity:.35;text-decoration:line-through;cursor:not-allowed}.tiles{display:grid;grid-template-columns:1fr 1fr;gap:.4rem}.tiles input{position:absolute;opacity:0;pointer-events:none}.tiles label{display:grid;gap:.15rem;border:1px solid var(--line);border-radius:8px;padding:.5rem .55rem;cursor:pointer;font:600 .82rem/1.2 var(--sans);letter-spacing:normal;text-transform:none;color:var(--ink)}.tiles label span{font:400 .72rem/1.3 var(--sans);color:var(--faint)}.tiles input:checked+label{border-color:var(--gold);background:rgba(228,184,102,.08)}.ins-rows{display:grid;gap:.35rem}.ins-row{display:flex;justify-content:space-between;align-items:center;gap:.6rem;padding:.5rem .6rem;border-radius:8px;background:rgba(244,239,228,.04);font-size:.82rem}.ins-row span{color:var(--faint);font-size:.76rem;text-align:right}.ins-row form{margin:0}.mod-pick{display:grid;gap:.4rem}.mod-list{display:grid;gap:.15rem;max-height:20rem;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:.3rem}.mod-list h4{margin:.45rem .35rem .15rem;font:700 .6rem/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}.mod-list button{display:grid;gap:.1rem;text-align:left;background:transparent;border:0;border-radius:6px;padding:.4rem .5rem;color:var(--ink);font:600 .82rem/1.25 var(--sans);cursor:pointer}.mod-list button span{font:400 .72rem/1.3 var(--sans);color:var(--faint)}.mod-list button:hover{background:rgba(228,184,102,.1)}.agora-inspector .notice{margin:0;font-size:.8rem}.ins-help{font-size:.76rem;color:var(--faint);margin:0}@media (max-width:900px){.ag-body{grid-template-columns:1fr}.agora-inspector{position:fixed;left:0;right:0;bottom:2.6rem;max-height:55vh;z-index:30;border-radius:14px 14px 0 0;box-shadow:0 -12px 30px rgba(0,0,0,.45)}}</style>"
+
+// look_short is a catalog name as a person reads it: the designation before
+// its id, without _MODULE, with spaces for underscores.
+fn look_short(label: string) string {
+    var text: string = label
+    let paren: i32 = rho_str_index_of(text, " (")
+    if paren > 0 {
+        text = rho_str_slice(text, 0, u32(paren))
+    }
+    let suffix: i32 = rho_str_index_of(text, "_MODULE")
+    if suffix > 0 {
+        text = rho_str_slice(text, 0, u32(suffix))
+    }
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(text)) {
+        let ch: string = rho_str_slice(text, i, 1)
+        if ch == "_" {
+            out = out + " "
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn look_words(list: string) string {
+    var rest: string = list
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if item != "" {
+            if out != "" {
+                out = out + ", "
+            }
+            out = out + transport_label(item)
+        }
+    }
+    return out
+}
+
+// look_transports are the transports a parent and a board can share, as words.
+fn look_transports(parent_board: string, board: string) string {
+    var out: string = ""
+    var rest: string = transport_universe()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var transport: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            transport = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if transport != "" && transport_allowed(transport, parent_board, board) {
+            if out != "" {
+                out = out + " "
+            }
+            out = out + transport
+        }
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The inspector's parts                                                     */
+/* -------------------------------------------------------------------------- */
+
+fn look_head(kicker: string, title: string, state: string) string {
+    var shown: string = ""
+    if state != "" {
+        shown = "<div class=\"ins-state\">" + state + "</div>"
+    }
+    return "<div class=\"ins-head\"><div class=\"ins-kicker\">" + escape_html(kicker) + "</div><h2>" +
+        escape_html(title) + "</h2>" + shown + "</div>"
+}
+
+fn look_body(inner: string) string {
+    return "<div class=\"ins-body\">" + inner + "</div>"
+}
+
+fn look_impact(text: string) string {
+    if text == "" {
+        return ""
+    }
+    return "<div class=\"ins-impact\"><b>Applying this change</b><span>" + escape_html(text) + "</span></div>"
+}
+
+fn look_foot(submit: string, discard: bool) string {
+    var reset: string = ""
+    if discard {
+        reset = "<button type=\"reset\" class=\"ag-btn\">Discard</button>"
+    }
+    return "<div class=\"ins-foot\">" + reset + "<button type=\"submit\" class=\"ag-btn primary\">" + escape_html(submit) + "</button></div>"
+}
+
+// look_form is an inspector form: its fields, what saving it does, and the
+// footer with Discard and the button that saves it.
+fn look_form(action: string, tab: string, index: u32, inner: string, impact: string, submit: string) string {
+    var rev: string = ""
+    if index > 0 {
+        rev = editor_hidden("rev", editor_rev(index))
+    }
+    return "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
+        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", tab) + rev + inner + look_impact(impact) +
+        look_foot(submit, true) + "</form>"
+}
+
+// look_segment is a choice of a few, as a row of buttons; a choice that is not
+// possible is shown crossed out.
+fn look_segment(name: string, options: string, selected: string, allowed: string, attrs: string) string {
+    var out: string = "<div class=\"seg\">"
+    var rest: string = options
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var value: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            value = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if value == "" {
+            continue
+        }
+        let id: string = "seg-" + name + "-" + value
+        var mark: string = ""
+        if value == selected {
+            mark = " checked"
+        }
+        if allowed != "" && !words_contain(allowed, value) {
+            mark = mark + " disabled"
+        }
+        out = out + "<input type=\"radio\" id=\"" + escape_html(id) + "\" name=\"" + escape_html(name) + "\" value=\"" +
+            escape_html(value) + "\"" + mark + attrs + "><label for=\"" + escape_html(id) + "\">" +
+            escape_html(transport_label(value)) + "</label>"
+    }
+    return out + "</div>"
+}
+
+// look_board_tiles are the boards a node can be, as tiles: those a parent can
+// talk to, each with the transports they share.
+fn look_board_tiles(role: string, parent: string, selected: string) string {
+    let parent_board: string = endpoint_board(parent)
+    var out: string = "<div class=\"tiles\">"
+    var rest: string = board_rows()
+    var shown: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" || !usable_board(line, role) {
+            continue
+        }
+        let name: string = field(line, 0)
+        let shared: string = look_transports(parent_board, name)
+        if shared == "" && name != selected {
+            continue
+        }
+        var mark: string = ""
+        if name == selected || (selected == "" && shown == 0) {
+            mark = " checked"
+        }
+        out = out + "<input type=\"radio\" id=\"tile-" + escape_html(name) + "\" name=\"board\" value=\"" +
+            escape_html(name) + "\"" + mark + "><label for=\"tile-" + escape_html(name) + "\" title=\"" +
+            escape_html(field(line, 2)) + "\">" + escape_html(look_short(field(line, 1))) + "<span>" +
+            escape_html(look_words(shared)) + "</span></label>"
+        shown = shown + 1
+    }
+    if shown == 0 {
+        return "<p class=\"ins-help\">No board in the registry can talk to " + escape_html(editor_parent_name(parent)) + ".</p>"
+    }
+    return out + "</div>"
+}
+
+// look_module_picker is the modules a board can carry, by category, each one
+// click to fit, with a search over their names and summaries.
+fn look_module_picker(action: string, index: u32) string {
+    let rows: string = module_rows()
+    if rows == "" {
+        return "<p class=\"ins-help\">No modules were found in robohub-drivers.</p>"
+    }
+    var groups: string = ""
+    var categories: string = ""
+    var rest: string = rows
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let category: string = field(line, 3)
+        if line != "" && category != "" && !words_contain(categories, category) {
+            categories = categories + category + " "
+        }
+    }
+    var cats: string = categories
+    while cats != "" {
+        let at: i32 = rho_str_index_of(cats, " ")
+        var category: string = cats
+        if at < 0 {
+            cats = ""
+        } else {
+            category = rho_str_slice(cats, 0, u32(at))
+            cats = rho_str_slice(cats, u32(at) + 1, u32(rho_strlen(cats)) - u32(at) - 1)
+        }
+        if category == "" {
+            continue
+        }
+        var items: string = ""
+        var lines: string = rows
+        while lines != "" {
+            let at2: i32 = rho_str_index_of(lines, "\n")
+            var line: string = lines
+            if at2 < 0 {
+                lines = ""
+            } else {
+                line = rho_str_slice(lines, 0, u32(at2))
+                lines = rho_str_slice(lines, u32(at2) + 1, u32(rho_strlen(lines)) - u32(at2) - 1)
+            }
+            if line == "" || field(line, 3) != category {
+                continue
+            }
+            let shown_name: string = look_short(field(line, 1))
+            let about: string = module_summary(field(line, 0))
+            items = items + "<button type=\"submit\" name=\"module\" value=\"" + escape_html(field(line, 0)) +
+                "\" data-q=\"" + escape_html(cross_lower(shown_name + " " + field(line, 0) + " " + about)) + "\">" +
+                escape_html(shown_name) + "<span>" + escape_html(about) + "</span></button>"
+        }
+        if items != "" {
+            groups = groups + "<h4 data-cat>" + escape_html(category_title(category)) + "</h4>" + items
+        }
+    }
+    return "<form class=\"mod-pick\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
+        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "modules") + editor_hidden("rev", editor_rev(index)) +
+        editor_hidden("action", "add") +
+        "<input type=\"search\" placeholder=\"Search modules by name or what they measure\" aria-label=\"Search modules\" " +
+        "oninput=\"var q=this.value.toLowerCase();this.form.querySelectorAll('[data-q]').forEach(function(e){e.hidden=q!=''&&e.dataset.q.indexOf(q)<0})\">" +
+        "<div class=\"mod-list\">" + groups + "</div></form>"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Cards                                                                     */
+/* -------------------------------------------------------------------------- */
+
+// look_job_pill is a node's job, as its card's pill, or "".
+fn look_job_pill(project: string, target: string) string {
+    var rest: string = jobs_list(project)
+    var last: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq != "" && rho_str_eq(jobs_meta(project, seq, "target"), target) {
+            last = seq
+            if jobs_open(project, seq) {
+                let kind: string = jobs_meta(project, seq, "kind")
+                let state: string = jobs_state(project, seq)
+                if state == "waiting" {
+                    return "warn|waiting for you"
+                }
+                if state == "running" {
+                    if kind == "flash" {
+                        return "busy|flashing"
+                    }
+                    return "busy|building"
+                }
+                return "busy|queued"
+            }
+        }
+    }
+    if last != "" && jobs_state(project, last) == "failed" {
+        return "down|" + jobs_meta(project, last, "kind") + " failed"
+    }
+    return ""
+}
+
+fn look_pill(css_text: string) string {
+    return "<span class=\"ag-pill " + escape_html(field(css_text, 0)) + "\">" + escape_html(field(css_text, 1)) + "</span>"
+}
+
+// look_board_status is a board's one pill: its job, then whether it runs what
+// is planned, then whether it reports.
+fn look_board_status(id: string, index: u32, readings: string) string {
+    let nid: string = state_value("node." + rho_int_to_str(index) + ".id")
+    let job: string = look_job_pill(id, "node." + nid)
+    if job != "" {
+        return job
+    }
+    if deployed_node_reason(id, index) != "" {
+        return "warn|needs build"
+    }
+    let last: u32 = agora_last_seen(readings, nid)
+    if last > 0 && mesh_now_seconds() - last <= AGORA_ONLINE_SECONDS {
+        return "online|online"
+    }
+    if last > 0 {
+        return "|quiet"
+    }
+    return "|no data"
+}
+
+fn look_seen(readings: string, source: string) string {
+    let last: u32 = agora_last_seen(readings, source)
+    if last == 0 {
+        return "never seen"
+    }
+    return "last seen " + agora_age(last)
+}
+
+// look_module_chip is a module on its board's card: its short name, and its
+// newest reading when it has one.
+fn look_module_chip(id: string, board: u32, fitted: u32, readings: string) string {
+    let source: string = state_value("node." + rho_int_to_str(board) + ".id")
+    let prefix: string = "m" + state_value("node." + rho_int_to_str(fitted) + ".number") + "."
+    var value: string = ""
+    var rest: string = readings
+    while rest != "" && value == "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let name: string = field(line, 1)
+        if rho_str_eq(field(line, 0), source) && rho_str_index_of(name, prefix) == 0 {
+            let bare: string = rho_str_slice(name, u32(rho_strlen(prefix)), u32(rho_strlen(name)) - u32(rho_strlen(prefix)))
+            value = agora_value(bare, field(line, 2))
+        }
+    }
+    var shown: string = ""
+    if value != "" {
+        shown = " <b>" + escape_html(value) + "</b>"
+    }
+    // A module someone named is shown by its name; one that kept the name it
+    // was fitted with, by its kind.
+    let kind_name: string = look_short(module_label(node_module_name(fitted)))
+    var label: string = node_value(fitted, "name", "")
+    if label == "" || rho_str_eq(label, module_label(node_module_name(fitted))) || rho_str_index_of(label, "Module ") == 0 {
+        label = kind_name
+    }
+    return "<a class=\"ag-mod\"" + editor_open_node(id, fitted, "") + " onclick=\"event.stopPropagation()\" title=\"" +
+        escape_html(kind_name) + "\">" + escape_html(label) + shown + "</a>"
+}
+
+// look_card_open makes a whole card open its node in the inspector.
+fn look_card_open(fragment: string, page_url: string) string {
+    return " hx-get=\"" + fragment + "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" tabindex=\"0\""
+}
+
+fn look_board_card(id: string, index: u32, readings: string, selected: string) string {
+    let nid: string = editor_node_id(id, index)
+    let row: string = "node." + rho_int_to_str(index)
+    let source: string = state_value(row + ".id")
+    let status: string = look_board_status(id, index, readings)
+    var chips: string = ""
+    var rest: string = node_module_children(index)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let fitted: u32 = u32(rho_int_from_str(item))
+        if fitted > 0 {
+            chips = chips + look_module_chip(id, index, fitted, readings)
+        }
+    }
+    chips = chips + "<a class=\"ag-add-chip\"" + editor_open_node(id, index, "modules") + " onclick=\"event.stopPropagation()\">+ module</a>"
+    var progress: string = ""
+    if field(status, 1) == "building" || field(status, 1) == "flashing" {
+        progress = "<div class=\"ag-progress\"><i></i></div>"
+    }
+    var css: string = ""
+    if rho_str_eq(selected, "node:" + nid) {
+        css = " selected"
+    }
+    let fragment: string = editor_base(id) + "/node/" + nid
+    let page_url: string = editor_page_url(id, "node:" + nid)
+    return "<div class=\"ag-node\" id=\"agora-node-" + rho_int_to_str(index) + "\"><div class=\"ag-card board" + css + "\"" +
+        look_card_open(fragment, page_url) + "><div class=\"ag-head\"><a href=\"" + page_url + "\" hx-get=\"" + fragment +
+        "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">" +
+        escape_html(editor_name(index)) + "</a>" + look_pill(status) + "</div><div class=\"ag-meta\">" +
+        escape_html(node_value(index, "board", "")) + " · " + escape_html(look_seen(readings, source)) +
+        "</div><div class=\"ag-chips\">" + chips + "</div>" + progress + "</div>" +
+        "<a class=\"ag-plus\" title=\"Add a node under " + escape_html(editor_name(index)) + "\"" +
+        editor_open_new(id, "compute", row) + ">+</a></div>"
+}
+
+fn look_device_card(id: string, index: u32, readings: string, selected: string) string {
+    let nid: string = editor_node_id(id, index)
+    let source: string = state_value("node." + rho_int_to_str(index) + ".id")
+    let last: u32 = agora_last_seen(readings, source)
+    var status: string = "|no data"
+    if last > 0 && mesh_now_seconds() - last <= AGORA_ONLINE_SECONDS {
+        status = "online|online"
+    } else if last > 0 {
+        status = "|quiet"
+    }
+    var values: string = ""
+    var count: u32 = 0
+    var rest: string = readings
+    while rest != "" && count < 3 {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if source != "" && rho_str_eq(field(line, 0), source) {
+            values = values + "<span class=\"ag-read\"><b>" + escape_html(agora_value(field(line, 1), field(line, 2))) +
+                "</b> " + escape_html(agora_field_label(field(line, 1))) + "</span>"
+            count = count + 1
+        }
+    }
+    var css: string = ""
+    if rho_str_eq(selected, "node:" + nid) {
+        css = " selected"
+    }
+    let fragment: string = editor_base(id) + "/node/" + nid
+    let page_url: string = editor_page_url(id, "node:" + nid)
+    return "<div class=\"ag-node\" id=\"agora-node-" + rho_int_to_str(index) + "\"><div class=\"ag-card device" + css + "\"" +
+        look_card_open(fragment, page_url) + "><div class=\"ag-head\"><a href=\"" + page_url + "\" hx-get=\"" + fragment +
+        "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">" +
+        escape_html(editor_name(index)) + "</a>" + look_pill(status) + "</div><div class=\"ag-meta\">" +
+        escape_html(look_short(device_label(node_device_name(index)))) + " · " + escape_html(node_value(index, "address", "")) +
+        "</div><div class=\"ag-chips\">" + values + "</div></div></div>"
+}
+
+fn look_gateway_card(id: string, selected: string) string {
+    let health: string = agora_health(id)
+    var status: string = "|not checked"
+    if health == "online" {
+        status = "online|online"
+    } else if health == "offline" {
+        status = "down|not answering"
+    } else if health == "stopped" {
+        status = "|not started"
+    }
+    let job: string = look_job_pill(id, "gateway")
+    if job != "" {
+        status = job
+    } else if deployed_gateway_reason(id) != "" && deployed_gateway_reason(id) != "never programmed" {
+        status = "warn|restart to apply"
+    }
+    var boards: u32 = 0
+    var devices: u32 = 0
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if is_device_node(index) {
+            devices = devices + 1
+        } else if !is_module_node(index) {
+            boards = boards + 1
+        }
+        index = index + 1
+    }
+    var where: string = "native · 127.0.0.1:" + agora_gateway_port(id)
+    if agora_gateway_kind(id) != "native" {
+        where = agora_gateway_kind(id) + " · " + agora_gateway_host(id) + ":" + agora_gateway_port(id)
+    }
+    var css: string = ""
+    if selected == "gateway" {
+        css = " selected"
+    }
+    let fragment: string = editor_base(id) + "/gateway"
+    let page_url: string = editor_page_url(id, "gateway")
+    var linked: string = ""
+    if link_parent(id) != "" {
+        linked = "<div class=\"ag-meta\">reports through " + escape_html(project_name(link_parent(id))) + "</div>"
+    }
+    // A board that is the gateway carries modules too.
+    var chips: string = ""
+    if gateway_allows_modules() {
+        var rest: string = gateway_module_indices()
+        let readings: string = agora_readings(id)
+        while rest != "" {
+            let at: i32 = rho_str_index_of(rest, " ")
+            var item: string = rest
+            if at < 0 {
+                rest = ""
+            } else {
+                item = rho_str_slice(rest, 0, u32(at))
+                rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+            }
+            let fitted: u32 = u32(rho_int_from_str(item))
+            if fitted > 0 {
+                chips = chips + look_module_chip(id, 0, fitted, readings)
+            }
+        }
+        chips = "<div class=\"ag-chips\">" + chips + "<a class=\"ag-add-chip\"" + editor_open_new(id, "device", "gateway") +
+            " onclick=\"event.stopPropagation()\">+ device</a></div>"
+    }
+    return "<div class=\"ag-node\" id=\"agora-node-gateway\"><div class=\"ag-card gateway" + css + "\"" +
+        look_card_open(fragment, page_url) + "><div class=\"ag-head\"><a href=\"" + page_url + "\" hx-get=\"" + fragment +
+        "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">Gateway</a>" +
+        look_pill(status) + "</div><div class=\"ag-meta\">" + escape_html(where) + "</div>" + linked +
+        "<div class=\"ag-stats\"><span><b>" + rho_int_to_str(boards) + "</b>nodes</span><span><b>" +
+        rho_int_to_str(devices) + "</b>devices</span><span><b>" + escape_html(project_area_id(project_file(id))) +
+        "</b>area</span></div>" + chips + "</div></div>"
+}
+
+// look_link_badge is the link a board hangs from, with what tells it apart:
+// the baud of a serial line, the port of a network link.
+fn look_link_badge(id: string, index: u32) string {
+    let link: string = node_value(index, "link", "uart")
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    var detail: string = ""
+    if link == "uart" || link == "usb" || link == "console" || link == "rs485" {
+        detail = default_value(prefix + "baud", "115200")
+    } else if link == "wifi" || link == "socket" || link == "ethernet" {
+        detail = default_value(prefix + "port", default_value("uplink_port", fleet_uplink_port(id)))
+    }
+    var text: string = transport_label(link)
+    if detail != "" {
+        text = text + " · " + detail
+    }
+    return "<a class=\"ag-badge\"" + editor_open_edge(id, index) + " title=\"Edit this link\">" + escape_html(text) + "</a>"
+}
+
+fn look_branch(badge: string, card: string, children: string) string {
+    return "<li class=\"mesh-branch\">" + badge + card + children + "</li>"
+}
+
+fn look_children(id: string, parent: string, readings: string, selected: string) string {
+    var out: string = ""
+    var index: u32 = 1
+    let count: u32 = node_count()
+    while index <= count {
+        if node_value(index, "parent", "gateway") == parent && node_attached(index) && !is_module_node(index) {
+            if is_device_node(index) {
+                out = out + look_branch("<span class=\"ag-badge dev\">" + escape_html(transport_label(node_value(index, "transport", "http"))) +
+                    "</span>", look_device_card(id, index, readings, selected), "")
+            } else {
+                var below: string = look_children(id, "node." + rho_int_to_str(index), readings, selected)
+                if below != "" {
+                    below = "<ul class=\"mesh-children\">" + below + "</ul>"
+                }
+                out = out + look_branch(look_link_badge(id, index), look_board_card(id, index, readings, selected), below)
+            }
+        }
+        index = index + 1
+    }
+    return out
+}
+
+// look_tree is the mesh as the canvas draws it: the gateway, the boards and
+// devices under it with their links, the meshes that report through it, and a
+// card to add the next node.
+fn look_tree(id: string, selected: string) string {
+    let readings: string = agora_readings(id)
+    var items: string = look_children(id, "gateway", readings, selected) + agora_linked_items(id)
+    items = items + look_branch("<span class=\"ag-badge\" style=\"visibility:hidden\">+</span>",
+        "<a class=\"ag-newcard\"" + editor_open_new(id, "compute", "gateway") + ">+ Add node</a>", "")
+    var out: string = look_gateway_card(id, selected) + "<ul class=\"mesh-children\">" + items + "</ul>"
+    if node_count() == 0 {
+        out = out + agora_first_run(id)
+    }
+    return out
+}
+
+// look_bar is the agora's bar: which mesh, whether its gateway answers, its
+// area, what is out of date, and Apply changes.
+fn look_bar(id: string) string {
+    var meshes: string = ""
+    var rest: string = project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var other: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            other = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if other != "" {
+            var mark: string = ""
+            if rho_str_eq(other, id) {
+                mark = " selected"
+            }
+            meshes = meshes + "<option value=\"" + escape_html(other) + "\"" + mark + ">" + escape_html(project_name(other)) + "</option>"
+        }
+    }
+    let health: string = agora_health(id)
+    var live: string = "<span class=\"ag-chip\">gateway not checked yet</span>"
+    if health == "online" {
+        live = "<span class=\"ag-chip live\"><i class=\"ag-dot\"></i>Live · gateway online</span>"
+    } else if health == "offline" {
+        live = "<span class=\"ag-chip down\"><i class=\"ag-dot\"></i>gateway not answering · " +
+            agora_age(agora_health_since(id)) + "</span>"
+    } else if health == "stopped" {
+        live = "<span class=\"ag-chip\"><i class=\"ag-dot\"></i>gateway not started</span>"
+    }
+    let stale: u32 = agora_out_of_date()
+    var waiting: string = ""
+    if stale == 1 {
+        waiting = "<span class=\"ag-chip warn\">1 node out of date</span>"
+    } else if stale > 1 {
+        waiting = "<span class=\"ag-chip warn\">" + rho_int_to_str(stale) + " nodes out of date</span>"
+    }
+    var apply: string = ""
+    if stale > 0 || deployed_gateway_reason(id) != "" {
+        apply = "<a class=\"ag-btn primary\"" + editor_open(editor_base(id) + "/apply", editor_page_url(id, "apply")) + ">Apply changes</a>"
+    }
+    var failed: string = ""
+    if rho_str_eq(state_value_in(project_file(id), "status.gateway"), "failed") {
+        failed = "<span class=\"ag-chip down\">" + escape_html(state_value_in(project_file(id), "message.build")) + "</span>"
+    }
+    return "<select class=\"ag-mesh\" aria-label=\"Mesh\" onchange=\"location.href='/mesh/p/'+this.value\">" + meshes +
+        "</select>" + live + "<span class=\"ag-chip\">area " + escape_html(project_area_id(project_file(id))) + "</span>" +
+        failed + "<span class=\"ag-spacer\"></span>" + waiting + apply +
+        "<a class=\"ag-btn\" href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a>"
+}

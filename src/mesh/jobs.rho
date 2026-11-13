@@ -478,22 +478,23 @@ fn jobs_strip(project: string) string {
 
 // jobs_inspector is one job in the inspector: what it is, where it is, its
 // log, and what the person can do about it.
-fn jobs_inspector(project: string, seq: string) string {
+fn jobs_inspector(project: string, seq: string, notice: string) string {
     if !jobs_exists(project, seq, "job") {
-        return "<h3>Job</h3><p class=\"agora-seen\">That job is not there any more.</p>"
+        return look_head("Job", "Not there any more", "") + look_body(notice)
     }
     let state: string = jobs_state(project, seq)
     let label: string = jobs_meta(project, seq, "label")
     let action: string = jobs_url(project, seq)
     var controls: string = ""
     if state == "waiting" {
-        controls = "<div class=\"notice\"><p>" + escape_html(jobs_read(project, seq, "wait")) + "</p></div>" +
-            jobs_control(action, "go", "The board is ready: flash it", "") +
-            jobs_control(action, "cancel", "Cancel", "quiet")
+        controls = "<div class=\"ins-impact\"><b>Your turn</b><span>" + escape_html(jobs_read(project, seq, "wait")) +
+            "</span></div><div class=\"ins-foot\" style=\"position:static;margin:0;border:0;background:none;padding:0\">" +
+            jobs_control(action, "cancel", "Cancel", "ag-btn") +
+            jobs_control(action, "go", "The board is ready: flash it", "ag-btn primary") + "</div>"
     } else if state == "queued" {
-        controls = jobs_control(action, "cancel", "Cancel", "quiet")
+        controls = jobs_control(action, "cancel", "Cancel", "ag-btn")
     } else if state == "failed" || state == "cancelled" || state == "skipped" {
-        controls = jobs_control(action, "retry", "Try again", "")
+        controls = jobs_control(action, "retry", "Try again", "ag-btn primary")
         ignore_bool(rho_write_text(jobs_path(project, seq, "seen"), "\n"))
     }
     var log: string = rho_read_text(jobs_path(project, seq, "log"))
@@ -509,8 +510,19 @@ fn jobs_inspector(project: string, seq: string) string {
     if shown == "" {
         shown = "Nothing yet."
     }
-    return "<div" + refresh + "><h3>" + escape_html(label) + " <small class=\"agora-seen\">" + state + "</small></h3>" +
-        controls + "<pre class=\"job-log\">" + escape_html(shown) + "</pre></div>"
+    var css: string = ""
+    if state == "running" {
+        css = " busy"
+    } else if state == "waiting" {
+        css = " warn"
+    } else if state == "failed" {
+        css = " down"
+    } else if state == "done" {
+        css = " online"
+    }
+    return "<div" + refresh + " style=\"display:contents\">" + look_head("Job", label,
+        "<span class=\"ag-pill" + css + "\">" + state + "</span>") + look_body(notice + controls +
+        "<pre class=\"job-log\">" + escape_html(shown) + "</pre>") + "</div>"
 }
 
 fn jobs_control(action: string, verb: string, label: string, css: string) string {
@@ -523,7 +535,8 @@ fn jobs_control(action: string, verb: string, label: string, css: string) string
         "</button></form> "
 }
 
-// jobs_apply_plan is what "Apply changes" will do, before it is asked to.
+// jobs_apply_plan is what "Apply changes" will do, before it is asked to, as
+// rows, with how many jobs it makes.
 fn jobs_apply_plan(project: string) string {
     var items: string = ""
     var rest: string = deployed_out_of_date(project)
@@ -540,31 +553,50 @@ fn jobs_apply_plan(project: string) string {
         if index == 0 {
             continue
         }
-        items = items + "<li><b>" + escape_html(editor_name(index)) + "</b> · " +
-            escape_html(deployed_node_reason(project, index)) + "<br><small>build, then flash when you are at the board</small></li>"
+        items = items + "<div class=\"ins-row\"><b>Build and flash " + escape_html(editor_name(index)) + "</b><span>" +
+            escape_html(deployed_node_reason(project, index)) + "</span></div>"
     }
     let gateway: string = deployed_gateway_reason(project)
     if gateway != "" {
-        var what: string = "restart"
+        var what: string = "Restart the gateway"
         if default_value("gateway", "native") != "native" {
-            what = "build and program"
+            what = "Build and program the gateway"
         }
-        items = items + "<li><b>Gateway</b> · " + escape_html(gateway) + "<br><small>" + what + "</small></li>"
+        items = items + "<div class=\"ins-row\"><b>" + what + "</b><span>" + escape_html(gateway) + "</span></div>"
     }
     return items
 }
 
 fn jobs_apply_inspector(project: string, notice: string) string {
     let items: string = jobs_apply_plan(project)
+    let count: u32 = fleet_line_count(deployed_out_of_date(project))
+    var changes: u32 = count
+    if deployed_gateway_reason(project) != "" {
+        changes = changes + 1
+    }
     if items == "" {
-        return "<h3>Apply changes</h3>" + notice +
-            "<p class=\"agora-seen\">Every board and the gateway run what is planned.</p>"
+        return look_head("Apply changes", "Nothing to apply", "") + look_body(notice +
+            "<p class=\"ins-help\">Every board and the gateway run what is planned.</p>")
     }
     let action: string = editor_base(project) + "/apply"
-    return "<h3>Apply changes</h3>" + notice + "<ul class=\"inspector-list\">" + items + "</ul>" +
+    var jobs: u32 = count * 2
+    if deployed_gateway_reason(project) != "" {
+        jobs = jobs + 1
+    }
+    var heading: string = "Apply " + rho_int_to_str(changes) + " changes"
+    if changes == 1 {
+        heading = "Apply 1 change"
+    }
+    var run: string = "Run " + rho_int_to_str(jobs) + " jobs"
+    if jobs == 1 {
+        run = "Run 1 job"
+    }
+    return look_head(heading, project_name(project), "") + look_body(notice +
+        "<div class=\"ins-rows\">" + items + "</div>" +
+        "<p class=\"ins-help\">Builds run in the background. Flashing a board asks you to put it in its programming " +
+        "mode — BOOTSEL for a Pico — when it is that board's turn, on its card.</p>" +
         "<form method=\"post\" action=\"" + action + "\" hx-post=\"" + action + "\" hx-target=\"#agora-inspector\">" +
-        "<button type=\"submit\">Apply</button></form>" +
-        "<p class=\"agora-seen\">Builds run in the background; each flash waits on its board's card until you say the board is in its programming mode.</p>"
+        "<div class=\"ins-foot\"><button type=\"submit\" class=\"ag-btn primary\">" + run + "</button></div></form>")
 }
 
 /* -------------------------------------------------------------------------- */

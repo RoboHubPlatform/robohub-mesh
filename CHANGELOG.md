@@ -331,3 +331,21 @@ its tree, and the fleet says who reports through whom. A board moves to another
 mesh with its id, modules and history; a mesh is copied as a template; the
 fleet applies every mesh's changes at once and searches nodes in every mesh, and
 its inbox lists running and waiting jobs. Needs rho-robohub 0.4.2.
+
+## [0.13.0] - 2026-11-13
+
+The agora looks like the proposal. It is one panel the height of the window: a
+bar with the mesh (a switcher), whether its gateway answers, its area, what is
+out of date and Apply changes; the canvas on a dotted grid with Fit, zoom, Add
+node and Add device; the inspector as a column on the right; the activity strip
+below. Cards are compact — a name, one pill (building, waiting for you, needs
+build, online, quiet), one line of what it is and when it was last seen — and
+carry their modules as chips with their newest reading, or a device's readings;
+modules are no longer cards of their own. Link badges say the transport and its
+baud or port. The inspector has a kicker and a title, dark full-width fields
+with small-caps labels, board tiles filtered by what the parent can talk to, the
+transport as a segmented choice with the impossible ones crossed out (a new one
+is shown with its settings before it is saved), an "Applying this change" box,
+and Discard and Save at its foot. A module is fitted from a searchable list by
+category, one click each, with its summary; the fitted ones are rows with the
+bus they take. Apply lists each change and runs its jobs.

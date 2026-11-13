@@ -261,6 +261,11 @@ fn module_rows() string {
         }
         var summary: string = yaml.value(manifest, "capabilities.summary")
         if summary == "" || summary == ">" {
+            // A module without a summary of its own says what it is in its
+            // description, folded over lines, which the full reader reads.
+            summary = catalog_first_sentence(catalog_folded(manifest, "description"))
+        }
+        if summary == "" {
             summary = yaml.value(manifest, "board.category")
         }
         if summary == "" {
@@ -595,6 +600,46 @@ fn module_names_for(indices: string) string {
         out = out + name
     }
     return out
+}
+
+// catalog_folded is a `module:` key written as folded text (`key: >` and the
+// lines indented under it), joined into one line.
+fn catalog_folded(manifest: string, key: string) string {
+    var rest: string = rho_read_text(manifest)
+    var inside: bool = false
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if inside {
+            if rho_str_index_of(line, "    ") == 0 {
+                out = out + " " + device_trim(line)
+                continue
+            }
+            return device_trim(out)
+        }
+        if rho_str_eq(line, "  " + key + ": >") || rho_str_eq(line, "  " + key + ": >-") {
+            inside = true
+        } else if rho_str_index_of(line, "  " + key + ": ") == 0 {
+            return device_trim(rho_str_slice(line, u32(rho_strlen(key)) + 4, u32(rho_strlen(line)) - u32(rho_strlen(key)) - 4))
+        }
+    }
+    return device_trim(out)
+}
+
+// catalog_first_sentence is a description's first sentence.
+fn catalog_first_sentence(text: string) string {
+    let stop: i32 = rho_str_index_of(text, ". ")
+    if stop > 0 {
+        return rho_str_slice(text, 0, u32(stop) + 1)
+    }
+    return text
 }
 
 fn module_summary(module_name: string) string {

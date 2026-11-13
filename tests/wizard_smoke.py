@@ -210,7 +210,7 @@ def check_editor(base: str, project: Path) -> None:
     if not relay:
         raise AssertionError("the relay has no id in the plan")
     fragment = hx(base, f"/mesh/p/default/node/{relay}")
-    assert_contains(fragment, ["Relay one", "inspector-tabs", "Save node", "name=\"rev\""], "the relay's inspector")
+    assert_contains(fragment, ["Relay one", "inspector-tabs", ">Save</button>", "name=\"rev\""], "the relay's inspector")
     if "<html" in fragment:
         raise AssertionError("htmx was answered with a whole page instead of the inspector")
     # A board programmed before signatures were kept is taken to run what is
@@ -289,7 +289,7 @@ def check_editor(base: str, project: Path) -> None:
     # flash it. Building it is a job that runs in the background; flashing it
     # waits on its card for the person to put the board in BOOTSEL.
     apply = hx(base, "/mesh/p/default/apply")
-    assert_contains(apply, ["Apply changes", "Relay one", "build, then flash"], "the apply dialog")
+    assert_contains(apply, ["Apply ", "Build and flash Relay one", "Run "], "the apply dialog")
     queued = hx(base, "/mesh/p/default/apply", {"only": f"node:{relay}"})
     assert_contains(queued, ["Queued."], "the relay queued")
     jobs = project / "jobs"
@@ -501,7 +501,7 @@ def main() -> int:
 
             node_form = hx(base, "/mesh/p/default/node/new?kind=compute&parent=gateway")
             assert_contains(node_form, ['name="name"', 'name="role"', 'name="board"', 'name="parent"',
-                                        'name="link"', 'value="pico2w"', "Add node"], "the new-node form")
+                                        'name="link"', 'value="pico2w"', "Add to mesh"], "the new-node form")
             if 'name="sensors"' in node_form:
                 raise AssertionError("modules are nodes of their own, not a field on the node")
             gateway_form = hx(base, "/mesh/p/default/gateway")
@@ -518,7 +518,7 @@ def main() -> int:
                                                "description": "Second node", "role": "node", "board": "pico2w",
                                                "parent": "node.1", "link": "wifi"})
             module_form = hx(base, "/mesh/p/default/node/new?kind=module&parent=node.1")
-            assert_contains(module_form, ["New module", 'name="module"', 'name="parent"',
+            assert_contains(module_form, ["Fit a module", 'name="module"', 'name="action" value="add"',
                                           'value="ds18b20-waterproof-probe-module"',
                                           'value="ky-001-temperature-sensor-module"', 'value="bmp180-module"'],
                             "the new-module form")
@@ -534,8 +534,8 @@ def main() -> int:
                 assert_contains(added, [name + " added."], "a module added")
 
             planned = get(base, "/mesh/p/default")
-            assert_contains(planned, ["Relay one", "Leaf two", "mesh-children", "link-badge", "UART", "WiFi",
-                                      "module-branch", "Temperature probe", "Humidity probe", "Gateway pressure",
+            assert_contains(planned, ["Relay one", "Leaf two", "mesh-children", "ag-badge", "UART", "WiFi",
+                                      "ag-mod", "Temperature probe", "Humidity probe", "Gateway pressure",
                                       "Apply changes"], "the planned mesh")
 
             sources = get(base, "/mesh/api/sources")
@@ -546,15 +546,15 @@ def main() -> int:
             plan_now = wizard_state.read_text()
             relay_id, leaf_id = plan_node_id(plan_now, 1), plan_node_id(plan_now, 2)
             relay_modules = hx(base, f"/mesh/p/default/node/{relay_id}?tab=modules")
-            assert_contains(relay_modules, ["DS18B20_MODULE (ds18b20-temperature-module)", "DHT11_MODULE (dht11-module)",
-                                            "1-Wire onewire0", "gpio dht0", "Fit this module"], "the relay's modules")
+            assert_contains(relay_modules, ["DS18B20", "DHT11",
+                                            "1-Wire onewire0", "gpio dht0", "Fit a module"], "the relay's modules")
             leaf_modules = hx(base, f"/mesh/p/default/node/{leaf_id}?tab=modules")
             assert_contains(leaf_modules, ["conflict", "adc adc0 channel 0"], "a bus conflict")
 
             # Each link is edited on its own: only transports both ends serve
             # are offered, and its settings are those of its transport.
             relay_link = hx(base, f"/mesh/p/default/edge/{relay_id}")
-            assert_contains(relay_link, ["Use this transport", "Save link", "UART", "WiFi"], "the relay's link")
+            assert_contains(relay_link, ["name=\"transport\"", ">Save</button>", "UART", "WiFi"], "the relay's link")
             hx(base, f"/mesh/p/default/edge/{relay_id}", {"tab": "settings", "node.1.parent_endpoint": "/dev/ttyACM0",
                                                           "node.1.child_endpoint": "/dev/ttyACM1", "node.1.baud": "115200"})
             leaf_link = hx(base, f"/mesh/p/default/edge/{leaf_id}")
@@ -586,12 +586,12 @@ def main() -> int:
             # The agora shows the mesh's real nodes, live; the inspector shows
             # the node selected, and links to the page that edits it.
             agora = get(base, "/mesh/agora?project=default")
-            assert_contains(agora, ["Relay one", "Gateway", "Inspector", "sse-connect=\"/mesh/agora/events?project=default\"",
-                                    "192.0.2.10 · arduino-uno-q"], "agora")
+            assert_contains(agora, ["Relay one", "Gateway", "id=\"agora-inspector\"", "sse-connect=\"/mesh/agora/events?project=default\"",
+                                    "arduino-uno-q · 192.0.2.10:8080"], "agora")
             inspected = get(base, "/mesh/agora?project=default&node=1")
             # The old address of a node in the agora opens the project's own page
             # with that node in the inspector.
-            assert_contains(inspected, ["Relay one", "Save node", "pico2w", "agora-node-1", "inspector-tabs"],
+            assert_contains(inspected, ["Relay one", ">Save</button>", "pico2w", "agora-node-1", "inspector-tabs"],
                             "agora inspector")
             fleet_page = get(base, "/mesh/fleet")
             assert_contains(fleet_page, ["Fleet", "<title>Relay one</title>", "<svg", "Hosts", "192.0.2.10", "gateways online", "New mesh",
@@ -733,7 +733,7 @@ def main() -> int:
             if not live_health.exists() or not live_health.read_text().startswith("stopped|"):
                 raise AssertionError("a native gateway never started is not shown as stopped: " +
                                      (live_health.read_text() if live_health.exists() else "no health"))
-            assert_contains(get(base, "/mesh/agora?project=Live-mesh"),
+            assert_contains(get(base, "/mesh/p/Live-mesh?select=gateway"),
                             ["gateway not started", "Build and start the gateway", "name=\"only\" value=\"gateway\""],
                             "agora of a mesh whose gateway is not started")
             if "gateway unreachable" in get(base, "/faults"):
@@ -779,7 +779,7 @@ def main() -> int:
                 time.sleep(0.5)
             if not healthy.exists() or not healthy.read_text().startswith("online|"):
                 raise AssertionError("the background did not find the native gateway online")
-            live_agora = get(base, "/mesh/agora?project=Live-mesh")
+            live_agora = get(base, "/mesh/p/Live-mesh?select=gateway")
             assert_contains(live_agora,
                             ["Live · gateway online", "this machine · native gateway · :" + str(live_port), "Live plug"],
                             "agora of a live mesh")

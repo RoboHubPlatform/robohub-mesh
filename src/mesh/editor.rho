@@ -126,15 +126,6 @@ fn editor_next_rev(index: u32) string {
     return rho_int_to_str(u32(rho_int_from_str(editor_rev(index))) + 1)
 }
 
-fn editor_form(action: string, tab: string, index: u32, inner: string, submit: string) string {
-    var rev: string = ""
-    if index > 0 {
-        rev = editor_hidden("rev", editor_rev(index))
-    }
-    return "<form class=\"inspector-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
-        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", tab) + rev + inner +
-        "<div class=\"form-actions\"><button type=\"submit\">" + escape_html(submit) + "</button></div></form>"
-}
 
 fn editor_notice(text: string, bad: bool) string {
     if text == "" {
@@ -181,101 +172,12 @@ fn editor_tabs(id: string, index: u32, current: string) string {
     return out + "</nav>"
 }
 
-// editor_deploy_line says whether a board runs what is planned, and if not,
-// what changed.
-fn editor_deploy_line(id: string, index: u32) string {
-    if !editor_is_board(index) {
-        return ""
-    }
-    let reason: string = deployed_node_reason(id, index)
-    let job: string = jobs_open_for(id, "node." + editor_node_id(id, index), "")
-    var action: string = ""
-    if job != "" {
-        action = " <a class=\"button quiet\"" + jobs_open_attrs(id, job) + ">" +
-            escape_html(jobs_meta(id, job, "label")) + " · " + jobs_state(id, job) + "</a>"
-    } else {
-        var label: string = "Build and flash"
-        if reason == "" {
-            label = "Build and flash again"
-        }
-        action = " <form class=\"inline\" method=\"post\" action=\"" + editor_base(id) + "/apply\" hx-post=\"" +
-            editor_base(id) + "/apply\" hx-target=\"#agora-inspector\">" +
-            editor_hidden("only", "node:" + editor_node_id(id, index)) +
-            "<button type=\"submit\" class=\"quiet\">" + label + "</button></form>"
-    }
-    if reason == "" {
-        return "<p class=\"inspector-deploy\"><span class=\"agora-state online\">runs what is planned</span>" + action + "</p>"
-    }
-    return "<p class=\"inspector-deploy\"><span class=\"agora-state planned\">out of date</span> " +
-        escape_html(reason) + action + "</p>"
-}
 
 /* -------------------------------------------------------------------------- */
 /*  The inspector                                                             */
 /* -------------------------------------------------------------------------- */
 
-// editor_inspector is what the inspector shows for a selection: the gateway,
-// a node by its id (and a tab), a link by its child's id, or a new node.
-fn editor_inspector(id: string, selection: string, tab: string, kind: string, parent: string, notice: string) string {
-    if selection == "" {
-        return "<h3>Inspector</h3>" + notice +
-            "<p class=\"agora-seen\">Select the gateway, a node or a link to see it and change it. " +
-            "Use + on a card to add what hangs from it.</p>"
-    }
-    if selection == "gateway" {
-        return editor_gateway_inspector(id, notice)
-    }
-    if selection == "new" {
-        return editor_new_inspector(id, kind, parent, notice)
-    }
-    if selection == "apply" {
-        return jobs_apply_inspector(id, notice)
-    }
-    if rho_str_index_of(selection, "job:") == 0 {
-        return notice + jobs_inspector(id, rho_str_slice(selection, 4, u32(rho_strlen(selection)) - 4))
-    }
-    if rho_str_index_of(selection, "node:") == 0 || rho_str_index_of(selection, "edge:") == 0 {
-        let nid: string = rho_str_slice(selection, 5, u32(rho_strlen(selection)) - 5)
-        let index: u32 = project_node_by_id(project_file(id), nid)
-        if index == 0 {
-            return "<h3>Inspector</h3>" + notice + "<p class=\"agora-seen\">That node is not in this mesh any more.</p>"
-        }
-        if rho_str_index_of(selection, "edge:") == 0 {
-            return editor_edge_inspector(id, index, notice)
-        }
-        return editor_node_inspector(id, index, tab, notice)
-    }
-    return "<h3>Inspector</h3>" + notice
-}
 
-fn editor_node_inspector(id: string, index: u32, tab: string, notice: string) string {
-    var current: string = tab
-    if current == "" {
-        current = "node"
-    }
-    var kind: string = "board"
-    if is_device_node(index) {
-        kind = "device"
-    } else if is_module_node(index) {
-        kind = "module"
-    }
-    var body: string = ""
-    if current == "link" && editor_is_board(index) {
-        body = editor_link_form(id, index)
-    } else if current == "modules" && editor_is_board(index) {
-        body = editor_modules_tab(id, index)
-    } else if current == "data" && !is_module_node(index) {
-        body = editor_data_tab(id, index)
-    } else if current == "delete" {
-        body = editor_delete_tab(id, index)
-    } else {
-        current = "node"
-        body = editor_node_form(id, index) + cross_move_form(id, index)
-    }
-    return "<h3>" + escape_html(editor_name(index)) + " <small class=\"agora-seen\">" + kind + " · under " +
-        escape_html(editor_parent_name(node_value(index, "parent", "gateway"))) + "</small></h3>" +
-        editor_deploy_line(id, index) + notice + editor_tabs(id, index, current) + body
-}
 
 fn editor_node_action(id: string, index: u32) string {
     return editor_base(id) + "/node/" + editor_node_id(id, index)
@@ -319,51 +221,258 @@ fn editor_role_options(role: string) string {
         option("gateway", "gateway", "another host", role)
 }
 
-fn editor_node_form(id: string, index: u32) string {
-    let prefix: string = "node." + rho_int_to_str(index) + "."
-    let name: string = mesh_input("name", "Name", editor_name(index), "Names live in Mesh; changing one builds nothing.") +
-        mesh_textarea("description", "Description", node_value(index, "description", ""))
-    if is_device_node(index) {
-        let device: string = node_device_name(index)
-        return editor_form(editor_node_action(id, index), "node", index,
-            name + mesh_select("device", "Integration", device_picker(device), "") +
-            mesh_input("transport", "Transport", node_value(index, "transport", "http"), "How Mesh reaches it.") +
-            mesh_input("address", "Address", node_value(index, "address", ""), "Mesh polls it here; no board is built.") +
-            mesh_input("device_id", "Device id", node_value(index, "device_id", ""), "") +
-            mesh_select("parent", "Under", device_parent_options(node_value(index, "parent", "gateway")), ""),
-            "Save device")
-    }
-    if is_module_node(index) {
-        return editor_form(editor_node_action(id, index), "node", index,
-            name + "<label>Module</label>" + module_picker(node_module_name(index)) +
-            mesh_select("parent", "Fitted to", module_parent_options(node_value(index, "parent", "")),
-                "The board that carries it is rebuilt."),
-            "Save module")
-    }
-    let role: string = node_value(index, "role", "node")
-    let board: string = node_value(index, "board", "")
-    return editor_form(editor_node_action(id, index), "node", index,
-        name + mesh_select("role", "Role", editor_role_options(role), "") +
-        mesh_select("board", "Board", board_options_for(role, "", board), "A new board rebuilds this one.") +
-        mesh_select("parent", "Under", editor_parent_choices(index, node_value(index, "parent", "gateway")),
-            "Moving it rebuilds it; its link is kept when the new parent can serve it."),
-        "Save node")
+
+
+
+fn editor_form(action: string, tab: string, index: u32, inner: string, submit: string) string {
+    return look_form(action, tab, index, inner, "", submit)
 }
 
-fn editor_link_form(id: string, index: u32) string {
-    let link: string = node_value(index, "link", "uart")
-    let action: string = editor_base(id) + "/edge/" + editor_node_id(id, index)
-    return "<p class=\"agora-seen\">" + escape_html(editor_parent_name(node_value(index, "parent", "gateway"))) +
-        " → " + escape_html(editor_name(index)) + " over " + escape_html(transport_label(link)) + ".</p>" +
-        editor_form(action, "transport", index,
-            mesh_select("transport", "Transport", transport_options_for(index),
-                "Only transports both boards can serve are offered."),
-            "Use this transport") +
-        editor_form(action, "settings", index, network_settings(index), "Save link")
+// editor_deploy_line says whether a board runs what is planned, and offers to
+// build and flash it, or shows the job doing so.
+fn editor_deploy_line(id: string, index: u32) string {
+    if !editor_is_board(index) {
+        return ""
+    }
+    let reason: string = deployed_node_reason(id, index)
+    let job: string = jobs_open_for(id, "node." + editor_node_id(id, index), "")
+    var action: string = ""
+    if job != "" {
+        action = "<a class=\"ag-btn small\"" + jobs_open_attrs(id, job) + ">" +
+            escape_html(jobs_meta(id, job, "label")) + " · " + jobs_state(id, job) + "</a>"
+    } else {
+        var label: string = "Build and flash"
+        if reason == "" {
+            label = "Build and flash again"
+        }
+        action = "<form class=\"inline\" method=\"post\" action=\"" + editor_base(id) + "/apply\" hx-post=\"" +
+            editor_base(id) + "/apply\" hx-target=\"#agora-inspector\">" +
+            editor_hidden("only", "node:" + editor_node_id(id, index)) +
+            "<button type=\"submit\" class=\"ag-btn small\">" + label + "</button></form>"
+    }
+    if reason == "" {
+        return "<span class=\"ag-pill online\">runs what is planned</span>" + action
+    }
+    return "<span class=\"ag-pill warn\">needs build</span><span>" + escape_html(reason) + "</span>" + action
+}
+
+// editor_inspector is what the inspector shows for a selection: the gateway,
+// a node by its id (and a tab), a link by its child's id, a new node, the
+// changes to apply, or a job.
+fn editor_inspector(id: string, selection: string, tab: string, kind: string, parent: string, notice: string) string {
+    if selection == "" {
+        return look_head("Mesh", project_name(id), "") + look_body(notice +
+            "<p class=\"ins-help\">Select the gateway, a node or a link to see it and change it. " +
+            "Use + module on a card, + under a board, or Add node to add what hangs from it. " +
+            "Changes are saved at once; Apply changes builds and flashes what they touch.</p>")
+    }
+    if selection == "gateway" {
+        return editor_gateway_inspector(id, notice)
+    }
+    if selection == "new" {
+        return editor_new_inspector(id, kind, parent, notice)
+    }
+    if selection == "apply" {
+        return jobs_apply_inspector(id, notice)
+    }
+    if rho_str_index_of(selection, "job:") == 0 {
+        return jobs_inspector(id, rho_str_slice(selection, 4, u32(rho_strlen(selection)) - 4), notice)
+    }
+    if rho_str_index_of(selection, "node:") == 0 || rho_str_index_of(selection, "edge:") == 0 {
+        let nid: string = rho_str_slice(selection, 5, u32(rho_strlen(selection)) - 5)
+        let index: u32 = project_node_by_id(project_file(id), nid)
+        if index == 0 {
+            return look_head("Mesh", project_name(id), "") +
+                look_body(notice + "<p class=\"ins-help\">That node is not in this mesh any more.</p>")
+        }
+        if rho_str_index_of(selection, "edge:") == 0 {
+            return editor_edge_inspector(id, index, notice, tab)
+        }
+        return editor_node_inspector(id, index, tab, notice)
+    }
+    return look_head("Mesh", project_name(id), "") + look_body(notice)
+}
+
+fn editor_node_inspector(id: string, index: u32, tab: string, notice: string) string {
+    var current: string = tab
+    if current == "" {
+        current = "node"
+    }
+    var kind: string = "Node"
+    if is_device_node(index) {
+        kind = "Device"
+    } else if is_module_node(index) {
+        kind = "Module"
+    }
+    var body: string = ""
+    if current == "link" && editor_is_board(index) {
+        body = editor_link_form(id, index, "")
+    } else if current == "modules" && editor_is_board(index) {
+        body = editor_modules_tab(id, index)
+    } else if current == "data" && !is_module_node(index) {
+        body = editor_data_tab(id, index)
+    } else if current == "delete" {
+        body = editor_delete_tab(id, index)
+    } else {
+        current = "node"
+        body = editor_node_form(id, index) + cross_move_form(id, index)
+    }
+    var under: string = "under "
+    if is_module_node(index) {
+        under = "on "
+    }
+    return look_head(kind + " · " + under + editor_parent_name(node_value(index, "parent", "gateway")),
+        editor_name(index), editor_deploy_line(id, index)) + editor_tabs(id, index, current) + look_body(notice + body)
+}
+
+fn editor_module_options(selected: string) string {
+    var out: string = ""
+    var rest: string = module_rows()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line != "" {
+            out = out + option(field(line, 0), look_short(field(line, 1)), field(line, 2), selected)
+        }
+    }
+    return out
+}
+
+fn editor_node_form(id: string, index: u32) string {
+    let name: string = mesh_input("name", "Name", editor_name(index), "") +
+        mesh_textarea("description", "Description", node_value(index, "description", ""))
+    let action: string = editor_node_action(id, index)
+    if is_device_node(index) {
+        let device: string = node_device_name(index)
+        return look_form(action, "node", index,
+            name + mesh_select("device", "Integration", device_picker(device), "") +
+            "<label>Transport" + look_segment("transport", "http mqtt", node_value(index, "transport", "http"), "", "") + "</label>" +
+            mesh_input("address", "Address", node_value(index, "address", ""), "") +
+            mesh_input("device_id", "Device id", node_value(index, "device_id", ""), "") +
+            mesh_select("parent", "Under", device_parent_options(node_value(index, "parent", "gateway")), ""),
+            "A device builds nothing: Mesh polls it at its address.", "Save")
+    }
+    if is_module_node(index) {
+        return look_form(action, "node", index,
+            name + mesh_select("module", "Module", editor_module_options(node_module_name(index)), "") +
+            mesh_select("parent", "Fitted to", module_parent_options(node_value(index, "parent", "")), ""),
+            "The board that carries it is rebuilt and flashed.", "Save")
+    }
+    let role: string = node_value(index, "role", "node")
+    let parent: string = node_value(index, "parent", "gateway")
+    return look_form(action, "node", index,
+        name + mesh_select("role", "Role", editor_role_options(role), "") +
+        "<label>Board" + look_board_tiles(role, parent, node_value(index, "board", "")) + "</label>" +
+        mesh_select("parent", "Under", editor_parent_choices(index, parent), ""),
+        "A new name or description builds nothing. A new board, role or parent rebuilds and flashes " +
+        editor_name(index) + ".", "Save")
+}
+
+// editor_link_fields are the settings of one transport, for a board's link.
+fn editor_link_fields(index: u32, link: string) string {
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    if link == "wifi" {
+        return mesh_input(prefix + "ssid", "Network (SSID)", default_value(prefix + "ssid", default_value("ssid", "")), "") +
+            mesh_secret(prefix + "password", "Password", default_value(prefix + "password", default_value("password", ""))) +
+            mesh_input(prefix + "parent_host", "Gateway host", default_value(prefix + "parent_host",
+                default_value("gateway_host", "127.0.0.1")), "What the board dials.") +
+            mesh_input(prefix + "port", "Port", default_value(prefix + "port",
+                default_value("uplink_port", fleet_uplink_port(current_project()))), "") +
+            mesh_input(prefix + "child_host", "Board host", default_value(prefix + "child_host", ""), "Optional.")
+    }
+    if link == "uart" || link == "usb" || link == "console" || link == "rs485" {
+        var child: string = "/dev/ttyACM0"
+        if link == "uart" {
+            child = "uart1"
+        } else if link == "usb" || link == "console" {
+            child = "console"
+        }
+        let parent_value: string = default_value(prefix + "parent_endpoint", default_value("serial_port", "/dev/ttyACM0"))
+        var parent_field: string = ""
+        if node_value(index, "parent", "gateway") == "gateway" && default_value("gateway", "native") == "native" {
+            let ports: string = serial_port_options(parent_value)
+            if ports != "" {
+                parent_field = mesh_select(prefix + "parent_endpoint", "Gateway port", ports, "")
+            }
+        }
+        if parent_field == "" {
+            parent_field = mesh_input(prefix + "parent_endpoint", "Parent port", parent_value, "")
+        }
+        var fields: string = parent_field +
+            mesh_input(prefix + "child_endpoint", "Board port", default_value(prefix + "child_endpoint", child), "") +
+            mesh_input(prefix + "baud", "Baud", default_value(prefix + "baud", "115200"), "")
+        if link == "rs485" {
+            fields = fields + mesh_input(prefix + "bus_address", "Address", default_value(prefix + "bus_address", ""), "")
+        }
+        return fields
+    }
+    if link == "spi" || link == "i2c" {
+        return mesh_input(prefix + "parent_endpoint", "Parent bus", default_value(prefix + "parent_endpoint", ""), "") +
+            mesh_input(prefix + "child_endpoint", "Board bus", default_value(prefix + "child_endpoint", ""), "") +
+            mesh_input(prefix + "bus_address", "Address", default_value(prefix + "bus_address", ""), "")
+    }
+    return mesh_input(prefix + "parent_endpoint", "Parent host", default_value(prefix + "parent_endpoint",
+            default_value("gateway_host", "")), "") +
+        mesh_input(prefix + "child_endpoint", "Board address", default_value(prefix + "child_endpoint", ""), "") +
+        mesh_input(prefix + "port", "Port", default_value(prefix + "port", ""), "")
+}
+
+// editor_board_transports are the transports a board can hang from its parent
+// by: the transport module's list, without what only devices speak.
+fn editor_board_transports() string {
+    var out: string = ""
+    var rest: string = transport_universe()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var transport: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            transport = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if transport != "" && transport != "http" && transport != "mqtt" {
+            if out != "" {
+                out = out + " "
+            }
+            out = out + transport
+        }
+    }
+    return out
+}
+
+// editor_link_form is a board's link: the transport as a choice of those both
+// ends serve, and that transport's settings. A different transport chosen is
+// shown with its settings before it is saved.
+fn editor_link_form(id: string, index: u32, preview: string) string {
+    let current: string = node_value(index, "link", "uart")
+    var link: string = current
+    if preview != "" {
+        link = preview
+    }
+    let parent: string = node_value(index, "parent", "gateway")
+    let allowed: string = look_transports(endpoint_board(parent), node_value(index, "board", ""))
+    let edge: string = editor_base(id) + "/edge/" + editor_node_id(id, index)
+    let change: string = " hx-get=\"" + edge + "\" hx-trigger=\"change\" hx-target=\"#agora-inspector\""
+    var restart: string = editor_parent_name(parent) + " restarts to serve it."
+    if parent == "gateway" {
+        restart = "The gateway restarts to serve it."
+    }
+    return look_form(edge, "link", index,
+        "<label>Transport" + look_segment("transport", editor_board_transports(), link, allowed, change) +
+        "<small>Only transports both boards support are offered.</small></label>" + editor_link_fields(index, link),
+        "Rebuild and flash " + editor_name(index) + ". " + restart, "Save")
 }
 
 fn editor_modules_tab(id: string, index: u32) string {
-    var list: string = ""
+    let plan: string = node_bus_plan(index)
+    var rows: string = ""
     var rest: string = node_module_children(index)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, " ")
@@ -378,31 +487,43 @@ fn editor_modules_tab(id: string, index: u32) string {
         if child == 0 {
             continue
         }
-        list = list + "<li><a" + editor_open_node(id, child, "") + ">" + escape_html(editor_name(child)) + "</a> · " +
-            escape_html(module_label(node_module_name(child))) +
-            "<form class=\"inline\" method=\"post\" action=\"" + editor_node_action(id, index) + "\" hx-post=\"" +
+        let name: string = node_module_name(child)
+        var detail: string = ""
+        var lines: string = plan
+        while lines != "" {
+            let at2: i32 = rho_str_index_of(lines, "\n")
+            var line: string = lines
+            if at2 < 0 {
+                lines = ""
+            } else {
+                line = rho_str_slice(lines, 0, u32(at2))
+                lines = rho_str_slice(lines, u32(at2) + 1, u32(rho_strlen(lines)) - u32(at2) - 1)
+            }
+            if rho_str_eq(field(line, 0), name) || rho_str_eq(field(line, 0), module_label(name)) {
+                detail = field(line, 2)
+                if field(line, 1) == "conflict" {
+                    detail = "conflict · " + detail
+                }
+            }
+        }
+        rows = rows + "<div class=\"ins-row\"><a" + editor_open_node(id, child, "") + "><b>" +
+            escape_html(look_short(module_label(name))) + "</b></a><span>" + escape_html(detail) + "</span>" +
+            "<form method=\"post\" action=\"" + editor_node_action(id, index) + "\" hx-post=\"" +
             editor_node_action(id, index) + "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "modules") +
             editor_hidden("rev", editor_rev(index)) + editor_hidden("action", "remove") +
             editor_hidden("module_node", editor_node_id(id, child)) +
-            "<button type=\"submit\" class=\"quiet\">Remove</button></form></li>"
+            "<button type=\"submit\" class=\"ag-btn small\" title=\"Remove\">×</button></form></div>"
     }
-    if list == "" {
-        list = "<li class=\"agora-seen\">No modules fitted.</li>"
+    if rows == "" {
+        rows = "<p class=\"ins-help\">No modules fitted.</p>"
     }
-    // The bus plan says which pins and addresses each module takes, so a
-    // conflict is seen before the board is built.
-    var conflicts: string = ""
-    if node_module_children(index) != "" {
-        conflicts = node_bus_html(index)
-        if node_bus_conflicts(index) {
-            conflicts = "<p class=\"notice bad\">Two modules want the same pins or address; the second is left out of the image.</p>" + conflicts
-        }
+    var conflict: string = ""
+    if node_bus_conflicts(index) {
+        conflict = "<p class=\"notice bad\">Two modules want the same pins or address; the second is left out of the image.</p>"
     }
-    return "<ul class=\"inspector-list\">" + list + "</ul>" + conflicts +
-        editor_form(editor_node_action(id, index), "modules", index,
-            editor_hidden("action", "add") + module_picker(""),
-            "Fit this module") +
-        "<p class=\"agora-seen\">A module is carried by this board's image, so this board alone is rebuilt.</p>"
+    return "<div class=\"ins-section\">Fitted</div><div class=\"ins-rows\">" + rows + "</div>" + conflict +
+        "<div class=\"ins-section\">Fit a module</div>" + look_module_picker(editor_node_action(id, index), index) +
+        look_impact("Fitting or removing a module rebuilds and flashes " + editor_name(index) + " only.")
 }
 
 fn editor_data_tab(id: string, index: u32) string {
@@ -460,91 +581,98 @@ fn editor_delete_tab(id: string, index: u32) string {
     return text + editor_form(editor_node_action(id, index) + "/delete", "delete", index, inner, "Delete")
 }
 
-fn editor_edge_inspector(id: string, index: u32, notice: string) string {
-    return "<h3>Link to " + escape_html(editor_name(index)) + "</h3>" + editor_deploy_line(id, index) + notice +
-        editor_link_form(id, index)
+
+
+
+/* -------------------------------------------------------------------------- */
+/*  Answers                                                                   */
+/* -------------------------------------------------------------------------- */
+
+fn editor_edge_inspector(id: string, index: u32, notice: string, preview: string) string {
+    var link: string = node_value(index, "link", "uart")
+    if preview != "" {
+        link = preview
+    }
+    return look_head("Link · " + editor_parent_name(node_value(index, "parent", "gateway")) + " → " + editor_name(index),
+        transport_label(link) + " link", editor_deploy_line(id, index)) +
+        look_body(notice + editor_link_form(id, index, preview))
 }
 
 fn editor_gateway_inspector(id: string, notice: string) string {
     let gateway: string = default_value("gateway", "native")
     var host: string = ""
     if gateway != "native" {
-        host = mesh_input("gateway_host", "Host", default_value("gateway_host", ""),
-            "Where the board that is the gateway is reached.")
+        host = mesh_input("gateway_host", "Host", default_value("gateway_host", ""), "Where the board that is the gateway is reached.")
+    }
+    var state: string = "<span class=\"ag-pill\">" + escape_html(agora_health(id)) + "</span>"
+    if agora_health(id) == "online" {
+        state = "<span class=\"ag-pill online\">online</span>"
     }
     let reason: string = deployed_gateway_reason(id)
-    var deploy: string = ""
     if reason != "" && reason != "never programmed" {
-        deploy = "<p class=\"inspector-deploy\"><span class=\"agora-state planned\">restart to apply</span> " +
-            escape_html(reason) + "</p>"
+        state = state + "<span class=\"ag-pill warn\">restart to apply</span><span>" + escape_html(reason) + "</span>"
     }
-    let form: string = editor_form(editor_base(id) + "/gateway", "gateway", 0,
-        mesh_select("gateway", "Runs on", options_from_rows(board_rows(), "board", "gateway", gateway),
-            "This machine, or a board whose manifest says it can be a gateway.") + host +
+    var title: string = "This machine"
+    if gateway != "native" {
+        title = look_short(label_for(board_rows(), gateway))
+    }
+    let form: string = look_form(editor_base(id) + "/gateway", "gateway", 0,
+        mesh_select("gateway", "Runs on", options_from_rows(board_rows(), "board", "gateway", gateway), "") + host +
         mesh_input("rest_port", "REST port", agora_gateway_port(id), "Mesh reads the gateway here.") +
         mesh_input("uplink_port", "Uplink port", default_value("uplink_port", fleet_uplink_port(id)),
-            "Boards on Wi-Fi, and the gateways of meshes that report through this one, dial this port.") +
-        mesh_select("mesh_parent", "Reports through", link_options(id),
-            "Another mesh's gateway this one reports through, as a board of that mesh."),
-        "Save gateway")
-    return "<h3>Gateway <small class=\"agora-seen\">" + escape_html(agora_host_label(id)) + "</small></h3>" +
-        deploy + notice + "<div class=\"actions\">" + agora_gateway_actions(id, agora_health(id)) + "</div>" + form +
-        "<p class=\"inspector-add\"><a class=\"button quiet\"" + editor_open_new(id, "compute", "gateway") +
-        ">+ node</a> <a class=\"button quiet\"" + editor_open_new(id, "device", "gateway") + ">+ device</a></p>"
+            "Boards on Wi-Fi, and meshes that report through this one, dial this port.") +
+        mesh_select("mesh_parent", "Reports through", link_options(id), ""),
+        "A new place, port or parent takes effect when the gateway restarts.", "Save")
+    return look_head("Gateway · area " + project_area_id(project_file(id)), title, state) +
+        look_body(notice + "<div class=\"ins-rows\"><div class=\"ins-row\"><b>" + escape_html(agora_host_label(id)) +
+        "</b></div></div><div class=\"actions\">" + agora_gateway_actions(id, agora_health(id)) + "</div>" + form)
 }
 
-// editor_new_inspector is the form that adds a node, a device or a module
-// under the parent it was asked from.
+// editor_new_inspector is the form that adds what hangs from a parent: a
+// board, chosen from those the parent can talk to, and how it is connected; a
+// device; or, for a module, the board's Modules tab.
 fn editor_new_inspector(id: string, kind: string, parent: string, notice: string) string {
     let action: string = editor_base(id) + "/node"
     var under: string = parent
     if under == "" {
         under = "gateway"
     }
-    let named: string = mesh_input("name", "Name", "", "") + mesh_textarea("description", "Description", "")
-    if kind == "device" {
-        return "<h3>New device <small class=\"agora-seen\">under " + escape_html(editor_parent_name(under)) +
-            "</small></h3>" + notice + editor_form(action, "new", 0,
-            editor_hidden("kind", "device") + named + mesh_select("device", "Integration", device_picker(""), "") +
-            mesh_input("transport", "Transport", "http", "") + mesh_input("address", "Address", "", "") +
-            mesh_input("device_id", "Device id", "", "") +
-            mesh_select("parent", "Under", device_parent_options(under), ""),
-            "Add device")
+    var back: string = editor_open_gateway(id)
+    let at: u32 = editor_index_of_parent(under)
+    if at > 0 {
+        back = editor_open_node(id, at, "")
     }
+    let cancel: string = "<a class=\"ag-btn\"" + back + ">Cancel</a>"
     if kind == "module" {
-        return "<h3>New module <small class=\"agora-seen\">on " + escape_html(editor_parent_name(under)) +
-            "</small></h3>" + notice + editor_form(action, "new", 0,
-            editor_hidden("kind", "module") + named + module_picker("") +
-            mesh_select("parent", "Fitted to", module_parent_options(under), ""),
-            "Add module")
-    }
-    var transports: string = ""
-    var rest: string = transport_universe()
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, " ")
-        var transport: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            transport = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        if at > 0 && editor_is_board(at) {
+            return editor_node_inspector(id, at, "modules", notice)
         }
-        if transport != "" {
-            transports = transports + option(transport, transport_label(transport), "", "uart")
-        }
+        return look_head("Add a module", "Choose a board first", "") +
+            look_body(notice + "<p class=\"ins-help\">A module is fitted to a board: use + module on its card.</p>")
     }
-    return "<h3>New node <small class=\"agora-seen\">under " + escape_html(editor_parent_name(under)) +
-        "</small></h3>" + notice + editor_form(action, "new", 0,
-        editor_hidden("kind", "compute") + named + mesh_select("role", "Role", editor_role_options("node"), "") +
-        mesh_select("board", "Board", board_options_for("node", "", first_board("node")), "") +
-        mesh_select("parent", "Under", editor_parent_choices(0, under), "") +
-        mesh_select("link", "Link", transports, "Its settings are on the Link tab once it is added."),
-        "Add node")
+    if kind == "device" {
+        return look_head("Add under " + editor_parent_name(under), "New device", "") + look_body(notice +
+            "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
+            "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "new") + editor_hidden("kind", "device") +
+            editor_hidden("parent", under) + mesh_select("device", "Integration", device_picker(""), "") +
+            "<label>Transport" + look_segment("transport", "http mqtt", "http", "", "") + "</label>" +
+            mesh_input("address", "Address", "", "Where Mesh reaches it, e.g. http://192.168.1.20") +
+            mesh_input("name", "Name", "", "") + editor_hidden("device_id", "") +
+            "<div class=\"ins-foot\">" + cancel + "<button type=\"submit\" class=\"ag-btn primary\">Add to mesh</button></div></form>")
+    }
+    let universe: string = editor_board_transports()
+    return look_head("Add under " + editor_parent_name(under), "New node", "") + look_body(notice +
+        "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
+        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "new") + editor_hidden("kind", "compute") +
+        editor_hidden("parent", under) + editor_hidden("role", "node") +
+        "<label>Board" + look_board_tiles("node", under, "") + "</label>" +
+        "<label>Connected by" + look_segment("link", universe, "uart", "", "") +
+        "<small>If the board cannot use it, the first transport both ends share is taken.</small></label>" +
+        mesh_input("name", "Name", "", "") +
+        "<p class=\"ins-help\">The node appears on the tree as planned; its link settings and modules are set here " +
+        "once it is added, and Apply changes builds it.</p>" +
+        "<div class=\"ins-foot\">" + cancel + "<button type=\"submit\" class=\"ag-btn primary\">Add to mesh</button></div></form>")
 }
-
-/* -------------------------------------------------------------------------- */
-/*  Answers                                                                   */
-/* -------------------------------------------------------------------------- */
 
 // editor_publish sends the tree and the bar to every page open on the mesh.
 fn editor_publish(id: string) void {
@@ -557,8 +685,8 @@ fn editor_answer(req: Request, id: string, selection: string, tab: string, notic
     editor_publish(id)
     if htmx_is_request(req) {
         return html(status_ok(), editor_inspector(id, selection, tab, "", "", notice) +
-            "<div hx-swap-oob=\"innerHTML:#agora-canvas\">" + agora_tree(id) + "</div>" +
-            "<div hx-swap-oob=\"innerHTML:#agora-bar\">" + agora_bar(id) + "</div>")
+            "<div hx-swap-oob=\"innerHTML:#agora-canvas\">" + look_tree(id, "") + "</div>" +
+            "<div hx-swap-oob=\"innerHTML:#agora-bar\">" + look_bar(id) + "</div>")
     }
     var location: string = "/mesh/p/" + id
     if selection != "" {
@@ -619,7 +747,7 @@ fn mesh_p_edge_page(req: Request) Response {
     if id == "" {
         return mesh_redirect("/mesh/fleet")
     }
-    return editor_fragment(req, id, "edge:" + param(req, "node"), "")
+    return editor_fragment(req, id, "edge:" + param(req, "node"), request_query_param(req, "transport"))
 }
 
 fn mesh_p_gateway_page(req: Request) Response {
@@ -914,17 +1042,20 @@ fn mesh_p_edge_post(req: Request) Response {
     let prefix: string = "node." + rho_int_to_str(index) + "."
     let before: string = deployed_node_reason(id, index)
     var lines: string = editor_line(prefix + "rev", editor_next_rev(index))
-    if form_value(body, "tab") == "transport" {
-        let transport: string = form_value(body, "transport")
-        if transport == "" || !transport_allowed(transport, endpoint_board(node_value(index, "parent", "gateway")),
-            node_value(index, "board", "")) {
+    var link: string = node_value(index, "link", "uart")
+    let transport: string = form_value(body, "transport")
+    if transport != "" && !rho_str_eq(transport, link) {
+        if !transport_allowed(transport, endpoint_board(node_value(index, "parent", "gateway")), node_value(index, "board", "")) {
             return editor_answer(req, id, selection, "", editor_notice("Both ends must be able to serve that transport.", true))
         }
-        ignore_bool(plan_set_many(wizard_file(), lines + editor_line(prefix + "link", transport)))
-        return editor_answer(req, id, selection, "",
-            editor_notice("Transport set to " + transport_label(transport) + ". Check its settings below.", false))
+        link = transport
+        lines = lines + editor_line(prefix + "link", transport)
     }
-    let link: string = node_value(index, "link", "uart")
+    if form_value(body, "tab") == "transport" {
+        ignore_bool(plan_set_many(wizard_file(), lines))
+        return editor_answer(req, id, selection, "",
+            editor_notice("Transport set to " + transport_label(link) + ". Check its settings below.", false))
+    }
     var fields: string = "parent_endpoint child_endpoint port"
     if link == "wifi" {
         fields = "ssid password parent_host child_host port"

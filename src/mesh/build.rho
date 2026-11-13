@@ -902,7 +902,7 @@ fn mesh_gateway_return(req: Request) Response {
     let id: string = current_project()
     agora_check_health(id)
     if rho_str_eq(form_value(request_body(req), "return"), "agora") {
-        return mesh_redirect("/mesh/agora?project=" + id)
+        return mesh_redirect("/mesh/p/" + id + "?select=gateway")
     }
     return mesh_redirect("/mesh")
 }

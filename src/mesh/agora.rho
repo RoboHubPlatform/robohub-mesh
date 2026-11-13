@@ -676,11 +676,12 @@ fn agora_gateway_actions(id: string, health: string) string {
         "<button type=\"submit\">" + label + "</button></form>" + stop
 }
 
-// agora_strip is the mesh's activity: its faults, and where its steps are.
+// agora_strip is the mesh's activity: its jobs, and its faults in one line —
+// how many are open and the newest.
 fn agora_strip(id: string) string {
-    var faults: string = ""
     var count: u32 = 0
-    var rest: string = telemetry_fault_rows(id, 3)
+    var newest: string = ""
+    var rest: string = telemetry_fault_rows(id, 100)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
         var line: string = rest
@@ -693,19 +694,22 @@ fn agora_strip(id: string) string {
         if line == "" {
             continue
         }
-        faults = faults + "<span class=\"agora-fault\">" + escape_html(agora_tab(line, 1)) + " · " +
-            escape_html(agora_fault_text(agora_tab(line, 3))) + " · " +
-            agora_ms_age(agora_tab(line, 2)) + "</span>"
+        if newest == "" {
+            newest = agora_fault_text(agora_tab(line, 3)) + " · " + agora_ms_age(agora_tab(line, 2))
+        }
         count = count + 1
     }
-    if count == 0 {
-        faults = "<span class=\"agora-seen\">No faults.</span>"
+    var faults: string = "<span>No faults.</span>"
+    if count == 1 {
+        faults = "<span class=\"fault\">1 fault · " + escape_html(newest) + "</span>"
+    } else if count > 1 {
+        faults = "<span class=\"fault\">" + rho_int_to_str(count) + " faults · newest: " + escape_html(newest) + "</span>"
     }
-    let steps: string = "Plan " + default_value("step_topology", "pending") +
-        " · network " + default_value("step_network", "pending") +
-        " · build " + default_value("step_build", "pending") +
-        " · verify " + default_value("step_verify", "pending")
-    return jobs_strip(id) + " " + faults + " <a href=\"/faults\">Faults</a>"
+    var jobs: string = jobs_strip(id)
+    if jobs == "" {
+        jobs = "<span>No jobs running.</span>"
+    }
+    return jobs + faults + "<span class=\"ag-spacer\"></span><a href=\"/faults\">Faults</a>"
 }
 
 // agora_tab is one tab-separated field of a line.
@@ -786,27 +790,35 @@ fn mesh_agora_page(req: Request) Response {
 
 const EDITOR_STYLE: string = "<style>.agora-linked{min-width:16rem;cursor:pointer}.agora-linked summary{list-style:none}.agora-linked .mini-tree{margin:.5rem 0;height:74px;border-radius:9px;background:rgba(244,239,228,.03)}.agora-linked svg{width:100%;height:74px}.agora-job{border-radius:999px;padding:.1rem .6rem;font-size:.8rem;border:1px solid var(--line)}.agora-job.running{color:var(--gold);border-color:rgba(228,184,102,.5)}.agora-job.waiting{color:var(--warn);border-color:rgba(240,197,106,.6);font-weight:600}.agora-job.failed{color:var(--stop);border-color:rgba(240,138,126,.5)}.job-log{max-height:24rem;overflow:auto;font-size:.72rem;white-space:pre-wrap;background:rgba(0,0,0,.25);padding:.6rem;border-radius:8px}form.inline{display:inline}.agora-node{display:inline-flex;flex-direction:column;align-items:center;gap:.25rem}.agora-add{display:flex;gap:.3rem;opacity:.35;transition:opacity .15s}.agora-node:hover .agora-add,.agora-node:focus-within .agora-add{opacity:1}.agora-add a{font-size:.72rem;border:1px dashed var(--line-strong);border-radius:999px;padding:.05rem .45rem;color:var(--muted)}.agora-add a:hover{color:var(--ink);border-color:var(--gold)}a.link-badge{cursor:pointer}a.link-badge:hover{outline:1px solid var(--gold)}.agora-inspector h3{margin:.1rem 0 .5rem}.inspector-tabs{display:flex;gap:.25rem;margin:.5rem 0 .7rem;border-bottom:1px solid var(--line)}.inspector-tabs a{padding:.3rem .6rem;font-size:.8rem;color:var(--muted);border-bottom:2px solid transparent}.inspector-tabs a.on{color:var(--ink);border-bottom-color:var(--gold)}.inspector-form{display:grid;gap:.6rem;margin-bottom:.8rem}.inspector-form label{display:grid;gap:.2rem;font-size:.8rem}.inspector-list{margin:.3rem 0 .6rem;padding-left:1.1rem;font-size:.85rem}.inspector-list form.inline{display:inline;margin-left:.4rem}.inspector-deploy{margin:.2rem 0 .4rem;font-size:.82rem}.inspector-add{margin-top:.6rem}.agora-inspector .sensor-groups{max-height:18rem;overflow:auto}.agora-guide{list-style:none;counter-reset:step;display:grid;gap:.6rem;max-width:30rem;margin:1.2rem auto 0;padding:0}.agora-step{counter-increment:step}.agora-step a{display:grid;grid-template-columns:2rem 1fr;gap:.1rem .6rem;padding:.7rem .9rem;border:1px dashed var(--line-strong);border-radius:12px;color:var(--ink)}.agora-step a::before{content:counter(step);grid-row:span 2;display:grid;place-items:center;width:1.7rem;height:1.7rem;border-radius:50%;border:1px solid var(--gold);color:var(--gold);font-weight:700}.agora-step a span{color:var(--muted);font-size:.82rem}.agora-step a:hover,.agora-step a:focus{border-color:var(--gold)}.agora-step.done a{opacity:.55;border-style:solid}.agora-step.done a::before{content:'✓'}@media (max-width:700px){.agora-inspector{position:fixed;left:0;right:0;bottom:0;max-height:55vh;overflow:auto;z-index:30;border-radius:14px 14px 0 0;background:var(--panel-strong);box-shadow:0 -12px 30px rgba(0,0,0,.45)}.agora-canvas{padding-bottom:40vh}}</style>"
 
-// agora_page_for is a mesh's agora with something selected: the live tree,
-// the bar and the activity strip, and the inspector beside them.
+// agora_page_for is a mesh's agora with something selected: the bar, the live
+// tree on its canvas, the inspector beside it, and the activity strip.
 fn agora_page_for(req: Request, id: string, selection: string, tab: string, kind: string, parent: string) Response {
     var highlight: string = ""
     if selection == "gateway" {
-        highlight = "<style>#agora-node-gateway .node-card{outline:2px solid #2f6fdf;outline-offset:2px}</style>"
+        highlight = "<style>#agora-node-gateway .ag-card{outline:2px solid var(--gold);outline-offset:2px}</style>"
     } else if rho_str_index_of(selection, "node:") == 0 || rho_str_index_of(selection, "edge:") == 0 {
         let index: u32 = project_node_by_id(project_file(id), rho_str_slice(selection, 5, u32(rho_strlen(selection)) - 5))
         if index > 0 {
             highlight = "<style>#agora-node-" + rho_int_to_str(index) +
-                " .node-card{outline:2px solid #2f6fdf;outline-offset:2px}</style>"
+                " .ag-card{outline:2px solid var(--gold);outline-offset:2px}</style>"
         }
     }
-    let body: string = AGORA_STYLE + EDITOR_STYLE + highlight +
-        "<div hx-ext=\"sse\" sse-connect=\"/mesh/agora/events?project=" + escape_html(id) + "\">" +
-        "<div class=\"agora-bar\" id=\"agora-bar\" sse-swap=\"agora-bar\" hx-swap=\"innerHTML\">" + agora_bar(id) + "</div>" +
-        "<div class=\"agora\"><section class=\"mesh-tree agora-canvas\" id=\"agora-canvas\" sse-swap=\"agora-tree\" hx-swap=\"innerHTML\">" +
-        agora_tree(id) + "</section><aside class=\"agora-inspector\" id=\"agora-inspector\">" +
+    let zoom: string = "var z=document.getElementById('agora-zoom');z.style.transform='scale('+(z.dataset.z=Math.max(.4,Math.min(1.6,(+z.dataset.z||1)"
+    let tools: string = "<div class=\"ag-tools\"><button class=\"ag-btn small\" type=\"button\" onclick=\"var z=document.getElementById('agora-zoom');z.dataset.z=1;z.style.transform=''\">Fit</button>" +
+        "<button class=\"ag-btn small\" type=\"button\" onclick=\"" + zoom + "-.1)))+')'\">−</button>" +
+        "<button class=\"ag-btn small\" type=\"button\" onclick=\"" + zoom + "+.1)))+')'\">+</button>" +
+        "<a class=\"ag-btn small\"" + editor_open_new(id, "compute", "gateway") + ">Add node</a>" +
+        "<a class=\"ag-btn small\"" + editor_open_new(id, "device", "gateway") + ">Add device</a></div>"
+    let body: string = AGORA_STYLE + EDITOR_STYLE + LOOK_STYLE + highlight +
+        "<div class=\"ag-app\" hx-ext=\"sse\" sse-connect=\"/mesh/agora/events?project=" + escape_html(id) + "\">" +
+        "<div class=\"ag-bar\" id=\"agora-bar\" sse-swap=\"agora-bar\" hx-swap=\"innerHTML\">" + look_bar(id) + "</div>" +
+        "<div class=\"ag-body\"><section class=\"ag-canvas\">" + tools + "<div class=\"ag-zoom\" id=\"agora-zoom\">" +
+        "<div class=\"mesh-tree agora-canvas\" id=\"agora-canvas\" sse-swap=\"agora-tree\" hx-swap=\"innerHTML\">" +
+        look_tree(id, "") + "</div></div></section><aside class=\"agora-inspector\" id=\"agora-inspector\">" +
         editor_inspector(id, selection, tab, kind, parent, "") + "</aside></div>" +
-        "<div class=\"agora-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div></div>"
-    return page(req, project_name(id) + " · live", body)
+        "<div class=\"ag-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div></div>"
+    // The agora is the whole window, not a panel in a page.
+    return html(status_ok(), mesh_shell(req, project_name(id) + " · live", mesh_with_project(body)))
 }
 
 fn agora_events_file(id: string) string {
@@ -814,8 +826,8 @@ fn agora_events_file(id: string) string {
 }
 
 fn agora_snapshot(id: string) string {
-    return mesh_event_json("agora-bar", agora_bar(id)) +
-        mesh_event_json("agora-tree", agora_tree(id)) +
+    return mesh_event_json("agora-bar", look_bar(id)) +
+        mesh_event_json("agora-tree", look_tree(id, "")) +
         mesh_event_json("agora-strip", agora_strip(id))
 }
 

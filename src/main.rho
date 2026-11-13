@@ -26,6 +26,7 @@ include "mesh/jobs.rho"
 include "mesh/home.rho"
 include "mesh/links.rho"
 include "mesh/cross.rho"
+include "mesh/look.rho"
 
 import std.web.http
 import std.web.template
