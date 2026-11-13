@@ -327,21 +327,28 @@ fn mesh_gateway_audience(path: string) string {
     return ""
 }
 
+// mesh_http_base is an address a person wrote in the plan as a URL to request:
+// `192.168.100.99` is `http://192.168.100.99`. curl took an address with no
+// scheme; the HTTP client does not, and a plug written that way went unread.
+fn mesh_http_base(address: string) string {
+    if address == "" || rho_str_starts_with(address, "http://") || rho_str_starts_with(address, "https://") {
+        return address
+    }
+    return "http://" + address
+}
+
 fn mesh_url_get(base: string, path: string) string {
     if base == "" {
         return ""
     }
-    let report: string = wizard_report("mesh-source")
     let audience: string = mesh_gateway_audience(path)
     var scopes: string = ""
     if audience != "" {
         scopes = MESH_GATEWAY_SCOPE
     }
-    let status: u32 = rho_http_request("GET", base + path, "", "", audience, scopes, report)
-    if status != 200 {
-        return ""
-    }
-    return rho_read_text(report)
+    // The answer is returned, not written to a file: two polls at once must not
+    // read each other's.
+    return rho_http_body("GET", mesh_http_base(base) + path, "", "", audience, scopes)
 }
 
 // mesh_gateway_command sends a command to a gateway with a gateway token.
@@ -356,11 +363,12 @@ fn mesh_url_get_auth(base: string, path: string, token: string) string {
     if base == "" || token == "" {
         return mesh_url_get(base, path)
     }
+    let base_url: string = mesh_http_base(base)
     let report: string = wizard_report("mesh-source")
-    if !mesh_arg_ok(base + path) || !mesh_arg_ok(token) {
+    if !mesh_arg_ok(base_url + path) || !mesh_arg_ok(token) {
         return ""
     }
-    if mesh_curl("-fsS\n-m\n4\n-H\nAuthorization: Bearer " + token + "\n" + base + path + "\n", report) != 0 {
+    if mesh_curl("-fsS\n-m\n4\n-H\nAuthorization: Bearer " + token + "\n" + base_url + path + "\n", report) != 0 {
         return ""
     }
     return rho_read_text(report)

@@ -455,3 +455,7 @@ A mesh keeps its gateway key. The key file holds the key and a line break, and t
 ## [0.18.7] - 2026-11-13
 
 A module's chip on its board's card shows the board's newest reading: firmware built since modules have stable ids names a reading by the module's tag (`042fda5b.temperature_c`), and the chip read only the number-prefixed name (`m2.temperature_c`) an earlier build sent, so a reflashed board kept showing its last reading from before. The tag is preferred, the number kept for boards not reflashed yet.
+
+## [0.18.8] - 2026-11-13
+
+A device whose address the plan writes without a scheme (`192.168.100.99`) is read again: requests now go through the HTTP client, which needs `http://`, and a Shelly written that way went quiet. The scheme is supplied when it is missing, for polls, reads and commands alike. A device read returns its answer rather than writing it to a file two polls could share.

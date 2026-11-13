@@ -31,6 +31,9 @@ extern fn rho_now_s() u32
 extern fn rho_local_date() string
 extern fn rho_local_clock() string
 extern fn rho_exec_capture(program: string, arguments: string) string
+// A request whose answer is its body, returned rather than written to a file
+// another request could be reading.
+extern fn rho_http_body(method: string, url: string, body: string, content_type: string, audience: string, scopes: string) string
 // One argument per line, run with no shell between: nothing in an argument is
 // read as a quote, a space or an option boundary.
 extern fn rho_exec_args(program: string, arguments: string, output_path: string) u32
