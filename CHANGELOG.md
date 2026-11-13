@@ -459,3 +459,7 @@ A module's chip on its board's card shows the board's newest reading: firmware b
 ## [0.18.8] - 2026-11-13
 
 A device whose address the plan writes without a scheme (`192.168.100.99`) is read again: requests now go through the HTTP client, which needs `http://`, and a Shelly written that way went quiet. The scheme is supplied when it is missing, for polls, reads and commands alike. A device read returns its answer rather than writing it to a file two polls could share.
+
+## [0.18.9] - 2026-11-13
+
+A board's sensor that fails a read is brought up again every five seconds at most, with one fault reported per try. The generated firmware re-initialised it on every poll, twice a second, which kept a struggling DS18B20 from settling (each re-initialisation wrote its EEPROM) and filled the history with faults while the chart held the last good value. Boards pick this up when they are rebuilt.

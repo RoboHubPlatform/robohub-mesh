@@ -100,8 +100,15 @@ fn firmware_single_poll(number: u32, fields: string, prefix: string, init_fn: st
         }
         let variable: string = "node_sensor_" + n + "_" + signal
         out = out + "    if (!node_sensor_" + n + "_ready) {\n" +
-            "        // Recovery: the previous read failed, so try to bring the\n" +
-            "        // module up again rather than staying stuck.\n" +
+            "        // Recovery: the previous read failed, so the module is brought\n" +
+            "        // up again — every five seconds at most, and a fault said once\n" +
+            "        // per try. Bringing a part up on every poll kept a struggling\n" +
+            "        // probe from settling, and filled the history with faults.\n" +
+            "        rh_u32 node_sensor_" + n + "_now = to_ms_since_boot(get_absolute_time());\n" +
+            "        if ((rh_i32)(node_sensor_" + n + "_now - node_sensor_" + n + "_retry_ms) < 0) {\n" +
+            "            return;\n" +
+            "        }\n" +
+            "        node_sensor_" + n + "_retry_ms = node_sensor_" + n + "_now + 5000u;\n" +
             "        node_sensor_" + n + "_error = " + init_fn + "(&node_sensor_" + n + ", NULL);\n" +
             "        node_sensor_" + n + "_ready = ROBOHUB_SUCCEEDED(node_sensor_" + n + "_error);\n" +
             "        if (!node_sensor_" + n + "_ready) {\n" +
@@ -214,7 +221,8 @@ fn firmware_sources(sensors: string) string {
         declarations = declarations +
             "static " + device + " node_sensor_" + n + ";\n" +
             "static rh_bool node_sensor_" + n + "_ready;\n" +
-            "static RoboHubError node_sensor_" + n + "_error = ROBOHUB_ERR_NOT_FOUND;\n\n"
+            "static RoboHubError node_sensor_" + n + "_error = ROBOHUB_ERR_NOT_FOUND;\n" +
+            "static rh_u32 node_sensor_" + n + "_retry_ms;\n\n"
         var call: string = "&node_sensor_" + n
         if config != "" {
             call = call + ", " + config
