@@ -535,6 +535,61 @@ fn jobs_control(action: string, verb: string, label: string, css: string) string
         "</button></form> "
 }
 
+// jobs_diff_text is one part of a signature as a person reads it: its items
+// separated by commas, settings as `name value`, and nothing for none.
+fn jobs_diff_text(value: string) string {
+    var out: string = ""
+    var i: u32 = 0
+    while i < u32(rho_strlen(value)) {
+        let ch: string = rho_str_slice(value, i, 1)
+        if ch == "," || ch == "/" {
+            out = out + ", "
+        } else if ch == ":" {
+            out = out + " "
+        } else if ch == "@" {
+            out = out + " #"
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    while u32(rho_strlen(out)) >= 2 && rho_str_eq(rho_str_slice(out, u32(rho_strlen(out)) - 2, 2), ", ") {
+        out = rho_str_slice(out, 0, u32(rho_strlen(out)) - 2)
+    }
+    if out == "" {
+        return "—"
+    }
+    return out
+}
+
+// jobs_diff_rows are one change's diff, shown under it when Review diff is
+// open: each part that differs, as it runs and as it is planned.
+fn jobs_diff_rows(deployed: string, planned: string) string {
+    var out: string = ""
+    var rest: string = deploy_diff(deployed, planned)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if line == "" {
+            continue
+        }
+        let was: string = jobs_diff_text(field(line, 1))
+        let now: string = jobs_diff_text(field(line, 2))
+        out = out + "<div class=\"ins-diff-row\"><span>" + escape_html(field(line, 0)) + "</span><del>" + escape_html(was) +
+            "</del><ins>" + escape_html(now) + "</ins></div>"
+    }
+    if out == "" {
+        return ""
+    }
+    return "<div class=\"ins-diff\">" + out + "</div>"
+}
+
 // jobs_apply_plan is what "Apply changes" will do, before it is asked to, as
 // rows, with how many jobs it makes.
 fn jobs_apply_plan(project: string) string {
@@ -554,7 +609,9 @@ fn jobs_apply_plan(project: string) string {
             continue
         }
         items = items + "<div class=\"ins-row\"><b>Build and flash " + escape_html(editor_name(index)) + "</b><span>" +
-            escape_html(deployed_node_reason(project, index)) + "</span></div>"
+            escape_html(deployed_node_reason(project, index)) + "</span></div>" +
+            jobs_diff_rows(deployed_get(project, deployed_node_key(project, index)),
+                deploy_node_signature(deployed_plan(project), index))
     }
     let gateway: string = deployed_gateway_reason(project)
     if gateway != "" {
@@ -562,7 +619,8 @@ fn jobs_apply_plan(project: string) string {
         if default_value("gateway", "native") != "native" {
             what = "Build and program the gateway"
         }
-        items = items + "<div class=\"ins-row\"><b>" + what + "</b><span>" + escape_html(gateway) + "</span></div>"
+        items = items + "<div class=\"ins-row\"><b>" + what + "</b><span>" + escape_html(gateway) + "</span></div>" +
+            jobs_diff_rows(deployed_get(project, "gateway"), deploy_gateway_signature(deployed_plan(project)))
     }
     return items
 }
@@ -596,7 +654,8 @@ fn jobs_apply_inspector(project: string, notice: string) string {
         "<p class=\"ins-help\">Builds run in the background. Flashing a board asks you to put it in its programming " +
         "mode — BOOTSEL for a Pico — when it is that board's turn, on its card.</p>" +
         "<form method=\"post\" action=\"" + action + "\" hx-post=\"" + action + "\" hx-target=\"#agora-inspector\">" +
-        "<div class=\"ins-foot\"><button type=\"submit\" class=\"ag-btn primary\">" + run + "</button></div></form>")
+        "<div class=\"ins-foot\"><button type=\"button\" class=\"ag-btn\" onclick=\"this.closest('.ins-body').classList.toggle('show-diff')\">Review diff</button>" +
+        "<button type=\"submit\" class=\"ag-btn primary\">" + run + "</button></div></form>")
 }
 
 /* -------------------------------------------------------------------------- */

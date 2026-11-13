@@ -202,3 +202,20 @@ fn deploy_reason(deployed: string, planned: string) string {
     }
     return out + " changed"
 }
+
+// deploy_diff is what differs between what runs and what is planned, as
+// `words|deployed|planned` lines, one per segment that differs.
+fn deploy_diff(deployed: string, planned: string) string {
+    var out: string = ""
+    var rest: string = DEPLOY_SEGMENTS
+    while rest != "" {
+        let label: string = deploy_words_next(rest)
+        rest = deploy_words_rest(rest)
+        let was: string = deploy_segment(deployed, label)
+        let now: string = deploy_segment(planned, label)
+        if !str_eq(was, now) {
+            out = out + deploy_segment_words(label) + "|" + was + "|" + now + "\n"
+        }
+    }
+    return out
+}

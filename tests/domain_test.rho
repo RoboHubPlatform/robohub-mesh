@@ -190,6 +190,15 @@ test fn a_board_never_programmed_says_so() void {
     print("[PASS] a_board_never_programmed_says_so\n")
 }
 
+test fn the_diff_names_what_changed_and_how() void {
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let after: string = deploy_node_signature(deploy_with(DEPLOY_PLAN, "node.1.board", "lolin32-lite"), 1)
+    let diff: string = deploy_diff(before, after)
+    check(str_eq(diff, "board|pico2w|lolin32-lite\n"), "one segment, from what runs to what is planned")
+    check(str_eq(deploy_diff(before, before), ""), "nothing differs, nothing listed")
+    print("[PASS] the_diff_names_what_changed_and_how\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -205,5 +214,6 @@ fn main() void {
     a_link_rebuilds_the_board_and_restarts_its_parent()
     a_board_on_wifi_follows_the_gateway_address()
     a_board_never_programmed_says_so()
+    the_diff_names_what_changed_and_how()
     print("mesh domain tests ok\n")
 }

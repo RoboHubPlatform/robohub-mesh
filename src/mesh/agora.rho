@@ -810,13 +810,13 @@ fn agora_page_for(req: Request, id: string, selection: string, tab: string, kind
         "<a class=\"ag-btn small\"" + editor_open_new(id, "compute", "gateway") + ">Add node</a>" +
         "<a class=\"ag-btn small\"" + editor_open_new(id, "device", "gateway") + ">Add device</a></div>"
     let body: string = AGORA_STYLE + EDITOR_STYLE + LOOK_STYLE + highlight +
-        "<div class=\"ag-app\" hx-ext=\"sse\" sse-connect=\"/mesh/agora/events?project=" + escape_html(id) + "\">" +
+        "<div class=\"ag-app\" data-base=\"" + editor_base(id) + "\" hx-ext=\"sse\" sse-connect=\"/mesh/agora/events?project=" + escape_html(id) + "\">" +
         "<div class=\"ag-bar\" id=\"agora-bar\" sse-swap=\"agora-bar\" hx-swap=\"innerHTML\">" + look_bar(id) + "</div>" +
         "<div class=\"ag-body\"><section class=\"ag-canvas\">" + tools + "<div class=\"ag-zoom\" id=\"agora-zoom\">" +
         "<div class=\"mesh-tree agora-canvas\" id=\"agora-canvas\" sse-swap=\"agora-tree\" hx-swap=\"innerHTML\">" +
         look_tree(id, "") + "</div></div></section><aside class=\"agora-inspector\" id=\"agora-inspector\">" +
         editor_inspector(id, selection, tab, kind, parent, "") + "</aside></div>" +
-        "<div class=\"ag-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div></div>"
+        "<div class=\"ag-strip\" sse-swap=\"agora-strip\" hx-swap=\"innerHTML\">" + agora_strip(id) + "</div>" + LOOK_DRAG + "</div>"
     // The agora is the whole window, not a panel in a page.
     return html(status_ok(), mesh_shell(req, project_name(id) + " · live", mesh_with_project(body)))
 }

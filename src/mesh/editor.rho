@@ -366,12 +366,12 @@ fn editor_node_form(id: string, index: u32) string {
     }
     let role: string = node_value(index, "role", "node")
     let parent: string = node_value(index, "parent", "gateway")
-    return look_form(action, "node", index,
+    return look_form_live(action, "node", index,
         name + mesh_select("role", "Role", editor_role_options(role), "") +
         "<label>Board" + look_board_tiles(role, parent, node_value(index, "board", "")) + "</label>" +
         mesh_select("parent", "Under", editor_parent_choices(index, parent), ""),
         "A new name or description builds nothing. A new board, role or parent rebuilds and flashes " +
-        editor_name(index) + ".", "Save")
+        editor_name(index) + ".", "Save", action + "/impact")
 }
 
 // editor_link_fields are the settings of one transport, for a board's link.
@@ -464,10 +464,14 @@ fn editor_link_form(id: string, index: u32, preview: string) string {
     if parent == "gateway" {
         restart = "The gateway restarts to serve it."
     }
-    return look_form(edge, "link", index,
+    var impact: string = "Rebuild and flash " + editor_name(index) + ". " + restart
+    if preview != "" && !rho_str_eq(preview, current) {
+        impact = editor_impact(index, editor_line("node." + rho_int_to_str(index) + ".link", preview))
+    }
+    return look_form_live(edge, "link", index,
         "<label>Transport" + look_segment("transport", editor_board_transports(), link, allowed, change) +
         "<small>Only transports both boards support are offered.</small></label>" + editor_link_fields(index, link),
-        "Rebuild and flash " + editor_name(index) + ". " + restart, "Save")
+        impact, "Save", editor_node_action(id, index) + "/impact")
 }
 
 fn editor_modules_tab(id: string, index: u32) string {
@@ -1114,4 +1118,139 @@ fn mesh_p_gateway_post(req: Request) Response {
         said = "Gateway saved. Restart it to apply: " + reason + "."
     }
     return editor_answer(req, id, "gateway", "", editor_notice(said, false))
+}
+
+// mesh_p_node_parent moves a node under another parent: what a drag on the
+// canvas asks. A board keeps its link when the new parent can serve it, and is
+// out of date until it is built for its new place.
+fn mesh_p_node_parent(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let nid: string = param(req, "node")
+    let index: u32 = project_node_by_id(project_file(id), nid)
+    let parent: string = form_value(request_body(req), "parent")
+    let selection: string = "node:" + nid
+    if index == 0 || is_module_node(index) {
+        return editor_answer(req, id, "", "", editor_notice("That node is not in this mesh any more.", true))
+    }
+    if !words_contain(look_allowed_parents(index), parent) {
+        return editor_answer(req, id, selection, "", editor_notice(editor_name(index) + " cannot move under " +
+            editor_parent_name(parent) + ": " + editor_refusal(index, parent) + ".", true))
+    }
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    let before: string = deployed_node_reason(id, index)
+    var lines: string = editor_line(prefix + "rev", editor_next_rev(index)) + editor_line(prefix + "parent", parent)
+    if editor_is_board(index) {
+        lines = lines + editor_line(prefix + "link", editor_fit_link(index, parent, node_value(index, "board", "")))
+    }
+    ignore_bool(plan_set_many(wizard_file(), lines))
+    info("mesh", "node " + rho_int_to_str(index) + " moved under " + parent)
+    return editor_answer(req, id, selection, "", editor_notice("Moved under " + editor_parent_name(parent) + "." +
+        editor_now_out_of_date(id, index, before), false))
+}
+
+// editor_refusal says why a node cannot move under a parent.
+fn editor_refusal(index: u32, parent: string) string {
+    let at: u32 = editor_index_of_parent(parent)
+    if at == index {
+        return "a node cannot carry itself"
+    }
+    if at > 0 && is_device_node(at) {
+        return "a device cannot carry nodes"
+    }
+    if at > 0 && is_module_node(at) {
+        return "a module cannot carry nodes"
+    }
+    if at > 0 && editor_below(at, index) {
+        return "it hangs below it"
+    }
+    return "they share no transport"
+}
+
+// editor_impact says what saving some lines into the plan would do: every
+// board whose image they change is rebuilt and flashed, with what changed, and
+// the gateway restarts when its own changes. It is worked out from the
+// signatures before and after, as Apply changes would see them.
+fn editor_impact(index: u32, lines: string) string {
+    let before: string = plan_text(wizard_file())
+    var after: string = before
+    var rest: string = lines
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let equals: i32 = rho_str_index_of(line, "=")
+        if equals > 0 {
+            after = plan_without(after, rho_str_slice(line, 0, u32(equals))) + line + "\n"
+        }
+    }
+    var out: string = ""
+    let count: u32 = node_count()
+    var board: u32 = 1
+    while board <= count {
+        if editor_is_board(board) {
+            let reason: string = deploy_reason(deploy_node_signature(before, board), deploy_node_signature(after, board))
+            if reason != "" {
+                out = out + "Rebuild and flash " + editor_name(board) + " (" + reason + "). "
+            }
+        }
+        board = board + 1
+    }
+    let gateway: string = deploy_reason(deploy_gateway_signature(before), deploy_gateway_signature(after))
+    if gateway != "" {
+        out = out + "Restart the gateway (" + gateway + "). "
+    }
+    if out == "" {
+        return "Nothing is rebuilt: what changed lives in Mesh, not in any board's image."
+    }
+    return device_trim(out)
+}
+
+// mesh_p_node_impact answers a form as it stands with what saving it would do.
+fn mesh_p_node_impact(req: Request) Response {
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return html(status_ok(), "")
+    }
+    let index: u32 = project_node_by_id(project_file(id), param(req, "node"))
+    if index == 0 {
+        return html(status_ok(), look_impact(""))
+    }
+    let body: string = request_body(req)
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    var lines: string = ""
+    if form_value(body, "tab") == "link" {
+        var link: string = node_value(index, "link", "uart")
+        if form_value(body, "transport") != "" {
+            link = form_value(body, "transport")
+        }
+        lines = editor_line(prefix + "link", link)
+        var rest: string = DEPLOY_LINK_FIELDS
+        while rest != "" {
+            let at: i32 = rho_str_index_of(rest, " ")
+            var field: string = rest
+            if at < 0 {
+                rest = ""
+            } else {
+                field = rho_str_slice(rest, 0, u32(at))
+                rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+            }
+            if form_value(body, prefix + field) != "" {
+                lines = lines + editor_line(prefix + field, form_value(body, prefix + field))
+            }
+        }
+    } else if editor_is_board(index) {
+        let parent: string = form_value(body, "parent")
+        let board: string = form_value(body, "board")
+        lines = editor_line(prefix + "role", form_value(body, "role")) + editor_line(prefix + "board", board) +
+            editor_line(prefix + "parent", parent) + editor_line(prefix + "link", editor_fit_link(index, parent, board))
+    }
+    return html(status_ok(), look_impact(editor_impact(index, lines)))
 }

@@ -349,3 +349,16 @@ is shown with its settings before it is saved), an "Applying this change" box,
 and Discard and Save at its foot. A module is fitted from a searchable list by
 category, one click each, with its summary; the fitted ones are rows with the
 bus they take. Apply lists each change and runs its jobs.
+
+## [0.14.0] - 2026-11-13
+
+A node is moved by dragging it onto its new parent: the parents it may move
+under are outlined while it is dragged and the others fade, and a drop moves it,
+keeping its link where the new parent can serve it. "Applying this change" is
+worked out from the form as it stands each time a field changes — every board
+it would rebuild and why, and whether the gateway restarts — or says nothing is
+rebuilt. Apply changes has Review diff: each part of each board and of the
+gateway, as it runs and as it is planned. On a narrow screen the tree scrolls
+from its left, the tools sit above it, and the inspector folds to its title.
+The registry's lists are read at most every fifteen seconds, so a page that
+asks for them many times is quick.
