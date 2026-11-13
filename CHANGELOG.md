@@ -408,3 +408,12 @@ Each project's live telemetry feed is also relayed on the bus, as
 it. An application whose gateway provider uses the broker (robohub-provider-mesh
 0.4.0, `transport: auto` or `bus`) follows that topic instead of holding an HTTP
 stream to Mesh. Mesh's broker user may now publish there.
+
+## [0.18.0] - 2026-11-13
+
+`GET /mesh/api/projects/<project>/nodes` is a project's tree as an application
+sees it: the gateway and every node under it — boards, modules and devices —
+each with its stable id, its parent's id, what it is (its board, device or
+module, its transport) and its state. The gateway interface's `nodes()` reads
+it, so an application can draw the mesh (energy draws it from the energy side)
+without reading the plan.

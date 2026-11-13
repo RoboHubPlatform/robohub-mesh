@@ -149,6 +149,7 @@ route POST "/mesh/api/clients/publish" => mesh_publish
 route GET "/mesh/api/projects" => mesh_api_projects
 route GET "/mesh/api/projects/{project}/gateway" => mesh_api_project_gateway
 route GET "/mesh/api/projects/{project}/sources" => mesh_api_project_sources
+route GET "/mesh/api/projects/{project}/nodes" => mesh_api_project_nodes
 route GET "/mesh/api/projects/{project}/sources/{source}/value" => mesh_api_source_value
 route GET "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action
 route POST "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action

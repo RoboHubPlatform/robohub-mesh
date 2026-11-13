@@ -609,6 +609,76 @@ fn mesh_api_project_sources(req: Request) Response {
         request_query_param(req, "base")))
 }
 
+// mesh_parent_id is the id a node's parent is known by in the tree: the
+// gateway, or the parent node's own id.
+fn mesh_parent_id(file: string, index: u32) string {
+    var parent: string = project_node_value(file, index, "parent", "")
+    if parent == "" {
+        let under: string = project_node_value(file, index, "parent_node", "")
+        if under != "" {
+            parent = "node." + under
+        }
+    }
+    if parent == "" || parent == "gateway" {
+        return "gateway"
+    }
+    if rho_str_starts_with(parent, "node.") {
+        let number: u32 = rho_int_from_str(rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
+        let id: string = project_node_id(file, number)
+        if id != "" {
+            return id
+        }
+    }
+    return parent
+}
+
+// mesh_nodes_json is a project's tree as an application sees it: the gateway
+// and every node under it — boards, modules, devices — with its parent, what it
+// is and its state, so a client can draw the mesh without reading the plan.
+fn mesh_nodes_json(project: string) string {
+    let file: string = project_file(project)
+    if !rho_path_exists(file) {
+        return "[]"
+    }
+    var health: string = rho_read_text(project_location(project) + "/health.txt")
+    let bar: i32 = rho_str_index_of(health, "|")
+    if bar > 0 {
+        health = rho_str_slice(health, 0, u32(bar))
+    }
+    var out: string = "{\"id\":\"gateway\",\"name\":" + json_string(project) +
+        ",\"kind\":\"gateway\",\"parent\":\"\",\"board\":" + json_string(state_value_in(file, "relay")) +
+        ",\"state\":" + json_string(health) + "}"
+    let count: u32 = project_node_count_at(file)
+    var index: u32 = 1
+    while index <= count {
+        let id: string = project_node_id(file, index)
+        if id != "" {
+            out = out + ",{\"id\":" + json_string(id) +
+                ",\"number\":" + rho_int_to_str(index) +
+                ",\"name\":" + json_string(project_node_value(file, index, "name", "")) +
+                ",\"kind\":" + json_string(project_node_value(file, index, "kind", "compute")) +
+                ",\"parent\":" + json_string(mesh_parent_id(file, index)) +
+                ",\"board\":" + json_string(project_node_value(file, index, "board", "")) +
+                ",\"device\":" + json_string(project_node_value(file, index, "device", "")) +
+                ",\"module\":" + json_string(project_node_value(file, index, "module", "")) +
+                ",\"transport\":" + json_string(project_node_value(file, index, "transport", project_node_value(file, index, "link", ""))) +
+                ",\"state\":" + json_string(state_value_in(file, "status.node." + rho_int_to_str(index))) + "}"
+        }
+        index = index + 1
+    }
+    return "[" + out + "]"
+}
+
+fn mesh_api_project_nodes(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), false) {
+        return mesh_denied(req)
+    }
+    if !mesh_scoped(req, param(req, "project")) {
+        return mesh_scope_denied()
+    }
+    return json(200, mesh_nodes_json(param(req, "project")))
+}
+
 fn mesh_api_source_value(req: Request) Response {
     if !mesh_may(req, param(req, "project"), false) {
         return mesh_denied(req)
