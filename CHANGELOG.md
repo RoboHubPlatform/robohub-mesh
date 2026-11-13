@@ -430,3 +430,7 @@ Security fixes from the 2026-11 review.
 ## [0.18.2] - 2026-11-13
 
 The clock is read from the process (`rho_now_s`, rho 0.6.0) instead of from `date` written to a file and read back, which a request and the background loop could truncate under each other: entries dated 1970 and modes that expired at once. Built on provider-mesh 0.5.1 and rho-sql 0.2.1.
+
+## [0.18.3] - 2026-11-13
+
+Built on provider-email 0.2.1, provider-webhook 0.2.1 and provider-log 0.2.1: alert headers that cannot be injected, an SMTP password off the command line, webhook failures reported as failures, a log that rotates again.
