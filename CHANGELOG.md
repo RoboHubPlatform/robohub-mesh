@@ -434,3 +434,12 @@ The clock is read from the process (`rho_now_s`, rho 0.6.0) instead of from `dat
 ## [0.18.3] - 2026-11-13
 
 Built on provider-email 0.2.1, provider-webhook 0.2.1 and provider-log 0.2.1: alert headers that cannot be injected, an SMTP password off the command line, webhook failures reported as failures, a log that rotates again.
+
+## [0.18.4] - 2026-11-13
+
+Access and housekeeping fixes from the 2026-11 review.
+
+- A signed-in request is held to its grants: one whose ticket carries no scopes may do nothing (it was treated like a path the middleware does not guard, and allowed everything), and a subject revoked on a mesh may do nothing there, on every route that checks grants — the gateway's restart and stop, device polls and settings, fault clearing and the editor among them.
+- A page in the editor works on the mesh its address names, not the one last opened by any request.
+- Mesh's state keeps from growing: progress logs older than a week are removed, and a gateway's or a job runner's log keeps its last megabyte once it passes five; both are started appending, so trimming them under a running process is safe.
+- The smoke test checks that a ticket for another mesh is refused.

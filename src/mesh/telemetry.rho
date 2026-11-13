@@ -540,6 +540,7 @@ fn telemetry_worker() void {
     // A store that was offline longer than its window should not wait an hour
     // for the first pass.
     telemetry_prune_once()
+    mesh_prune_state()
     mesh_fault_init()
     telemetry_device_poll_once()
     ignore_string(telemetry_checkpoint("PASSIVE"))
@@ -577,6 +578,7 @@ fn telemetry_worker() void {
         ticks = ticks + 1
         if ticks >= prune_every {
             ticks = 0
+            mesh_prune_state()
             telemetry_prune_once()
             ignore_string(telemetry_checkpoint("TRUNCATE"))
             let vacuum_mode: string = mesh_vacuum_mode()
@@ -586,6 +588,40 @@ fn telemetry_worker() void {
         }
         telemetry_sleep(2000)
     }
+}
+
+// mesh_prune_state keeps Mesh's own state from growing for ever: a build's or a
+// check's progress log older than a week goes, and the gateway's and the job
+// runners' logs keep their last megabyte once they pass five.
+fn mesh_prune_state() void {
+    let dir: string = wizard_dir()
+    ignore_u32(rho_exec_args("find", dir + "\n-maxdepth\n1\n-name\nprogress-*.log\n-mtime\n+7\n-delete\n",
+        wizard_report("prune-progress")))
+    mesh_trim_log(dir + "/gateway.log")
+    var projects: string = rho_exec_capture("find", projects_dir() + "\n-maxdepth\n3\n-name\n*.log\n-size\n+5M\n")
+    while projects != "" {
+        let at: i32 = rho_str_index_of(projects, "\n")
+        var one: string = projects
+        if at < 0 {
+            projects = ""
+        } else {
+            one = rho_str_slice(projects, 0, u32(at))
+            projects = rho_str_slice(projects, u32(at) + 1, u32(rho_strlen(projects)) - u32(at) - 1)
+        }
+        if one != "" {
+            mesh_trim_log(one)
+        }
+    }
+}
+
+// mesh_trim_log keeps the last megabyte of a log larger than five.
+fn mesh_trim_log(path: string) void {
+    let size: string = first_line(rho_exec_capture("stat", "-c\n%s\n" + path + "\n"))
+    if size == "" || rho_strlen(size) < 7 || (rho_strlen(size) == 7 && rho_int_from_str(size) <= 5242880) {
+        return
+    }
+    let kept: string = rho_exec_capture("tail", "-c\n1048576\n" + path + "\n")
+    ignore_bool(rho_write_text(path, kept))
 }
 
 // mesh_source_coordinates maps a source ID to the store's source and field a

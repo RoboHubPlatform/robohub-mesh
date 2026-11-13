@@ -183,7 +183,7 @@ fn jobs_start(project: string) void {
     let dir: string = jobs_dir(project)
     ignore_bool(rho_write_text(dir + "/runner.sh", JOB_RUNNER))
     ignore_u32(rho_exec("sh", "-c \"cd " + shell_quote(dir) +
-        " && nohup flock -n runner.lock sh runner.sh > runner.log 2>&1 < /dev/null &\"", jobs_report("start")))
+        " && nohup flock -n runner.lock sh runner.sh >> runner.log 2>&1 < /dev/null &\"", jobs_report("start")))
 }
 
 /* -------------------------------------------------------------------------- */

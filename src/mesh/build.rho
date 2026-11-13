@@ -709,7 +709,7 @@ fn handler_start_native() u32 {
         // process id is written beside the project, which is what stops it.
         fleet_stop_command(current_project()) + "; cd " +
         shell_quote(project) + " || exit 1; nohup env " + gateway_env(mesh_gateway_key_path(current_project()), jobs_local_relay_key()) +
-        " ./build/robohub-gateway > " + shell_quote(log) + " 2>&1 < /dev/null & echo $! > " +
+        " ./build/robohub-gateway >> " + shell_quote(log) + " 2>&1 < /dev/null & echo $! > " +
         shell_quote(fleet_pid_file(current_project()))
     let started: u32 = run_shell(command, "start-gateway")
     if started != 0 {

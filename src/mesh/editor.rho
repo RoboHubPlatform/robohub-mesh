@@ -711,7 +711,9 @@ fn editor_open_project(req: Request) string {
         return ""
     }
     ensure_wizard_dir()
-    return current_project()
+    // The project the address names, not the file every request writes: another
+    // page opened in between must not move this request to its project.
+    return id
 }
 
 /* -------------------------------------------------------------------------- */

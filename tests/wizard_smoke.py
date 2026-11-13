@@ -826,6 +826,24 @@ def main() -> int:
             except urllib.error.HTTPError as error:
                 if error.code != 403:
                     raise AssertionError(f"a cross-origin form was answered {error.code}")
+            # A ticket granted another mesh cannot act on this one through the
+            # routes that act on the mesh in use.
+            other = subprocess.run(
+                [str(RHO) if RHO.exists() else "rho", "auth", "ticket", "--private",
+                 os.path.join(state, "home", ".rho", "auth", "private.pem"), "--issuer", "keeper", "--audience", "mesh",
+                 "--subject", "elsewhere", "--scopes", "mesh:elsewhere", "--ttl", "1h"],
+                check=True, capture_output=True, text=True).stdout.strip()
+            for path in ("/mesh/gateway/stop", "/mesh/device/poll"):
+                attempt = urllib.request.Request(base + path, data=b"index=1", method="POST")
+                attempt.add_header("Content-Type", "application/x-www-form-urlencoded")
+                attempt.add_header("Authorization", f"Bearer {other}")
+                try:
+                    with urllib.request.urlopen(attempt, timeout=20) as response:
+                        raise AssertionError(f"a ticket for another mesh was answered {response.status} on {path}")
+                except urllib.error.HTTPError as error:
+                    if error.code != 403:
+                        raise AssertionError(f"a ticket for another mesh was answered {error.code} on {path}")
+
             # A registered client's secret is readable by Mesh's user alone.
             register = urllib.request.Request(base + "/mesh/api/clients/register", method="POST",
                 data=json.dumps({"app_name": "smoke", "project": "default", "instance_id": "one",

@@ -37,11 +37,23 @@ fn mesh_scope_held(scopes: string, wanted: string) bool {
 }
 
 // mesh_may is whether a request may read (`write` false) or change (`write`
-// true) a mesh; the mesh "" is Mesh as a whole. A request with no scopes at all
-// came through a path the middleware does not guard, which answers for itself.
+// true) a mesh; the mesh "" is Mesh as a whole. A request the middleware did not
+// authenticate (no audience) came through a path it does not guard, which
+// answers for itself. One it did authenticate is held to its grants: no scopes
+// is no grant, and a subject revoked on a mesh may do nothing there.
 fn mesh_may(req: Request, project: string, write: bool) bool {
     let scopes: string = mesh_scopes(req)
-    if scopes == "" || mesh_scope_held(scopes, "*") || mesh_scope_held(scopes, "mesh:*") {
+    let authenticated: bool = header_str(req, "X-Rho-Aud") != ""
+    if !authenticated && scopes == "" {
+        return true
+    }
+    if scopes == "" {
+        return false
+    }
+    if project != "" && mesh_subject_revoked(project, header_str(req, "X-Rho-Subject")) {
+        return false
+    }
+    if mesh_scope_held(scopes, "*") || mesh_scope_held(scopes, "mesh:*") {
         return true
     }
     if project == "" {
