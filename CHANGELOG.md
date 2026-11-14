@@ -499,3 +499,7 @@ The tree in the agora and the plan no longer draws a board's children over its n
 ## [0.19.0] - 2026-11-14
 
 Mesh writes the node manifest each gateway checks (`nodes.txt` beside the gateway key) and sends it with the key, created private before anything is written. A board can be revoked from its inspector and admitted again. Mesh's folders, keys and built firmware are private to its user (0700/0600), including those made before. A gateway with a certificate is recorded and checked over https. A host node fetches its board key with its enrollment credential (`/mesh/api/nodes/key`, rate limited). Needs rho 0.9.0.
+
+## [0.19.1] - 2026-11-14
+
+Building and flashing a board no longer waits for the gateway to stop. The job runner's lock was passed to every program a job started, so a native gateway Mesh had started kept it, and new jobs queued with nothing running them until the gateway stopped. The lock now stays with the runner (and has a new name, which a gateway started by an older Mesh does not hold). A job that waits in the queue with nothing running it is said, on every open page and on the job strip, with what holds the runner.

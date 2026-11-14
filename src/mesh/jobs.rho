@@ -178,12 +178,88 @@ fn jobs_add(project: string, kind: string, target: string, label: string, script
     return seq
 }
 
+// JOB_LOCK is the file one runner per mesh holds. The lock is held by flock
+// itself and not passed to the runner (-o): a job that starts a long-running
+// program — the native gateway — would otherwise keep the lock after the runner
+// ended, and no job would run again until that program stopped. The name moved
+// from runner.lock for the same reason: a gateway started before the fix still
+// holds that one.
+const JOB_LOCK: string = "runner.flock"
+
 // jobs_start makes sure the mesh's runner is working; one at a time runs.
 fn jobs_start(project: string) void {
     let dir: string = jobs_dir(project)
     ignore_bool(rho_write_text(dir + "/runner.sh", JOB_RUNNER))
     ignore_u32(rho_exec("sh", "-c \"cd " + shell_quote(dir) +
-        " && nohup flock -n runner.lock sh runner.sh >> runner.log 2>&1 < /dev/null &\"", jobs_report("start")))
+        " && nohup flock -n -o " + JOB_LOCK + " sh runner.sh >> runner.log 2>&1 < /dev/null &\"", jobs_report("start")))
+}
+
+// jobs_runner_holder is who holds the mesh's runner lock while no job runs: ""
+// when the lock is free (a runner can start) or held by the runner itself.
+fn jobs_runner_holder(project: string) string {
+    let dir: string = jobs_dir(project)
+    let report: string = jobs_report("holder")
+    ignore_u32(rho_exec("sh", "-c \"cd " + shell_quote(dir) + " && { flock -n -o " + JOB_LOCK +
+        " true && echo free || { fuser " + JOB_LOCK + " 2>/dev/null | tr -s ' ' '\\n' | grep -v '^$' | head -1 | " +
+        "xargs -r -I{} ps -o comm= -p {} 2>/dev/null || echo busy; }; }\"", report))
+    let holder: string = first_line(rho_read_text(report))
+    if holder == "" || holder == "free" || holder == "flock" || holder == "sh" {
+        return ""
+    }
+    return holder
+}
+
+// jobs_stuck says, once per job, when a job has waited in the queue with nothing
+// running it: what holds the runner, and what to do. A queue that is only slow
+// says nothing.
+fn jobs_stuck(project: string) void {
+    var rest: string = jobs_list(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq == "" {
+            continue
+        }
+        let state: string = jobs_state(project, seq)
+        if state == "running" {
+            return
+        }
+        if state != "queued" || jobs_exists(project, seq, "stuck") {
+            continue
+        }
+        let created: u32 = u32(rho_int_from_str(jobs_meta(project, seq, "created")))
+        if created == 0 || mesh_now_seconds() < created + 15 {
+            return
+        }
+        let holder: string = jobs_runner_holder(project)
+        // Said in every language Mesh speaks; the first one is also kept with
+        // the job, for its inspector.
+        var why: string = ""
+        var n: u32 = 0
+        var loc: string = mesh_locale_at(0)
+        while loc != "" {
+            var reason: string = mesh_t(loc, "jobs.stuck_no_runner")
+            if holder != "" {
+                reason = mesh_fill(mesh_t(loc, "jobs.stuck_held"), "holder", holder)
+            }
+            if why == "" {
+                why = reason
+            }
+            notification_live_event_locale("warn", mesh_fill(mesh_fill(mesh_fill(mesh_t(loc, "jobs.stuck_note"),
+                "project", project_name(project)), "label", jobs_meta(project, seq, "label")), "why", reason), loc)
+            n = n + 1
+            loc = mesh_locale_at(n)
+        }
+        warn("mesh", project + ": " + jobs_meta(project, seq, "label") + " is waiting: " + why)
+        ignore_bool(rho_write_text(jobs_path(project, seq, "stuck"), why + "\n"))
+        return
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -373,8 +449,10 @@ fn jobs_finish(project: string) bool {
         changed = true
     }
     if pending {
-        // A runner that stopped just as a job was added is started again here.
+        // A runner that stopped just as a job was added is started again here,
+        // and a queue that nothing runs is said.
         jobs_start(project)
+        jobs_stuck(project)
     }
     return changed
 }
@@ -516,6 +594,10 @@ fn jobs_strip(loc: string, project: string) string {
                 shown + "</a>"
         } else if state == "waiting" {
             out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label + " · " + mesh_t(loc, "jobs.waiting_for_you") + "</a>"
+        } else if state == "queued" && jobs_exists(project, seq, "stuck") {
+            // A queue nothing runs says why, until it moves.
+            out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label + " · " +
+                mesh_t(loc, "jobs.stuck") + "</a>"
         } else if state == "queued" {
             queued = queued + 1
         } else {
@@ -562,6 +644,10 @@ fn jobs_inspector(loc: string, project: string, seq: string, notice: string) str
             jobs_control(loc, action, "go", mesh_t(loc, "jobs.board_ready"), "ag-btn primary") + "</div>"
     } else if state == "queued" {
         controls = jobs_control(loc, action, "cancel", mesh_t(loc, "jobs.cancel"), "ag-btn")
+        if jobs_exists(project, seq, "stuck") {
+            controls = "<div class=\"ins-impact\"><b>" + mesh_t(loc, "jobs.stuck") + "</b><span>" +
+                escape_html(first_line(jobs_read(project, seq, "stuck"))) + "</span></div>" + controls
+        }
     } else if state == "failed" || state == "cancelled" || state == "skipped" {
         controls = jobs_control(loc, action, "retry", mesh_t(loc, "jobs.retry"), "ag-btn primary")
         ignore_bool(rho_write_text(jobs_path(project, seq, "seen"), "\n"))
