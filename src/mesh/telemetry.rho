@@ -741,6 +741,21 @@ fn mesh_fault_events_file(loc: string) string {
     return wizard_dir() + "/fault-events-" + loc + ".jsonl"
 }
 
+// A stream is appended to and starts over every few hundred writes: a follower
+// that finds it shorter than where it was reads it from the top, and every event
+// carries the whole table, so nothing older is needed.
+fn mesh_events_append(file: string, line: string) void {
+    let count_file: string = file + ".count"
+    let seen: i64 = i64_from_str(str_trim(rho_read_text(count_file)))
+    if !rho_path_exists(count_file) || seen >= 500 {
+        ignore_bool(rho_write_text(file, line))
+        ignore_bool(rho_write_text(count_file, "1"))
+        return
+    }
+    ignore_bool(rho_append_text(file, line))
+    ignore_bool(rho_write_text(count_file, i64_to_str(seen + 1)))
+}
+
 fn mesh_fault_snapshot_file(loc: string) string {
     return wizard_dir() + "/fault-snapshot-" + loc + ".jsonl"
 }
@@ -828,7 +843,7 @@ fn mesh_fault_emit(project: string) void {
                 rows = "<tr><td colspan=\"4\">" + mesh_t(loc, "faults.empty") + "</td></tr>"
             }
             let line: string = "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"
-            ignore_bool(rho_write_text(file, rho_read_text(file) + line))
+            mesh_events_append(file, line)
         }
         n = n + 1
         loc = mesh_locale_at(n)

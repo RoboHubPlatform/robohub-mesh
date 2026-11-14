@@ -487,3 +487,7 @@ Mesh's telemetry store — the Go port it is built with — is Mesh's own, in `p
 ## [0.18.15] - 2026-11-14
 
 Mesh presents each gateway a token for that gateway only (`gateway:<project>:*`, which the gateway already checked by its GATEWAY_ID) instead of one valid on every gateway: a token taken from the network opens one gateway. A project that names `gateway_tls_cert` and `gateway_tls_key` (paths on the gateway's machine) deploys its gateway serving HTTPS, with `gateway_url` an https:// address.
+
+## [0.18.16] - 2026-11-14
+
+The live faults stream of each language is appended to instead of read and written whole on every update, and starts over every 500 writes, so it no longer grows without end (one had reached about 10 MB, and was rewritten on each update). A device manifest's template is filled with the toolchain's `str_replace` (rho 0.8.3), which it needs, in place of its own copy.

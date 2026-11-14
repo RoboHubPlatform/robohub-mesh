@@ -44,32 +44,12 @@ fn mesh_relay_feeds() void {
 /// The name a command says it comes from, where a device's protocol asks for one.
 const MESH_DEVICE_CLIENT: string = "robohub-mesh"
 
-// device_replace is text with every occurrence of one string replaced.
-fn device_replace(text: string, from: string, to: string) string {
-    if from == "" || rho_str_index_of(text, from) < 0 {
-        return text
-    }
-    var out: string = ""
-    var rest: string = text
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, from)
-        if at < 0 {
-            out = out + rest
-            rest = ""
-        } else {
-            out = out + rho_str_slice(rest, 0, u32(at)) + to
-            rest = rho_str_slice(rest, u32(at) + u32(rho_strlen(from)), u32(rho_strlen(rest)) - u32(at) - u32(rho_strlen(from)))
-        }
-    }
-    return out
-}
-
 // device_fill puts a device's values into a manifest's template: {prefix}, {on}
 // and {client}.
 fn device_fill(text: string, prefix: string, on: string) string {
-    var out: string = device_replace(text, "{prefix}", prefix)
-    out = device_replace(out, "{on}", on)
-    return device_replace(out, "{client}", MESH_DEVICE_CLIENT)
+    var out: string = str_replace(text, "{prefix}", prefix)
+    out = str_replace(out, "{on}", on)
+    return str_replace(out, "{client}", MESH_DEVICE_CLIENT)
 }
 
 // telemetry_poll_mqtt_device reads one MQTT device from the newest status it
