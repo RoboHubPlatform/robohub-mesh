@@ -309,9 +309,17 @@ fn mesh_client_deliver(project: string, app_name: string, client_id: string,
     if !rho_str_starts_with(callback_url, "http://") && !rho_str_starts_with(callback_url, "https://") {
         return false
     }
-    let command: string = "-fsS\n-m\n4\n--proto\n=http,https\n-X\nPOST\n-H\nAuthorization: Bearer " + secret +
+    // The client's secret is read by curl from an owner-only file, not from its
+    // command line, which every user of the machine can list.
+    let header_file: string = wizard_report("deliver-auth-" + client_id)
+    if !rho_write_secret(header_file, "Authorization: Bearer " + secret + "\n") {
+        return false
+    }
+    let command: string = "-fsS\n-m\n4\n--proto\n=http,https\n-X\nPOST\n-H\n@" + header_file +
         "\n-H\nContent-Type: application/json\n--data-binary\n@" + body_file + "\n" + callback_url + "\n"
-    return mesh_curl(command, report) == 0
+    let delivered: bool = mesh_curl(command, report) == 0
+    ignore_bool(rho_write_secret(header_file, ""))
+    return delivered
 }
 
 fn mesh_publish(req: Request) Response {

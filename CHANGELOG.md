@@ -467,3 +467,7 @@ A board's sensor that fails a read is brought up again every five seconds at mos
 ## [0.18.10] - 2026-11-14
 
 Trimming, URL decoding and form fields come from the toolchain (rho 0.7.0) rather than four copies of each in Mesh's own sources; a `%` not followed by two hex digits in a form is kept as written instead of becoming a zero byte. Needs rho 0.7.0.
+
+## [0.18.11] - 2026-11-14
+
+From a security review: a gateway's or device's token and a client's secret reach curl from an owner-only file rather than its command line, where any user of the machine could read them, and a board's `project.conf` (its Wi-Fi password) is written owner-only.

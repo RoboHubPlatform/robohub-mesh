@@ -565,7 +565,8 @@ fn prepare_node() u32 {
         config = append_kconfig(config, sensor_kconfig_symbols(name))
     }
 
-    let written: bool = rho_write_text(target + "/project.conf", config)
+    // The board's configuration carries its Wi-Fi password: owner-only.
+    let written: bool = rho_write_secret(target + "/project.conf", config)
     if !written {
         return 1
     }

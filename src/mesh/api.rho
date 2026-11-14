@@ -368,7 +368,15 @@ fn mesh_url_get_auth(base: string, path: string, token: string) string {
     if !mesh_arg_ok(base_url + path) || !mesh_arg_ok(token) {
         return ""
     }
-    if mesh_curl("-fsS\n-m\n4\n-H\nAuthorization: Bearer " + token + "\n" + base_url + path + "\n", report) != 0 {
+    // The token is read by curl from an owner-only file, not from its command
+    // line, which every user of the machine can list.
+    let header_file: string = wizard_report("mesh-source-auth")
+    if !rho_write_secret(header_file, "Authorization: Bearer " + token + "\n") {
+        return ""
+    }
+    let code: u32 = mesh_curl("-fsS\n-m\n4\n-H\n@" + header_file + "\n" + base_url + path + "\n", report)
+    ignore_bool(rho_write_secret(header_file, ""))
+    if code != 0 {
         return ""
     }
     return rho_read_text(report)
