@@ -479,3 +479,7 @@ Uses the toolchain's `str_lower` and `json_str_field` instead of its own copies 
 ## [0.18.13] - 2026-11-14
 
 Every page, panel, confirmation and live view of Mesh is written with i18n keys (480 in each of English and Romanian, the same set), where hard-coded English was translated afterwards by matching whole phrases — six in ten were missed, and every message with a value in it. The live views the worker draws (the tree, its bar and strip, the fleet, the faults) are drawn once per language a page has opened, each in an event stream of its own. The phrase catalog and its pass are gone; internal codes (pill states, job states, deploy reasons) stay English and are translated where shown.
+
+## [0.18.14] - 2026-11-14
+
+Mesh's telemetry store — the Go port it is built with — is Mesh's own, in `plugins/mesh-telemetry`, versioned with Mesh, where it was part of the toolchain's RoboHub plugin (needs rho 0.8.2). The top bar is drawn in the request's language by robohub.ui itself.

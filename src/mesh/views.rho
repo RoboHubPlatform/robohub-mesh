@@ -617,32 +617,9 @@ fn mesh_topbar(req: Request) string {
             "\" data-app-route=\"/logout\">" + i18n_t(req, "nav.sign_out") + "</a>"
     }
     let links: string = ui_language(i18n_locale(req), request_path(req))
-    let bar: string = ui_topbar_remote("mesh", "Mesh", keeper_port,
+    return ui_topbar_remote_in("mesh", "Mesh", keeper_port,
         "<nav class=\"topnav\" aria-label=\"" + escape_html(i18n_t(req, "common.navigation")) + "\">" + mesh_menu(req) + "</nav>",
-        ui_person(req, who, "", links, signout, false))
-    // The shared top bar writes its two menu headings in English and has no keys
-    // for them yet; until it does, Mesh puts its own in their place.
-    return mesh_heading(mesh_heading(bar, "Applications", i18n_t(req, "common.applications")),
-        "Language", i18n_t(req, "common.language"))
-}
-
-// mesh_heading is the top bar with one of its menu headings (<h6>) in the
-// page's language.
-fn mesh_heading(bar: string, english: string, shown: string) string {
-    let mark: string = "<h6>" + english + "</h6>"
-    var out: string = ""
-    var rest: string = bar
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, mark)
-        if at < 0 {
-            out = out + rest
-            rest = ""
-        } else {
-            out = out + rho_str_slice(rest, 0, u32(at)) + "<h6>" + escape_html(shown) + "</h6>"
-            rest = rho_str_slice(rest, u32(at) + u32(rho_strlen(mark)), u32(rho_strlen(rest)) - u32(at) - u32(rho_strlen(mark)))
-        }
-    }
-    return out
+        ui_person(req, who, "", links, signout, false), i18n_locale(req))
 }
 
 fn mesh_shell(req: Request, title: string, content: string) string {

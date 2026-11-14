@@ -1,0 +1,39 @@
+#
+# mesh-telemetry — the telemetry store Mesh keeps, as the Go port its program is
+# built with.
+#
+# The store is Mesh's: the series of every reading its gateways deliver, rolled
+# up by minute and hour, the faults, and the queries its pages and its API ask.
+# It is a port (`ports: [telemetry]` in Mesh's manifest) because Rho has no file
+# locking or database batch of its own; it lives here, in Mesh's repository and
+# versioned with Mesh, so a change to the store is a Mesh release and not a
+# release of the toolchain's RoboHub plugin, where it used to be.
+#
+# The toolchain finds it as a plugin of the project's own tree that integrates
+# the robohub platform and provides ports.
+module:
+  name: mesh-telemetry
+  id: robohub.mesh.telemetry
+  type: plugin
+  version: 0.1.0
+  description: >
+    Mesh's telemetry store — readings, roll-ups, faults and their queries — as
+    the Go port Mesh is built with.
+  maintainer: "Aurel Miron"
+  license: "MIT"
+  created: "2026-11-14"
+
+# A plugin names its main file; this one is data, so it names its port.
+main: ports/telemetry.go
+
+serves:
+  - robohub
+
+integration:
+  ecosystem: robohub
+  provides:
+    ports: ports/
+
+package:
+  include:
+    - ports/
