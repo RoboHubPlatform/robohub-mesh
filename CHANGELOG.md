@@ -491,3 +491,7 @@ Mesh presents each gateway a token for that gateway only (`gateway:<project>:*`,
 ## [0.18.16] - 2026-11-14
 
 The live faults stream of each language is appended to instead of read and written whole on every update, and starts over every 500 writes, so it no longer grows without end (one had reached about 10 MB, and was rewritten on each update). A device manifest's template is filled with the toolchain's `str_replace` (rho 0.8.3), which it needs, in place of its own copy.
+
+## [0.18.17] - 2026-11-14
+
+The tree in the agora and the plan no longer draws a board's children over its neighbour's: a branch with children is as wide as they are, and a tree wider than the canvas scrolls from its left edge instead of losing it. The wizard smoke test listens on loopback only.

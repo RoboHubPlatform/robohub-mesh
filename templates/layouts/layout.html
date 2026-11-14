@@ -122,10 +122,10 @@
 
   /* ---- the mesh graph --------------------------------------------------- */
   .mesh-layout { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(21rem, .85fr); gap: 1.35rem; align-items: start; }
-  .mesh-tree { display: flex; flex-direction: column; align-items: center; padding: 1.2rem .4rem 1.6rem; overflow-x: auto; }
+  .mesh-tree { display: flex; flex-direction: column; align-items: safe center; padding: 1.2rem .4rem 1.6rem; overflow-x: auto; }
   .mesh-tree > .node-card { width: min(21rem, 90%); }
   .mesh-children {
-    list-style: none; margin: 0; padding: 2rem 0 0; display: flex; justify-content: center;
+    list-style: none; margin: 0; padding: 2rem 0 0; display: flex; justify-content: safe center;
     align-items: flex-start; gap: 1.2rem; position: relative; flex: 0 0 auto;
   }
   /* The horizontal branch the children hang from. */
@@ -143,11 +143,16 @@
     position: relative; display: flex; flex-direction: column; align-items: center;
     gap: .38rem; min-width: 11.5rem; max-width: 16rem; list-style: none;
   }
+  /* A branch with children of its own is as wide as they are, so a board
+     with several children never draws them over its neighbour's; its card
+     stays the width of a card. */
+  .mesh-branch:has(> .mesh-children) { max-width: none; }
   .mesh-branch::before {
     content: ""; position: absolute; top: -1.1rem; left: 50%; height: 1.1rem;
     border-left: 1px solid var(--line-strong);
   }
-  .mesh-branch > .node-card, .mesh-branch > .mesh-children { width: 100%; }
+  .mesh-branch > .node-card { width: 100%; max-width: 16rem; }
+  .mesh-branch > .mesh-children { width: max-content; }
   .link-badge {
     position: relative; z-index: 2; display: inline-flex; align-items: center; gap: .25rem;
     padding: .1rem .5rem; border: 1px solid var(--line); border-radius: 999px;

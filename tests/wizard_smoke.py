@@ -420,7 +420,7 @@ def main() -> int:
             if value:
                 env.setdefault(name, value)
         env["HOME"] = home
-        env["RHO_HTTP_ADDR"] = f":{port}"
+        env["RHO_HTTP_ADDR"] = f"127.0.0.1:{port}"
         process = subprocess.Popen(
             [str(binary)],
             cwd=MESH,
