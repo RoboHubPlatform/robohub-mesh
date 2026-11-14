@@ -19,6 +19,17 @@ module mesh.views
 // gateway and is sent no token.
 const MESH_GATEWAY_SCOPE: string = "gateway:*"
 
+// mesh_gateway_scope is what Mesh asks a token for when it speaks to one
+// project's gateway: that gateway's scopes only (its GATEWAY_ID is the
+// project's). A token taken from the network then opens that gateway and no
+// other; gateway:* is what Mesh may be issued, not what it presents.
+fn mesh_gateway_scope(project: string) string {
+    if project == "" {
+        return MESH_GATEWAY_SCOPE
+    }
+    return "gateway:" + project + ":*"
+}
+
 // MESH_LOCALES are the languages Mesh's pages are drawn in, as the catalogs in
 // locales/ and the i18n module know them.
 const MESH_LOCALES: string = "en ro"

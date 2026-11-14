@@ -483,3 +483,7 @@ Every page, panel, confirmation and live view of Mesh is written with i18n keys 
 ## [0.18.14] - 2026-11-14
 
 Mesh's telemetry store — the Go port it is built with — is Mesh's own, in `plugins/mesh-telemetry`, versioned with Mesh, where it was part of the toolchain's RoboHub plugin (needs rho 0.8.2). The top bar is drawn in the request's language by robohub.ui itself.
+
+## [0.18.15] - 2026-11-14
+
+Mesh presents each gateway a token for that gateway only (`gateway:<project>:*`, which the gateway already checked by its GATEWAY_ID) instead of one valid on every gateway: a token taken from the network opens one gateway. A project that names `gateway_tls_cert` and `gateway_tls_key` (paths on the gateway's machine) deploys its gateway serving HTTPS, with `gateway_url` an https:// address.

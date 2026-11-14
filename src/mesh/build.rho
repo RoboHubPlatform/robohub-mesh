@@ -652,6 +652,15 @@ fn gateway_env(key_file: string, relay_key: string) string {
     // The gateway trusts keeper's tokens, verified with keeper's public key,
     // which is installed beside it; it names itself so a token's scopes can.
     env = env + " GATEWAY_ID=" + shell_quote(current_project())
+    // A gateway reached over a network serves HTTPS when the project names its
+    // certificate and key (paths on the machine the gateway runs on): the
+    // tokens Mesh presents then never cross the network in the clear. The
+    // project's gateway_url is then an https:// address.
+    let tls_cert: string = state_value_in(project_file(current_project()), "gateway_tls_cert")
+    let tls_key: string = state_value_in(project_file(current_project()), "gateway_tls_key")
+    if tls_cert != "" && tls_key != "" && deploy_path_ok(tls_cert) && deploy_path_ok(tls_key) {
+        env = env + " RHO_TLS_CERT=" + shell_quote(tls_cert) + " RHO_TLS_KEY=" + shell_quote(tls_key)
+    }
     // The key boards' keys are derived from, as a file only the gateway's user
     // can read on the machine it runs on.
     if key_file != "" {

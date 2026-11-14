@@ -157,7 +157,7 @@ fn mesh_poll_token(project: string) string {
     if audience != "" {
         return rho_service_token(audience, audience + ":gateway")
     }
-    return rho_service_token("gateway", MESH_GATEWAY_SCOPE)
+    return rho_service_token("gateway", mesh_gateway_scope(project))
 }
 
 fn telemetry_project_ids() string {

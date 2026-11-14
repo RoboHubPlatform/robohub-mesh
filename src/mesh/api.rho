@@ -323,14 +323,14 @@ fn mesh_http_base(address: string) string {
     return "http://" + address
 }
 
-fn mesh_url_get(base: string, path: string) string {
+fn mesh_url_get(project: string, base: string, path: string) string {
     if base == "" {
         return ""
     }
     let audience: string = mesh_gateway_audience(path)
     var scopes: string = ""
     if audience != "" {
-        scopes = MESH_GATEWAY_SCOPE
+        scopes = mesh_gateway_scope(project)
     }
     // The answer is returned, not written to a file: two polls at once must not
     // read each other's.
@@ -338,16 +338,16 @@ fn mesh_url_get(base: string, path: string) string {
 }
 
 // mesh_gateway_command sends a command to a gateway with a gateway token.
-fn mesh_gateway_command(base: string, path: string, body: string) bool {
+fn mesh_gateway_command(project: string, base: string, path: string, body: string) bool {
     let report: string = wizard_report("mesh-gateway-post")
     let status: u32 = rho_http_request("POST", base + path, body, "application/json",
-        "gateway", MESH_GATEWAY_SCOPE, report)
+        "gateway", mesh_gateway_scope(project), report)
     return status >= 200 && status < 300
 }
 
 fn mesh_url_get_auth(base: string, path: string, token: string) string {
     if base == "" || token == "" {
-        return mesh_url_get(base, path)
+        return mesh_url_get("", base, path)
     }
     let base_url: string = mesh_http_base(base)
     let report: string = wizard_report("mesh-source")
@@ -368,9 +368,9 @@ fn mesh_url_get_auth(base: string, path: string, token: string) string {
     return rho_read_text(report)
 }
 
-fn gateway_device_object(base: string, name: string, address: string,
+fn gateway_device_object(project: string, base: string, name: string, address: string,
     device_id: string) string {
-    let text: string = mesh_url_get(base, "/api/v1/devices")
+    let text: string = mesh_url_get(project, base, "/api/v1/devices")
     var rest: string = text
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "},{")
@@ -538,7 +538,7 @@ fn mesh_source_value(project: string, source: string) string {
         return ""
     }
     if kind == "device" {
-        let object: string = gateway_device_object(base, field(spec, 6), address,
+        let object: string = gateway_device_object(project, base, field(spec, 6), address,
             field(spec, 11))
         if object == "" {
             return ""
@@ -554,7 +554,7 @@ fn mesh_source_value(project: string, source: string) string {
             return ""
         }
         let parent_index: string = rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)
-        let nodes: string = mesh_url_get(base, "/api/v1/nodes")
+        let nodes: string = mesh_url_get(project, base, "/api/v1/nodes")
         let object: string = gateway_node_object(nodes,
             project_area_id(project_file(project)), parent_index)
         if object == "" {
@@ -587,7 +587,7 @@ fn mesh_source_action(project: string, source: string, state: string) bool {
     if base == "" {
         return false
     }
-    let object: string = gateway_device_object(base, field(spec, 6), address,
+    let object: string = gateway_device_object(project, base, field(spec, 6), address,
         field(spec, 11))
     if object == "" {
         return false
@@ -596,7 +596,7 @@ fn mesh_source_action(project: string, source: string, state: string) bool {
     if id == "" {
         return false
     }
-    return mesh_gateway_command(base, "/api/v1/devices/" + id + "/switch?state=" + desired, "")
+    return mesh_gateway_command(project, base, "/api/v1/devices/" + id + "/switch?state=" + desired, "")
 }
 
 fn mesh_api_sources(req: Request) Response {
