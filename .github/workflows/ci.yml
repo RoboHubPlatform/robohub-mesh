@@ -17,6 +17,8 @@ jobs:
     uses: RoboHubPlatform/robohub/.github/workflows/robohub-ci.yml@main
     secrets: inherit
     with:
-      siblings: robohub robohub-drivers robohub-devices
+      # robohub-pico and robohub-linux: the boards a production build is
+      # offered for (or not) are read from their platforms.
+      siblings: robohub robohub-drivers robohub-devices robohub-pico robohub-linux
       components: rho-auth rho-log rho-sql rho-sql-sqlite rho-robohub
       build: .
