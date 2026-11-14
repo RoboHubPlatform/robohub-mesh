@@ -1,0 +1,286 @@
+//
+// @file production.rho
+// @brief Which boards have a production build, and the job scripts that build and flash one.
+//
+// @module mesh.domain.production
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-14
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.production
+
+// A production build hardens a board in ways that cannot be undone: an ESP32
+// burns eFuses for flash encryption and secure boot, an RP2350 writes its boot
+// key hash into OTP. What the steps are is the board's platform's to say, in a
+// plan under `<platform>/production/`, and `rho flash --production` is what runs
+// them, after printing every step and reading the board's name typed back.
+//
+// A board has a production mode when its platform declares a plan for it. rho
+// flash looks the plan up by the target's name, its preset, its family and
+// finally `production.json`, the first that is there winning; Mesh asks the same
+// question of the same folder, so a board is offered the toggle exactly when the
+// flash would find a plan. An AVR board and a Linux host have none.
+//
+// A plan whose build needs the secure-boot signing key says so by naming
+// RH_SECURE_BOOT_SIGNING_KEY; one whose flash burns an OTP file the build wrote
+// names RH_PICO_OTP_JSON. Mesh reads those words rather than knowing platforms.
+//
+// Nothing here reads a file (tests/domain_test.rho).
+
+// production_lower is a name in lowercase ASCII, as rho flash compares it.
+fn production_lower(value: string) string {
+    let upper: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    let lower: string = "abcdefghijklmnopqrstuvwxyz"
+    var out: string = ""
+    var i: u32 = 0
+    let length: u32 = u32(strlen(value))
+    while i < length {
+        let ch: string = str_slice(value, i, 1)
+        let at: i32 = str_index_of(upper, ch)
+        if at >= 0 {
+            out = out + str_slice(lower, u32(at), 1)
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// production_trim drops the spaces around a name.
+fn production_trim(value: string) string {
+    var start: u32 = 0
+    var end: u32 = u32(strlen(value))
+    while start < end && (str_eq(str_slice(value, start, 1), " ") || str_eq(str_slice(value, start, 1), "\t")) {
+        start = start + 1
+    }
+    while end > start && (str_eq(str_slice(value, end - 1, 1), " ") || str_eq(str_slice(value, end - 1, 1), "\t") ||
+        str_eq(str_slice(value, end - 1, 1), "\r")) {
+        end = end - 1
+    }
+    return str_slice(value, start, end - start)
+}
+
+// production_candidates are the plan files a board's plan is looked up by, most
+// specific first, one per line: the target, its preset, its family and the
+// whole platform. A name with a path in it, or a repeated one, is skipped.
+fn production_candidates(target: string, preset: string, family: string) string {
+    var out: string = ""
+    var seen: string = "\n"
+    var n: u32 = 0
+    while n < 4 {
+        var name: string = "production"
+        if n == 0 { name = target }
+        if n == 1 { name = preset }
+        if n == 2 { name = family }
+        name = production_lower(production_trim(name))
+        n = n + 1
+        if name == "" || str_eq(name, ".") || str_eq(name, "..") || str_index_of(name, "/") >= 0 ||
+            str_index_of(name, "\\") >= 0 || str_index_of(seen, "\n" + name + "\n") >= 0 {
+            continue
+        }
+        seen = seen + name + "\n"
+        out = out + name + ".json\n"
+    }
+    return out
+}
+
+// production_plan_name is the plan file a board would be flashed with, given
+// the files its platform's production folder holds (one name per line), or ""
+// when it has no production mode.
+fn production_plan_name(listing: string, target: string, preset: string, family: string) string {
+    let files: string = "\n" + listing + "\n"
+    var rest: string = production_candidates(target, preset, family)
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var name: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            name = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        if name != "" && str_index_of(files, "\n" + name + "\n") >= 0 {
+            return name
+        }
+    }
+    return ""
+}
+
+// production_available is whether a board has a production mode, and so
+// whether its inspector shows the toggle.
+fn production_available(listing: string, target: string, preset: string, family: string) bool {
+    return production_plan_name(listing, target, preset, family) != ""
+}
+
+// production_json_string is a string field of a flat JSON object (a target
+// spec's "preset" or "family"), or "".
+fn production_json_string(text: string, key: string) string {
+    let at: i32 = str_index_of(text, "\"" + key + "\"")
+    if at < 0 {
+        return ""
+    }
+    var i: u32 = u32(at) + u32(strlen(key)) + 2
+    let length: u32 = u32(strlen(text))
+    while i < length && (str_eq(str_slice(text, i, 1), " ") || str_eq(str_slice(text, i, 1), "\t") ||
+        str_eq(str_slice(text, i, 1), "\n") || str_eq(str_slice(text, i, 1), "\r")) {
+        i = i + 1
+    }
+    if i >= length || !str_eq(str_slice(text, i, 1), ":") {
+        return ""
+    }
+    i = i + 1
+    while i < length && (str_eq(str_slice(text, i, 1), " ") || str_eq(str_slice(text, i, 1), "\t")) {
+        i = i + 1
+    }
+    if i >= length || !str_eq(str_slice(text, i, 1), "\"") {
+        return ""
+    }
+    i = i + 1
+    let start: u32 = i
+    while i < length && !str_eq(str_slice(text, i, 1), "\"") {
+        i = i + 1
+    }
+    return str_slice(text, start, i - start)
+}
+
+// production_platform_root is the platform module a board's manifest is in:
+// everything before its last `/boards/`, or "".
+fn production_platform_root(manifest: string) string {
+    var last: i32 = -1
+    var from: u32 = 0
+    let length: u32 = u32(strlen(manifest))
+    while from < length {
+        let at: i32 = str_index_of(str_slice(manifest, from, length - from), "/boards/")
+        if at < 0 {
+            break
+        }
+        last = i32(from) + at
+        from = from + u32(at) + 1
+    }
+    if last <= 0 {
+        return ""
+    }
+    return str_slice(manifest, 0, u32(last))
+}
+
+// production_needs_key is whether a plan's build needs the secure-boot signing
+// key: the plan names RH_SECURE_BOOT_SIGNING_KEY.
+fn production_needs_key(plan: string) bool {
+    return str_index_of(plan, "RH_SECURE_BOOT_SIGNING_KEY") >= 0
+}
+
+// production_needs_otp is whether a plan's flash burns the OTP file the build
+// wrote: the plan names RH_PICO_OTP_JSON.
+fn production_needs_otp(plan: string) bool {
+    return str_index_of(plan, "RH_PICO_OTP_JSON") >= 0
+}
+
+// production_key_mode_ok is whether a key file's permissions (octal, as stat
+// prints them: "600") keep it to its owner: nothing for the group or others.
+fn production_key_mode_ok(mode: string) bool {
+    let length: u32 = u32(strlen(mode))
+    if length < 3 || length > 4 {
+        return false
+    }
+    let owner: string = str_slice(mode, length - 3, 1)
+    return str_eq(str_slice(mode, length - 2, 2), "00") && (str_eq(owner, "6") || str_eq(owner, "4"))
+}
+
+// production_key_refusal says why a production build cannot be queued with a
+// key: "" when it can, "missing" when no key is named or the file is not
+// there, "relative" for a path that is not absolute, "open" when the file is
+// readable by others. A plan that needs no key queues without one.
+fn production_key_refusal(needs_key: bool, path: string, exists: bool, mode: string) string {
+    if !needs_key {
+        return ""
+    }
+    if path == "" || !exists {
+        return "missing"
+    }
+    if !str_eq(str_slice(path, 0, 1), "/") {
+        return "relative"
+    }
+    if !production_key_mode_ok(mode) {
+        return "open"
+    }
+    return ""
+}
+
+// production_quote makes a value one word of a shell command.
+fn production_quote(value: string) string {
+    var out: string = "'"
+    var i: u32 = 0
+    let length: u32 = u32(strlen(value))
+    while i < length {
+        let ch: string = str_slice(value, i, 1)
+        if str_eq(ch, "'") {
+            out = out + "'\\''"
+        } else {
+            out = out + ch
+        }
+        i = i + 1
+    }
+    return out + "'"
+}
+
+// production_otp_file is where a build writes the OTP rows a production RP2350
+// image needs: build/output/<program>.otp.json beside its image.
+fn production_otp_file(dir: string, program: string) string {
+    return dir + "/build/output/" + program + ".otp.json"
+}
+
+// production_flash_command is the `rho flash` of a board, with --production
+// when the board is flashed for production and --dry-run when the plan is only
+// to be printed.
+fn production_flash_command(board: string, dir: string, binary: string, production: bool, dry_run: bool) string {
+    var out: string = "rho flash -target " + production_quote(board) + " -project " + production_quote(dir) + " " +
+        production_quote(binary)
+    if production {
+        out = out + " --production"
+        if dry_run {
+            out = out + " --dry-run"
+        }
+    }
+    return out
+}
+
+// production_build_script is the body of a board's build job. A production
+// build is given the signing key by its path, through the environment, and
+// ends by writing what the flash will do (`rho flash --production --dry-run`)
+// to `plan_file`, which is what the person reads before typing the board's
+// name. The key's contents are never in the script.
+fn production_build_script(board: string, dir: string, binary: string, program: string, production: bool,
+    key: string, otp: bool, plan_file: string) string {
+    var out: string = "cd " + production_quote(dir) + "\n"
+    if production && key != "" {
+        out = out + "export RH_SECURE_BOOT_SIGNING_KEY=" + production_quote(key) + "\n"
+    }
+    out = out + "rho build -target " + production_quote(board) + " .\n"
+    if production {
+        if otp {
+            out = out + "export RH_PICO_OTP_JSON=" + production_quote(production_otp_file(dir, program)) + "\n"
+        }
+        out = out + production_flash_command(board, dir, binary, true, true) + " > " + production_quote(plan_file) + "\n"
+    }
+    return out
+}
+
+// production_flash_script is the body of a board's flash job. A production
+// flash reads the board's name from the `.confirm` file beside the job script,
+// which Mesh writes only with what the person typed; without one it stops before
+// running anything, and rho flash checks the name itself as well.
+fn production_flash_script(board: string, dir: string, binary: string, program: string, production: bool, otp: bool) string {
+    if !production {
+        return production_flash_command(board, dir, binary, false, false) + "\n"
+    }
+    var out: string = "confirm=\"$(cd \"$(dirname \"$0\")\" && pwd)/$(basename \"$0\" .sh).confirm\"\n" +
+        "if [ ! -s \"$confirm\" ]; then echo 'no board name was typed: nothing was run'; exit 1; fi\n"
+    if otp {
+        out = out + "export RH_PICO_OTP_JSON=" + production_quote(production_otp_file(dir, program)) + "\n"
+    }
+    return out + production_flash_command(board, dir, binary, true, false) + " < \"$confirm\"\n"
+}

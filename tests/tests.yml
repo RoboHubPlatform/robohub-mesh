@@ -20,3 +20,7 @@ suites:
     kind: command
     tags: [smoke, security]
     command: [python3, tests/security_smoke.py]
+  - name: production-smoke
+    kind: command
+    tags: [smoke, security, production]
+    command: [python3, tests/production_smoke.py]

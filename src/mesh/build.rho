@@ -570,6 +570,13 @@ fn prepare_node() u32 {
         config = append_kconfig(config, sensor_kconfig_symbols(name))
     }
 
+    // A production build, only when the board's toggle is on and its platform
+    // has a production mode (production.rho). The symbol burns nothing by
+    // itself; `rho flash --production` is what runs the irreversible steps.
+    if production_node_on(current_project(), selected_node()) && production_board_available(node_board()) {
+        config = config + "CONFIG_RH_PRODUCTION=y\n"
+    }
+
     // The board's configuration carries its Wi-Fi password: owner-only.
     let written: bool = rho_write_secret(target + "/project.conf", config)
     if !written {

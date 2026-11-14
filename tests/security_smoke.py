@@ -7,7 +7,8 @@ with a stand-in keeper, and checks:
 - Mesh's folders are 0700 and what an older Mesh left readable (a gateway key, a
   built image) is closed when it starts;
 - the node manifest is written beside the gateway key, 0600, from the plan, and
-  rewritten when a board is revoked and admitted again;
+  rewritten when a board is revoked and admitted again, and when its key is
+  rotated — which waits for the gateway to hear the board confirm the last one;
 - a host node gets its board id and key for its keeper credential, and nothing
   else: no credential, a credential the keeper refuses, a revoked board and a
   placement with no board are refused, the key is never logged, and a client
@@ -258,6 +259,45 @@ def main() -> int:
             status, answer = ask_key(base, f"Node board-01:{CREDENTIAL}", "10.0.0.7")
             expect(status == 200 and answer.get("uid") == "0123456789abcdef", "and gets its key again")
 
+            # Rotating a board's key: the manifest names its next epoch, and it is
+            # not rotated again until its gateway has heard it confirm.
+            board_uid = "0123456789abcdef"
+            report = project / "rekey.txt"
+            fragment = hx(base, f"/mesh/p/Sec/node/{board_uid}/rotate", {"action": "rotate"})
+            expect(manifest_line(manifest.read_text(), board_uid).split("|")[4] == "1",
+                   "rotating a board names its next key epoch in the manifest")
+            expect("Waiting for the board to confirm" in fragment, "the inspector says the board has not confirmed yet")
+            fragment = hx(base, f"/mesh/p/Sec/node/{board_uid}/rotate", {"action": "rotate"})
+            expect("has not confirmed its last key yet" in fragment and
+                   manifest_line(manifest.read_text(), board_uid).split("|")[4] == "1",
+                   "a board whose last rotation is unconfirmed is not rotated again")
+            report.write_text(f"# uid|epoch|status|time\n{board_uid}|1|confirmed|1794600000\n")
+            page = urllib.request.urlopen(urllib.request.Request(
+                base + f"/mesh/p/Sec/node/{board_uid}?tab=revoke",
+                headers={"Authorization": f"Bearer {TOKEN}", "HX-Request": "true"}), timeout=20).read().decode()
+            expect("heard the board confirm" in page and "Rotate key" in page,
+                   "once the gateway says the board confirmed, the inspector says so and offers to rotate again")
+            hx(base, f"/mesh/p/Sec/node/{board_uid}/rotate", {"action": "rotate"})
+            expect(manifest_line(manifest.read_text(), board_uid).split("|")[4] == "2", "and it rotates to epoch 2")
+            report.write_text(f"{board_uid}|2|cannot|1794600100\n")
+            page = urllib.request.urlopen(urllib.request.Request(
+                base + f"/mesh/p/Sec/node/{board_uid}?tab=revoke",
+                headers={"Authorization": f"Bearer {TOKEN}", "HX-Request": "true"}), timeout=20).read().decode()
+            expect("cannot rotate its key" in page and "Rotate key" not in page,
+                   "a board that cannot store a key is shown so, and is not offered a rotation")
+            fragment = hx(base, f"/mesh/p/Sec/node/{board_uid}/rotate", {"action": "rotate"})
+            expect(manifest_line(manifest.read_text(), board_uid).split("|")[4] == "2",
+                   "and is not rotated")
+
+            # A host node asking for its key after a rotation gets the current
+            # epoch's key, and the epoch.
+            hx(base, "/mesh/p/Sec/node/aaaabbbbccccdddd/rotate", {"action": "rotate"})
+            status, answer = ask_key(base, f"Node host-01:{CREDENTIAL}", "10.0.0.10")
+            rotated_key = hmac.new(bytes.fromhex(GATEWAY_KEY), b"rh-dev2" + bytes.fromhex("aaaabbbbccccdddd") +
+                                   (1).to_bytes(4, "little"), hashlib.sha256).hexdigest()[:32]
+            expect(status == 200 and answer.get("key") == rotated_key and answer.get("epoch") == 1,
+                   "a host node rotated to epoch 1 gets the epoch-1 key")
+
             codes = [ask_key(base, f"Node host-01:{CREDENTIAL}", "10.0.0.8")[0] for _ in range(11)]
             expect(codes[:10] == [200] * 10 and codes[10] == 429, "a client has a budget of calls")
             expect(ask_key(base, f"Node host-01:{CREDENTIAL}", "10.0.0.9")[0] == 200,
@@ -265,7 +305,7 @@ def main() -> int:
 
             log.flush()
             logged = log_path.read_text()
-            expect(want not in logged and CREDENTIAL not in logged and GATEWAY_KEY not in logged,
+            expect(want not in logged and rotated_key not in logged and CREDENTIAL not in logged and GATEWAY_KEY not in logged,
                    "no key or credential is logged")
         finally:
             process.terminate()

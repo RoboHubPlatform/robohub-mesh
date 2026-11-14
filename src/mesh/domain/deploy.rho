@@ -121,6 +121,11 @@ fn deploy_node_signature(text: string, index: u32) string {
         child = child + 1
     }
     out = out + ";modules=" + modules + ";serves=" + serves
+    // A production build is another image; a board built without one says
+    // nothing, so turning the toggle on is what makes it out of date.
+    if str_eq(plan_value(text, deploy_node_key(index, "production")), "on") {
+        out = out + ";production=on"
+    }
     if deploy_dials_network(plan_value(text, deploy_node_key(index, "link"))) &&
         str_eq(plan_value(text, deploy_node_key(index, "parent")), "gateway") {
         out = out + ";gateway=" + deploy_gateway_address(text)
@@ -169,7 +174,7 @@ fn deploy_segment(signature: string, label: string) string {
 
 // DEPLOY_SEGMENTS are a signature's parts, each with the words that say it
 // changed.
-const DEPLOY_SEGMENTS: string = "runs host rest uplink board role parent link modules serves gateway above below"
+const DEPLOY_SEGMENTS: string = "runs host rest uplink board role parent link modules serves gateway above below production"
 
 fn deploy_segment_words(label: string) string {
     if str_eq(label, "runs") { return "where it runs" }
@@ -185,6 +190,7 @@ fn deploy_segment_words(label: string) string {
     if str_eq(label, "gateway") { return "gateway address" }
     if str_eq(label, "above") { return "the mesh it reports through" }
     if str_eq(label, "below") { return "the meshes that report through it" }
+    if str_eq(label, "production") { return "production build" }
     return label
 }
 

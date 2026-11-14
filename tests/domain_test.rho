@@ -17,6 +17,7 @@ include "../src/mesh/domain/transport.rho"
 include "../src/mesh/domain/impact.rho"
 include "../src/mesh/domain/deploy.rho"
 include "../src/mesh/domain/manifest.rho"
+include "../src/mesh/domain/production.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -242,6 +243,131 @@ test fn the_manifest_lists_every_board_with_its_placement() void {
     print("[PASS] the_manifest_lists_every_board_with_its_placement\n")
 }
 
+test fn a_rotated_board_is_listed_at_its_key_epoch() void {
+    let plan: string = MANIFEST_PLAN + "node.1.epoch=3\nnode.5.epoch=junk\n"
+    let lines: string = manifest_nodes(plan, "3")
+    check(str_eq(manifest_find(lines, "0123456789abcdef"), "0123456789abcdef|3|4|relay|3|0|"),
+        "a rotated node is listed at its epoch")
+    check(manifest_node_epoch(plan, 2) == 0, "a node never rotated is at epoch 0")
+    check(manifest_node_epoch(plan, 5) == 0, "an epoch that is not a number is 0")
+    check(str_eq(manifest_key_message("0123456789abcdef", 0), "72682d646576310123456789abcdef"),
+        "epoch 0 derives as rh-dev1 | uid")
+    check(str_eq(manifest_key_message("0123456789abcdef", 258), "72682d646576320123456789abcdef02010000"),
+        "a later epoch derives as rh-dev2 | uid | epoch, little-endian")
+    print("[PASS] a_rotated_board_is_listed_at_its_key_epoch\n")
+}
+
+test fn a_rotation_waits_for_the_board_to_confirm() void {
+    let report: string = "# uid|epoch|status|time\n0123456789abcdef|2|confirmed|100\n1111222233334444|1|cannot|200\n"
+    check(str_eq(rekey_state(report, "aaaabbbbccccdddd", 0), ""), "a board never rotated has no state")
+    check(str_eq(rekey_state(report, "aaaabbbbccccdddd", 1), "waiting"), "a rotated board the gateway has not heard is waiting")
+    check(str_eq(rekey_state(report, "0123456789abcdef", 2), "confirmed"), "a board that confirmed its epoch is rotated")
+    check(str_eq(rekey_state(report, "0123456789abcdef", 3), "waiting"), "and waits again once rotated further")
+    check(str_eq(rekey_state(report, "1111222233334444", 1), "cannot"), "a board with no store cannot rotate")
+    check(str_eq(rotate_refusal(report, "0123456789abcdef", 2), ""), "a confirmed board may be rotated again")
+    check(str_eq(rotate_refusal(report, "0123456789abcdef", 3), "unconfirmed"), "an unconfirmed one may not")
+    check(str_eq(rotate_refusal(report, "1111222233334444", 1), "cannot"), "nor one that cannot rotate")
+    check(str_eq(rotate_refusal("", "aaaabbbbccccdddd", 0), ""), "a board at epoch 0 may be rotated")
+    let api: string = "[{\"uid\":\"0123456789abcdef\",\"manifest_epoch\":2,\"confirmed\":2,\"epoch\":2,\"status\":\"confirmed\",\"time\":100}," +
+        "{\"uid\":\"1111222233334444\",\"manifest_epoch\":1,\"confirmed\":-1,\"epoch\":1,\"status\":\"cannot\",\"time\":200}]"
+    check(str_eq(rekey_from_json(api), "0123456789abcdef|2|confirmed|100\n1111222233334444|1|cannot|200\n"),
+        "a remote gateway's keys read as rekey.txt lines")
+    print("[PASS] a_rotation_waits_for_the_board_to_confirm\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Production builds                                                         */
+/* -------------------------------------------------------------------------- */
+
+test fn the_production_toggle_shows_for_a_platform_with_a_plan() void {
+    // The folders the platforms ship, as `ls <platform>/production` lists them.
+    let esp32: string = "esp32.json\npartitions.production.csv\nproduction.conf\nsdkconfig.production\n"
+    let pico: string = "production.conf\nrp2350.json\n"
+    let stm32: string = "production.conf\nproduction.json\n"
+    check(str_eq(production_candidates("Pico2W", "rp2350", ""), "pico2w.json\nrp2350.json\nproduction.json\n"),
+        "a plan is looked up by target, preset, family and platform, in lowercase")
+    check(str_eq(production_candidates("x", "x", "../y"), "x.json\nproduction.json\n"),
+        "a repeated name or one with a path is skipped")
+    check(production_available(esp32, "lolin32-lite", "esp32", ""), "an ESP32 board has a production mode, by its preset")
+    check(production_available(pico, "pico2w", "rp2350", ""), "an RP2350 board has one, by its preset")
+    check(!production_available(pico, "pico", "rp2040", ""), "an RP2040 board of the same platform has none")
+    check(str_eq(production_plan_name(stm32, "nucleo-h753zi", "stm32h7", "STM32H7"), "production.json"),
+        "an STM32 board has the platform's plan")
+    check(!production_available("", "uno-r3", "atmega328p", ""), "an AVR board has no production folder, so no mode")
+    check(!production_available("", "arduino-uno-q", "uno-q", "host"), "nor has a Linux host")
+    check(!production_available("production.conf\n", "x", "y", ""), "a fragment alone is not a plan")
+    let spec: string = "{\n  \"kind\": \"board\",\n  \"name\": \"pico2w\",\n  \"preset\" : \"rp2350\",\n  \"family\": \"STM32F4\"\n}"
+    check(str_eq(production_json_string(spec, "preset"), "rp2350"), "a target spec's preset is read")
+    check(str_eq(production_json_string(spec, "family"), "STM32F4"), "and its family")
+    check(str_eq(production_json_string(spec, "mcu"), ""), "a field it does not have is empty")
+    check(str_eq(production_platform_root("/w/robohub-pico/boards/pico2w/module.yml"), "/w/robohub-pico"),
+        "a board's platform is the folder above boards/")
+    check(str_eq(production_platform_root("module.yml"), ""), "a manifest outside boards/ has none")
+    print("[PASS] the_production_toggle_shows_for_a_platform_with_a_plan\n")
+}
+
+test fn a_production_build_needs_the_key_its_plan_names() void {
+    let esp32: string = "{\"build\": \"CONFIG_RH_PRODUCTION=y ..., RH_SECURE_BOOT_SIGNING_KEY naming the RSA-3072 PEM key.\"}"
+    let pico: string = "{\"build\": \"RH_SECURE_BOOT_SIGNING_KEY ...\", \"steps\": [{\"command\": \"picotool otp load {env:RH_PICO_OTP_JSON}\"}]}"
+    let stm32: string = "{\"build\": \"Any build\", \"steps\": [{\"command\": \"STM32_Programmer_CLI -ob RDP=0xBB\"}]}"
+    check(production_needs_key(esp32) && !production_needs_otp(esp32), "an ESP32 plan needs the key and no OTP file")
+    check(production_needs_key(pico) && production_needs_otp(pico), "an RP2350 plan needs both")
+    check(!production_needs_key(stm32) && !production_needs_otp(stm32), "an STM32 plan needs neither")
+    check(production_key_mode_ok("600") && production_key_mode_ok("400") && production_key_mode_ok("0600"), "an owner-only key is fine")
+    check(!production_key_mode_ok("640") && !production_key_mode_ok("644") && !production_key_mode_ok("604") && !production_key_mode_ok(""),
+        "a key the group or others can read is not")
+    check(str_eq(production_key_refusal(true, "", false, ""), "missing"), "a production build is refused without a key")
+    check(str_eq(production_key_refusal(true, "/k/esp.pem", false, ""), "missing"), "or with a key file that is not there")
+    check(str_eq(production_key_refusal(true, "k/esp.pem", true, "600"), "relative"), "or one named by a relative path")
+    check(str_eq(production_key_refusal(true, "/k/esp.pem", true, "644"), "open"), "or one others can read")
+    check(str_eq(production_key_refusal(true, "/k/esp.pem", true, "600"), ""), "and queued with one in place")
+    check(str_eq(production_key_refusal(false, "", false, ""), ""), "a plan that needs no key queues without one")
+    print("[PASS] a_production_build_needs_the_key_its_plan_names\n")
+}
+
+test fn the_production_job_scripts() void {
+    let dir: string = "/m/p/boards/node_3"
+    let bin: string = dir + "/build/output/node_3.elf"
+    let plain_build: string = production_build_script("pico2w", dir, bin, "node_3", false, "/k/key.pem", true, dir + "/plan.txt")
+    check(str_eq(plain_build, "cd '/m/p/boards/node_3'\nrho build -target 'pico2w' .\n"),
+        "a plain build is the build as it was, with no key and no plan")
+    check(str_eq(production_flash_script("pico2w", dir, bin, "node_3", false, true),
+        "rho flash -target 'pico2w' -project '/m/p/boards/node_3' '/m/p/boards/node_3/build/output/node_3.elf'\n"),
+        "a plain flash is the flash as it was")
+    let build: string = production_build_script("pico2w", dir, bin, "node_3", true, "/k/key.pem", true, dir + "/plan.txt")
+    check(str_index_of(build, "export RH_SECURE_BOOT_SIGNING_KEY='/k/key.pem'\nrho build -target 'pico2w' .\n") >= 0,
+        "a production build is given the key by its path before it builds")
+    check(str_index_of(build, "export RH_PICO_OTP_JSON='/m/p/boards/node_3/build/output/node_3.otp.json'\n") >= 0,
+        "an RP2350 build points the flash at the OTP file it wrote")
+    check(str_index_of(build, "'/m/p/boards/node_3/build/output/node_3.elf' --production --dry-run > '/m/p/boards/node_3/plan.txt'\n") >= 0,
+        "and ends by writing what the flash will do")
+    let esp: string = production_build_script("lolin32-lite", dir, bin, "node_3", true, "/k/rsa.pem", false, dir + "/plan.txt")
+    check(str_index_of(esp, "RH_PICO_OTP_JSON") < 0 && str_index_of(esp, "RH_SECURE_BOOT_SIGNING_KEY='/k/rsa.pem'") >= 0,
+        "an ESP32 build has the key and no OTP file")
+    let stm: string = production_build_script("nucleo-h753zi", dir, bin, "node_3", true, "", false, dir + "/plan.txt")
+    check(str_index_of(stm, "RH_SECURE_BOOT_SIGNING_KEY") < 0 && str_index_of(stm, "--dry-run") >= 0,
+        "an STM32 build has no key but still prints its plan")
+    let flash: string = production_flash_script("pico2w", dir, bin, "node_3", true, true)
+    check(str_index_of(flash, "if [ ! -s \"$confirm\" ]; then echo 'no board name was typed: nothing was run'; exit 1; fi\n") >= 0,
+        "a production flash stops when no name was typed")
+    check(str_index_of(flash, "export RH_PICO_OTP_JSON='/m/p/boards/node_3/build/output/node_3.otp.json'\n") >= 0,
+        "an RP2350 flash names its OTP file")
+    check(str_index_of(flash, "'/m/p/boards/node_3/build/output/node_3.elf' --production < \"$confirm\"\n") >= 0,
+        "and runs rho flash --production with the typed name on its input")
+    check(str_index_of(flash, "--dry-run") < 0, "the flash itself is not a dry run")
+    check(str_index_of(production_flash_script("lolin32-lite", dir, bin, "node_3", true, false), "RH_PICO_OTP_JSON") < 0,
+        "an ESP32 flash has no OTP file")
+    check(str_eq(production_quote("it's"), "'it'\\''s'"), "a quote in a value stays one word")
+    // The toggle is part of what a board is built from.
+    let plan: string = "node.count=1\nnode.1.kind=compute\nnode.1.board=pico2w\nnode.1.parent=gateway\n"
+    let plain: string = deploy_node_signature(plan, 1)
+    check(str_index_of(plain, "production") < 0, "a board built plainly says nothing of production")
+    check(str_eq(deploy_node_signature(plan + "node.1.production=off\n", 1), plain), "and one turned off is the same")
+    let hardened: string = deploy_node_signature(plan + "node.1.production=on\n", 1)
+    check(str_eq(deploy_reason(plain, hardened), "production build changed"), "turning it on makes the board out of date")
+    print("[PASS] the_production_job_scripts\n")
+}
+
 test fn a_node_credential_is_read_from_its_header() void {
     let header: string = "Node gateway-node-01:00ff00ff00ff"
     check(str_eq(node_auth_part(header, 0), "gateway-node-01"), "the device")
@@ -287,6 +413,11 @@ fn main() void {
     a_board_never_programmed_says_so()
     the_diff_names_what_changed_and_how()
     the_manifest_lists_every_board_with_its_placement()
+    a_rotated_board_is_listed_at_its_key_epoch()
+    a_rotation_waits_for_the_board_to_confirm()
+    the_production_toggle_shows_for_a_platform_with_a_plan()
+    a_production_build_needs_the_key_its_plan_names()
+    the_production_job_scripts()
     a_node_credential_is_read_from_its_header()
     a_node_key_client_has_a_budget()
     print("mesh domain tests ok\n")

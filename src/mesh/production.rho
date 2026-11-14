@@ -1,0 +1,350 @@
+//
+// @file production.rho
+// @brief A board's production build: the toggle, the signing key, and the typed confirmation before its flash.
+//
+// A production build is off for every board until someone turns it on, on that
+// board, in its inspector. The toggle is offered only for a board whose platform
+// declares a production plan (domain/production.rho); an AVR board and a Linux
+// host have none, and `rho flash --production` would say so.
+//
+// When it is on, the board's configuration carries CONFIG_RH_PRODUCTION=y, its
+// build job is given the mesh's secure-boot signing key by path (a file on this
+// machine, owner-only, never copied into the plan), and ends by writing what the
+// flash will do. The flash job waits with that printout as its "waiting for you"
+// text; the person types the board's name, Mesh hands exactly that to `rho flash
+// --production` on its standard input, and rho flash checks it again. There is no
+// way past the typing.
+//
+// @module mesh.production
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-14
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.production
+
+/* -------------------------------------------------------------------------- */
+/*  What a board's platform declares                                          */
+/* -------------------------------------------------------------------------- */
+
+// production_platform_dir is the platform module a board comes from, or "".
+fn production_platform_dir(board: string) string {
+    return production_platform_root(board_manifest(board))
+}
+
+// production_board_target_spec is the text of a board's target spec.
+fn production_board_target_spec(board: string) string {
+    let manifest: string = board_manifest(board)
+    if manifest == "" {
+        return ""
+    }
+    var spec: string = yaml.value(manifest, "hardware.target")
+    if spec == "" || rho_str_index_of(spec, "/") >= 0 {
+        spec = "target.json"
+    }
+    return rho_read_text(path_parent(manifest) + "/" + spec)
+}
+
+// production_listing is the file names in a platform's production folder.
+fn production_listing(platform: string) string {
+    if platform == "" || !rho_path_exists(platform + "/production") {
+        return ""
+    }
+    let report: string = wizard_report("production-ls")
+    if rho_exec("sh", "-c \"ls " + shell_quote(platform + "/production") + "\"", report) != 0 {
+        return ""
+    }
+    return rho_read_text(report)
+}
+
+// production_board_plan is the plan file `rho flash --production` would read
+// for a board, or "" when the board has no production mode.
+fn production_board_plan(board: string) string {
+    if board == "" || board == "native" {
+        return ""
+    }
+    let platform: string = production_platform_dir(board)
+    let spec: string = production_board_target_spec(board)
+    let name: string = production_plan_name(production_listing(platform), board,
+        production_json_string(spec, "preset"), production_json_string(spec, "family"))
+    if name == "" {
+        // rho flash looks the plan up by the target's own name too.
+        let named: string = production_plan_name(production_listing(platform), production_json_string(spec, "name"),
+            production_json_string(spec, "preset"), production_json_string(spec, "family"))
+        if named == "" {
+            return ""
+        }
+        return platform + "/production/" + named
+    }
+    return platform + "/production/" + name
+}
+
+fn production_board_available(board: string) bool {
+    return production_board_plan(board) != ""
+}
+
+// production_board_plan_text is the plan a board would be flashed with.
+fn production_board_plan_text(board: string) string {
+    let plan: string = production_board_plan(board)
+    if plan == "" {
+        return ""
+    }
+    return rho_read_text(plan)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The setting on a board, and the mesh's signing key                       */
+/* -------------------------------------------------------------------------- */
+
+// production_node_on is whether a board of a mesh is built for production: the
+// plan's node.<n>.production, off unless it says "on".
+fn production_node_on(id: string, index: u32) bool {
+    return rho_str_eq(state_value_in(project_file(id), "node." + rho_int_to_str(index) + ".production"), "on")
+}
+
+fn production_node_board(index: u32) string {
+    return node_value(index, "board", first_board("relay"))
+}
+
+// production_key_file is where a mesh names its secure-boot signing key: a
+// file beside the plan, not in it, holding the key's path on this machine.
+fn production_key_file(id: string) string {
+    return project_location(id) + "/signing-key.txt"
+}
+
+fn production_key_path(id: string) string {
+    return first_line(rho_read_text(production_key_file(id)))
+}
+
+// production_key_mode is a file's permissions in octal, as stat prints them.
+fn production_key_mode(path: string) string {
+    if path == "" {
+        return ""
+    }
+    let report: string = wizard_report("production-key-mode")
+    if rho_exec("sh", "-c \"stat -L -c %a " + shell_quote(path) + "\"", report) != 0 {
+        return ""
+    }
+    return first_line(rho_read_text(report))
+}
+
+// production_key_problem is why a mesh's key cannot be used for a plan, as
+// domain/production.rho says it: "" when it can.
+fn production_key_problem(id: string, plan: string) string {
+    let path: string = production_key_path(id)
+    return production_key_refusal(production_needs_key(plan), path, path != "" && rho_path_exists(path),
+        production_key_mode(path))
+}
+
+// production_refusal is why a board's production build cannot be queued, in
+// `loc`, or "" when it can.
+fn production_refusal(loc: string, id: string, index: u32, board: string) string {
+    let name: string = editor_name(loc, index)
+    let plan: string = production_board_plan_text(board)
+    if plan == "" {
+        return mesh_fill(mesh_t(loc, "production.refused_no_mode"), "name", name)
+    }
+    let problem: string = production_key_problem(id, plan)
+    if problem != "" {
+        return mesh_fill(mesh_t(loc, "production.refused_key_" + problem), "name", name)
+    }
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The inspector                                                             */
+/* -------------------------------------------------------------------------- */
+
+// production_section is the production build of a board in its Access tab:
+// nothing for a board whose platform has no production mode (unless the toggle
+// was left on, which can then only be turned off), the warning, the toggle, and
+// the mesh's signing key when the board's plan needs one.
+fn production_section(loc: string, id: string, index: u32) string {
+    if !editor_is_board(index) {
+        return ""
+    }
+    let board: string = production_node_board(index)
+    let plan: string = production_board_plan_text(board)
+    let on: bool = production_node_on(id, index)
+    if plan == "" && !on {
+        return ""
+    }
+    let action: string = editor_node_action(id, index)
+    var out: string = "<h3>" + escape_html(mesh_t(loc, "production.title")) + "</h3>"
+    if plan == "" {
+        return out + "<p class=\"notice bad\">" + escape_html(mesh_t(loc, "production.no_mode")) + "</p>" +
+            editor_form(loc, action + "/production", "revoke", index, editor_hidden("action", "off"), mesh_t(loc, "production.turn_off"))
+    }
+    if on {
+        out = out + "<p class=\"notice bad\">" + escape_html(mesh_t(loc, "production.is_on")) + "</p>" +
+            "<p class=\"agora-seen\">" + escape_html(mesh_t(loc, "production.warning")) + "</p>" +
+            editor_form(loc, action + "/production", "revoke", index, editor_hidden("action", "off"), mesh_t(loc, "production.turn_off"))
+    } else {
+        out = out + "<p>" + escape_html(mesh_t(loc, "production.is_off")) + "</p>" +
+            "<div class=\"ins-impact\"><b>" + escape_html(mesh_t(loc, "production.warning_title")) + "</b><span>" +
+            escape_html(mesh_t(loc, "production.warning")) + "</span></div>" +
+            editor_form(loc, action + "/production", "revoke", index, editor_hidden("action", "on"), mesh_t(loc, "production.turn_on"))
+    }
+    if production_needs_key(plan) {
+        let problem: string = production_key_problem(id, plan)
+        var said: string = mesh_t(loc, "production.key_ok")
+        var css: string = "agora-seen"
+        if problem != "" {
+            said = mesh_fill(mesh_t(loc, "production.refused_key_" + problem), "name", editor_name(loc, index))
+            css = "notice bad"
+        }
+        out = out + "<p class=\"" + css + "\">" + escape_html(said) + "</p>" +
+            editor_form(loc, action + "/signing-key", "revoke", index,
+                mesh_input("signing_key", mesh_t(loc, "production.key_label"), production_key_path(id), mesh_t(loc, "production.key_help")),
+                mesh_t(loc, "settings.save"))
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The flash job: the printout, and the typed name                           */
+/* -------------------------------------------------------------------------- */
+
+// production_job is whether a flash job flashes for production: its script
+// runs `rho flash --production`.
+fn production_job(project: string, seq: string) bool {
+    return rho_str_index_of(rho_read_text(jobs_path(project, seq, "sh")), " --production") >= 0
+}
+
+fn production_job_value(project: string, seq: string, key: string) string {
+    return plan_value(rho_read_text(jobs_path(project, seq, "production")), key)
+}
+
+// production_job_plan is what `rho flash --production --dry-run` printed for a
+// job's board when it was built, or "" until the build has written it.
+fn production_job_plan(project: string, seq: string) string {
+    let file: string = production_job_value(project, seq, "plan")
+    if file == "" {
+        return ""
+    }
+    return rho_read_text(file)
+}
+
+// production_job_ready is whether a waiting production flash can be confirmed:
+// its build has written the printout.
+fn production_job_ready(project: string, seq: string) bool {
+    return production_job_plan(project, seq) != ""
+}
+
+// production_waiting is a waiting production flash in the inspector: what the
+// person has to do with the board, every step the flash will run (irreversible
+// ones marked by rho flash), and the field the board's name is typed into.
+fn production_waiting(loc: string, project: string, seq: string, action: string) string {
+    let board: string = production_job_value(project, seq, "board")
+    let plan: string = production_job_plan(project, seq)
+    var out: string = "<div class=\"ins-impact\"><b>" + mesh_t(loc, "jobs.your_turn") + "</b><span>" +
+        escape_html(jobs_read(project, seq, "wait")) + "</span></div>" +
+        "<p class=\"notice bad\">" + escape_html(mesh_t(loc, "production.warning")) + "</p>"
+    if plan == "" {
+        return out + "<p class=\"ins-help\">" + escape_html(mesh_t(loc, "production.plan_after_build")) + "</p>" +
+            jobs_control(loc, action, "cancel", mesh_t(loc, "jobs.cancel"), "ag-btn")
+    }
+    return out + "<p><b>" + escape_html(mesh_t(loc, "production.steps")) + "</b></p><pre class=\"job-log\">" + escape_html(plan) + "</pre>" +
+        "<form class=\"ins-form\" method=\"post\" action=\"" + action + "/go\" hx-post=\"" + action + "/go\" hx-target=\"#agora-inspector\">" +
+        mesh_input("board_name", mesh_fill(mesh_t(loc, "production.type_name"), "board", board), "", mesh_t(loc, "production.type_help")) +
+        "<div class=\"ins-foot\" style=\"position:static;margin:0;border:0;background:none;padding:0\">" +
+        "<button type=\"submit\" class=\"ag-btn primary\">" + escape_html(mesh_t(loc, "production.flash")) + "</button></div></form>" +
+        jobs_control(loc, action, "cancel", mesh_t(loc, "jobs.cancel"), "ag-btn")
+}
+
+// production_go lets a waiting production flash run once the board's name has
+// been typed exactly: the name is written beside the job for its script to hand
+// to rho flash, which asks for it again on its standard input.
+fn production_go(req: Request, id: string, seq: string) Response {
+    let selection: string = "job:" + seq
+    if !production_job_ready(id, seq) {
+        return editor_answer(req, id, selection, "", editor_notice(i18n_t(req, "production.plan_after_build"), true))
+    }
+    let board: string = production_job_value(id, seq, "board")
+    let typed: string = production_trim(form_field(request_body(req), "board_name"))
+    if board == "" || !rho_str_eq(typed, board) {
+        return editor_answer(req, id, selection, "", editor_notice(mesh_fill(i18n_t(req, "production.name_wrong"), "board", board), true))
+    }
+    if !rho_write_secret(jobs_path(id, seq, "confirm"), typed + "\n") {
+        return editor_answer(req, id, selection, "", editor_notice(i18n_t(req, "production.name_unwritten"), true))
+    }
+    ignore_bool(rho_write_text(jobs_path(id, seq, "go"), "\n"))
+    info("mesh", id + ": production flash of " + board + " confirmed by its name")
+    return jobs_answer(req, id, selection, editor_notice(i18n_t(req, "jobs.flashing"), false))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Routes                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// mesh_p_node_production turns a board's production build on or off. Turning it
+// on is refused for a board whose platform has no production mode; it is said
+// with the warning, and the board is out of date until it is built again.
+fn mesh_p_node_production(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let nid: string = param(req, "node")
+    let file: string = project_file(id)
+    let index: u32 = project_node_by_id(file, nid)
+    if index == 0 {
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "editor.msg.node_gone"), true))
+    }
+    let body: string = request_body(req)
+    if editor_stale(body, index) {
+        return editor_answer(req, id, "node:" + nid, "revoke", editor_notice(i18n_t(req, "editor.msg.node_changed"), true))
+    }
+    let action: string = form_field(body, "action")
+    let name: string = editor_name(i18n_locale(req), index)
+    let key: string = "node." + rho_int_to_str(index) + ".production"
+    if action == "off" {
+        ignore_bool(plan_set(file, key, "off"))
+        info("mesh", "board " + nid + " in " + id + ": production build off")
+        return editor_answer(req, id, "node:" + nid, "revoke", editor_notice(mesh_fill(i18n_t(req, "production.done_off"), "name", name), false))
+    }
+    if action != "on" || !editor_is_board(index) {
+        return editor_answer(req, id, "node:" + nid, "revoke", "")
+    }
+    if !production_board_available(production_node_board(index)) {
+        return editor_answer(req, id, "node:" + nid, "revoke",
+            editor_notice(mesh_fill(i18n_t(req, "production.refused_no_mode"), "name", name), true))
+    }
+    ignore_bool(plan_set(file, key, "on"))
+    warn("mesh", "board " + nid + " in " + id + ": production build on")
+    return editor_answer(req, id, "node:" + nid, "revoke",
+        editor_notice(mesh_fill(i18n_t(req, "production.done_on"), "name", name) + " " + i18n_t(req, "production.warning"), true))
+}
+
+// mesh_p_signing_key names the mesh's secure-boot signing key: an absolute path
+// on this machine, kept beside the plan and never in it. The key itself is
+// never read by Mesh; the build reads it.
+fn mesh_p_signing_key(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let nid: string = param(req, "node")
+    let index: u32 = project_node_by_id(project_file(id), nid)
+    var selection: string = "node:" + nid
+    if index == 0 {
+        selection = ""
+    }
+    let path: string = production_trim(form_field(request_body(req), "signing_key"))
+    if path != "" && (!rho_str_starts_with(path, "/") || !deploy_path_ok(path)) {
+        return editor_answer(req, id, selection, "revoke", editor_notice(i18n_t(req, "production.key_bad_path"), true))
+    }
+    if !rho_write_secret(production_key_file(id), path + "\n") {
+        return editor_answer(req, id, selection, "revoke", editor_notice(i18n_t(req, "production.key_unwritten"), true))
+    }
+    info("mesh", id + ": secure-boot signing key path saved")
+    return editor_answer(req, id, selection, "revoke", editor_notice(i18n_t(req, "production.key_saved"), false))
+}

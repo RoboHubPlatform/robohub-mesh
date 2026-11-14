@@ -239,6 +239,46 @@ administrator once) and attaches it, re-attaches it after the reboot into BOOTSE
 and falls back to the bootrom's drive. When a flash succeeds the board runs what is
 planned and stops showing as out of date.
 
+### Production builds
+
+A production build hardens a board in ways that cannot be undone: an ESP32 burns
+eFuses for secure boot v2 and flash encryption, an RP2350 writes its boot key's hash
+into OTP and then boots only images signed with that key. It is **off for every
+board** until someone turns it on, on that board, in its inspector's **Access** tab
+(the plan says `node.<n>.production: on`). The toggle is shown only for a board
+whose platform declares a production plan — the file `rho flash --production`
+reads, looked up the same way under `<platform>/production/` (the target's name,
+its preset, its family, then `production.json`). An ESP32, an RP2350 and an STM32
+(RDP level 1, reversible) have one; an RP2040, an AVR board and a Linux host have
+none, and turning it on for them is refused. Turning it on shows the warning: the
+steps are irreversible, and a board flashed this way cannot go back to a plain
+image.
+
+When it is on:
+
+- the board's `project.conf` carries `CONFIG_RH_PRODUCTION=y`, and the board is out
+  of date (*production build changed*) until it is built again;
+- if the platform's plan names `RH_SECURE_BOOT_SIGNING_KEY` (ESP32: an RSA-3072 PEM
+  key; RP2350: a secp256k1 PEM key), the build needs the mesh's **secure-boot
+  signing key**: an absolute path on the machine running Mesh, set in the same tab,
+  kept in `signing-key.txt` beside the plan (0600) and never in the plan. Mesh
+  never reads the key; the build job is given its path as
+  `RH_SECURE_BOOT_SIGNING_KEY`. A production build is **not queued** while no key
+  is named, the file is not there, or the group or others can read it;
+- the build job ends with `rho flash ... --production --dry-run`, written to
+  `production-plan.txt` in the board's folder;
+- the flash job waits with that printout — every step, irreversible ones marked —
+  as its *waiting for you* text, and a field for the board's name. Only the exact
+  name lets it run: Mesh writes what was typed beside the job, and the job hands
+  it to `rho flash -target <board> -project <dir> <image> --production` on its
+  standard input, where rho flash checks it again. On an RP2350 the job sets
+  `RH_PICO_OTP_JSON` to the build's `build/output/<program>.otp.json`. There is no
+  way past the typing.
+
+Turning the toggle off makes the next build a plain image again — on an ESP32 or
+RP2350 that was already flashed for production, that image will not boot: keep the
+key, and build for production.
+
 ### Linked meshes
 
 A mesh can report through another: in its gateway's inspector, **Reports through**
@@ -355,8 +395,12 @@ Every frame between a board and its gateway is authenticated (robohub-transport'
   folder (`gateway.key`), readable by Mesh's user only, and installed with the gateway
   as `GATEWAY_KEY_FILE`; a key file that exists is never replaced;
 - each planned board has an id (`node.<n>.id` in the plan), made once;
-- a board's key is derived from the two and written into its build as
-  `src/robohub_secret.h`, which no repository tracks.
+- a board's key is derived from the two and its key epoch (`node.<n>.epoch`, 0
+  until it is rotated) and written into its build as `src/robohub_secret.h`,
+  with the epoch as `RH_DEVICE_KEY_EPOCH` and the gateway's key scope
+  (`RH_KEY_SCOPE`, `HMAC-SHA256(K_gw, "rh-scope1")[0:8]`, which a rotated key is
+  stored with so a board moved to another mesh ignores the key it stored for its
+  old one); no repository tracks it.
 
 A board built that way says hello to its gateway, opens a session, and sends only
 sealed frames; its gateway accepts nothing else (on the serial link,
@@ -374,17 +418,32 @@ gateway admits only the boards it lists, takes a board's readings only for its o
 placement, and an announce only from a `relay` for its own areas (a mesh linked
 below is one, for its area and those below it).
 
-**Revoke.** A board's inspector has a **Revoke** tab: it takes the board out of its
-mesh without re-keying anything — the plan says `node.<n>.revoked`, the manifest is
-rewritten, a gateway on this machine reads it within seconds and one on another
-host is sent it at once — and **Admit it again** undoes it.
+**Revoke.** A board's inspector has an **Access** tab: **Revoke** takes the board
+out of its mesh without re-keying anything — the plan says `node.<n>.revoked`, the
+manifest is rewritten, a gateway on this machine reads it within seconds and one on
+another host is sent it at once — and **Admit it again** undoes it.
+
+**Rotate key.** The same tab shows the board's key epoch and offers **Rotate key**:
+the plan's `node.<n>.epoch` goes up by one, the manifest is rewritten and sent as
+for a revocation, and the gateway gives the board its new key under its current
+session the next time it hears it (`REKEY`); no flashing. Once the board has
+confirmed it, the old key opens nothing, which is how a key that may have been
+copied is retired. The tab says what the gateway reports — `rekey.txt` beside the
+key for a gateway on this machine, `GET /api/v1/keys` for one on another host:
+*waiting for the board to confirm*, *confirmed*, or *cannot rotate* for a board
+whose firmware has no store for a key (reflash it). A board is not rotated again
+before it confirmed the last rotation: the gateway accepts only the current epoch
+and the one before it. A firmware built after a rotation carries the current key,
+and a host node fetching its key gets the current epoch's. Whoever recorded the
+board's traffic with the old key can unwrap the new one; for a key known to be
+stolen, rotate and reflash.
 
 **Host nodes.** A Linux host that speaks the board protocol enrolls with the keeper
 and fetches its board id and key from `POST /mesh/api/nodes/key` (through the
 keeper, `Authorization: Node <device>:<credential>`): Mesh checks the credential
 with the keeper's `/api/nodes/verify` and answers the board planned at the node's
-placement. A revoked board gets nothing, the key is never logged, and a client may
-ask ten times a minute. `rho bootstrap key` is the client.
+placement, of its current key epoch (`"epoch"` in the answer). A revoked board
+gets nothing, the key is never logged, and a client may ask ten times a minute. `rho bootstrap key` is the client.
 
 When a mesh names `gateway_tls_cert` and `gateway_tls_key`, Mesh records and calls
 its gateway at an `https://` address, health checks included.
@@ -527,4 +586,8 @@ say what a board's image is built from. The smoke suite builds Mesh and walks it
 HTTP: a mesh planned in place, the bus plan and its conflicts, the plan's revisions,
 numbers kept across a delete, the old addresses, the fleet and its ports, stale saves
 refused, a native gateway started as a job and found online, and a Pico 2 W board
-built in the background with its flash waiting for BOOTSEL.
+built in the background with its flash waiting for BOOTSEL. The production smoke runs Mesh
+with a stand-in `rho`, so nothing is built or burned: the toggle offered only where
+the platform has a plan, a production build refused without the signing key or with
+one others can read, and the flash waiting on the dry run's steps until the board's
+name is typed, then handed that name on its input.

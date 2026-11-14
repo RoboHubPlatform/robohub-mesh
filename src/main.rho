@@ -22,6 +22,7 @@ include "mesh/domain/transport.rho"
 include "mesh/domain/impact.rho"
 include "mesh/domain/deploy.rho"
 include "mesh/domain/manifest.rho"
+include "mesh/domain/production.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
 include "mesh/store.rho"
@@ -46,6 +47,7 @@ include "mesh/access.rho"
 include "mesh/devices.rho"
 include "mesh/manifest.rho"
 include "mesh/nodekey.rho"
+include "mesh/production.rho"
 
 import std.web.http
 import std.web.template
@@ -101,6 +103,9 @@ route GET "/mesh/p/{project}" => mesh_p_page
 route GET "/mesh/p/{project}/node/{node}" => mesh_p_node_page
 route POST "/mesh/p/{project}/node/{node}/delete" => mesh_p_node_delete
 route POST "/mesh/p/{project}/node/{node}/revoke" => mesh_p_node_revoke
+route POST "/mesh/p/{project}/node/{node}/rotate" => mesh_p_node_rotate
+route POST "/mesh/p/{project}/node/{node}/production" => mesh_p_node_production
+route POST "/mesh/p/{project}/node/{node}/signing-key" => mesh_p_signing_key
 route POST "/mesh/p/{project}/node/{node}/move-to" => mesh_p_node_move
 route POST "/mesh/p/{project}/node/{node}/parent" => mesh_p_node_parent
 route POST "/mesh/p/{project}/node/{node}/impact" => mesh_p_node_impact

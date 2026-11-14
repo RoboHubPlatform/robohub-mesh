@@ -20,8 +20,9 @@ module mesh.domain.manifest
 //
 // uid is the node's id as the plan keeps it (node.<n>.id, 16 hex digits); area
 // and node are where it reports from; role is `board` or `relay`; epoch is the
-// key epoch (0 until keys are rotated); revoked is 1 for a board taken out of the
-// mesh without re-keying it; areas are, for a relay, the areas it may announce.
+// key epoch the board should be at (node.<n>.epoch, 0 until its key is rotated);
+// revoked is 1 for a board taken out of the mesh without re-keying it; areas are,
+// for a relay, the areas it may announce.
 //
 // A planned compute node is a board. One the plan gives the role `relay` carries
 // boards under it in the mesh's own area, which their own sessions speak for, so
@@ -75,7 +76,173 @@ fn manifest_node_line(plan: string, index: u32, area: string) string {
     if plan_value(plan, prefix + "revoked") == "1" {
         revoked = "1"
     }
-    return uid + "|" + area + "|" + int_to_str(u32(int_from_str(number))) + "|" + kept_role + "|0|" + revoked + "|\n"
+    return uid + "|" + area + "|" + int_to_str(u32(int_from_str(number))) + "|" + kept_role + "|" +
+        int_to_str(manifest_node_epoch(plan, index)) + "|" + revoked + "|\n"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Key epochs                                                                */
+/* -------------------------------------------------------------------------- */
+
+// A board's key has an epoch (robohub-gateway, gateway/keys.rho). Epoch 0 is
+// HMAC-SHA256(K_gw, "rh-dev1" | uid)[0:16]; epoch n is
+// HMAC-SHA256(K_gw, "rh-dev2" | uid | n as u32 LE)[0:16]. "Rotate key" bumps a
+// board's epoch in the plan; the gateway moves the board to it (REKEY) and says
+// in rekey.txt (`uid|epoch|status|time`) when the board confirmed it, or that it
+// cannot store a key. A firmware Mesh builds carries the current epoch's key.
+
+// manifest_node_epoch is a planned node's key epoch: node.<n>.epoch, 0 when it
+// is not a number.
+fn manifest_node_epoch(plan: string, index: u32) u32 {
+    let text: string = plan_value(plan, "node." + int_to_str(index) + ".epoch")
+    if text == "" || strlen(text) > 9 {
+        return 0
+    }
+    var i: u32 = 0
+    while i < strlen(text) {
+        if str_index_of("0123456789", str_slice(text, i, 1)) < 0 {
+            return 0
+        }
+        i = i + 1
+    }
+    return u32(int_from_str(text))
+}
+
+// manifest_u32_hex is a number as its four little-endian bytes, in hex.
+fn manifest_u32_hex(value: u32) string {
+    let digits: string = "0123456789abcdef"
+    var out: string = ""
+    var rest: u32 = value
+    var i: u32 = 0
+    while i < 4 {
+        let byte: u32 = rest % 256
+        out = out + str_slice(digits, byte / 16, 1) + str_slice(digits, byte % 16, 1)
+        rest = rest / 256
+        i = i + 1
+    }
+    return out
+}
+
+// manifest_key_message is what the gateway key is HMACed over for a board's key
+// at an epoch, in hex.
+fn manifest_key_message(uid: string, epoch: u32) string {
+    if epoch == 0 {
+        return "72682d64657631" + uid
+    }
+    return "72682d64657632" + uid + manifest_u32_hex(epoch)
+}
+
+// rekey_line is a board's line of a gateway's rekey.txt, or "".
+fn rekey_line(report: string, uid: string) string {
+    if !manifest_uid_ok(uid) {
+        return ""
+    }
+    return manifest_find(report, uid)
+}
+
+fn rekey_field(line: string, index: u32) string {
+    var rest: string = line
+    var i: u32 = 0
+    while i < index {
+        let at: i32 = str_index_of(rest, "|")
+        if at < 0 {
+            return ""
+        }
+        rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        i = i + 1
+    }
+    let end: i32 = str_index_of(rest, "|")
+    if end < 0 {
+        return rest
+    }
+    return str_slice(rest, 0, u32(end))
+}
+
+// rekey_state is where a board's key stands against the epoch the plan names:
+// "" (never rotated), "confirmed" (the board holds that epoch or a newer one),
+// "cannot" (it was asked to move to that epoch and has no store for a key) or
+// "waiting" (the gateway has not heard it confirm yet).
+fn rekey_state(report: string, uid: string, epoch: u32) string {
+    let line: string = rekey_line(report, uid)
+    if line == "" {
+        if epoch == 0 {
+            return ""
+        }
+        return "waiting"
+    }
+    let held: u32 = u32(int_from_str(rekey_field(line, 1)))
+    let status: string = rekey_field(line, 2)
+    if status == "confirmed" && held >= epoch {
+        return "confirmed"
+    }
+    if epoch == 0 {
+        return ""
+    }
+    if status == "cannot" && held == epoch {
+        return "cannot"
+    }
+    return "waiting"
+}
+
+// rotate_refusal is why a board's key may not be rotated again now, or "": a
+// board still waiting to confirm the epoch it was given would be two epochs
+// behind and refused, and one that cannot store a key cannot be rotated.
+fn rotate_refusal(report: string, uid: string, epoch: u32) string {
+    let state: string = rekey_state(report, uid, epoch)
+    if state == "waiting" {
+        return "unconfirmed"
+    }
+    if state == "cannot" {
+        return "cannot"
+    }
+    return ""
+}
+
+// rekey_json_field is one field of a flat JSON object, its quotes taken off.
+fn rekey_json_field(object: string, name: string) string {
+    let key: string = "\"" + name + "\":"
+    let at: i32 = str_index_of(object, key)
+    if at < 0 {
+        return ""
+    }
+    var rest: string = str_slice(object, u32(at) + u32(strlen(key)), u32(strlen(object)) - u32(at) - u32(strlen(key)))
+    if str_slice(rest, 0, 1) == "\"" {
+        rest = str_slice(rest, 1, u32(strlen(rest)) - 1)
+        let end: i32 = str_index_of(rest, "\"")
+        if end < 0 {
+            return ""
+        }
+        return str_slice(rest, 0, u32(end))
+    }
+    var end: u32 = 0
+    while end < u32(strlen(rest)) && str_index_of("-0123456789", str_slice(rest, end, 1)) >= 0 {
+        end = end + 1
+    }
+    return str_slice(rest, 0, end)
+}
+
+// rekey_from_json is a gateway's GET /api/v1/keys answer as rekey.txt lines.
+fn rekey_from_json(body: string) string {
+    var out: string = ""
+    var rest: string = body
+    var at: i32 = str_index_of(rest, "{")
+    while at >= 0 {
+        rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        let end: i32 = str_index_of(rest, "}")
+        if end < 0 {
+            return out
+        }
+        let object: string = str_slice(rest, 0, u32(end))
+        let uid: string = rekey_json_field(object, "uid")
+        let status: string = rekey_json_field(object, "status")
+        if manifest_uid_ok(uid) && (status == "confirmed" || status == "cannot") {
+            out = out + uid + "|" + int_to_str(u32(int_from_str(rekey_json_field(object, "epoch")))) + "|" + status + "|" +
+                int_to_str(u32(int_from_str(rekey_json_field(object, "time")))) + "\n"
+        }
+        rest = str_slice(rest, u32(end) + 1, u32(strlen(rest)) - u32(end) - 1)
+        at = str_index_of(rest, "{")
+    }
+    return out
 }
 
 // manifest_nodes are the lines of every planned node of a plan (flat text).

@@ -178,7 +178,10 @@ fn mesh_api_node_key(req: Request) Response {
     if uid == "" || gateway_key == "" {
         return nodekey_refused(500, "the board's key cannot be made")
     }
-    let key: string = rho_str_slice(rho_hmac_sha256_hex(gateway_key, "72682d64657631" + uid), 0, 32)
+    // The key of the epoch the board is at now: a host node's next hello is
+    // under it, whatever epoch it held before.
+    let epoch: u32 = project_node_epoch(project, index)
+    let key: string = rho_str_slice(rho_hmac_sha256_hex(gateway_key, manifest_key_message(uid, epoch)), 0, 32)
     if rho_strlen(key) != 32 {
         return nodekey_refused(500, "the board's key cannot be made")
     }
@@ -187,6 +190,7 @@ fn mesh_api_node_key(req: Request) Response {
     info("mesh", "board key issued to device " + device + " for " + project + " area " + rho_int_to_str(area) +
         " node " + rho_int_to_str(number))
     return Response{ 200, "{\"ok\":true,\"uid\":" + json_string(uid) + ",\"key\":" + json_string(key) +
+        ",\"epoch\":" + rho_int_to_str(epoch) +
         ",\"project\":" + json_string(project) + ",\"area\":" + rho_int_to_str(area) +
         ",\"node\":" + rho_int_to_str(number) + "}", "application/json", "Cache-Control: no-store" }
 }

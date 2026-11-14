@@ -152,7 +152,105 @@ fn editor_revoke_tab(loc: string, id: string, index: u32) string {
         inner = editor_hidden("action", "revoke")
         submit = mesh_t(loc, "editor.revoke.revoke")
     }
-    return text + editor_form(loc, editor_node_action(id, index) + "/revoke", "revoke", index, inner, submit)
+    return editor_key_section(loc, id, index) +
+        text + editor_form(loc, editor_node_action(id, index) + "/revoke", "revoke", index, inner, submit)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Rotating a board's key                                                    */
+/* -------------------------------------------------------------------------- */
+
+// project_node_epoch is the key epoch the plan names for a board.
+fn project_node_epoch(id: string, index: u32) u32 {
+    return manifest_node_epoch(plan_text(project_file(id)), index)
+}
+
+// mesh_rekey_report is what a mesh's gateway says about its boards' keys, as
+// rekey.txt lines: the file a gateway on this machine writes beside its key, or
+// for one on another host its GET /api/v1/keys. "" when neither can be read.
+fn mesh_rekey_report(project: string) string {
+    let gateway: string = state_value_in(project_file(project), "gateway")
+    if gateway == "" || gateway == "native" {
+        return rho_read_text(project_location(project) + "/rekey.txt")
+    }
+    let url: string = mesh_project_gateway(project)
+    if url == "" {
+        return ""
+    }
+    return rekey_from_json(mesh_url_get(project, url, "/api/v1/keys"))
+}
+
+// editor_key_section says which key epoch a board is at and whether its gateway
+// has heard it confirm the key, and offers to rotate it: the board is given its
+// next key under its session, without being flashed, and once it confirms, the
+// old key opens nothing — which is what ends the use of a key that was taken from
+// a board.
+fn editor_key_section(loc: string, id: string, index: u32) string {
+    let epoch: u32 = project_node_epoch(id, index)
+    let state: string = rekey_state(mesh_rekey_report(id), mesh_node_uid(id, index), epoch)
+    var said: string = "<p>" + escape_html(mesh_fill(mesh_t(loc, "editor.key.epoch"), "epoch", rho_int_to_str(epoch))) + "</p>"
+    if state == "confirmed" {
+        said = said + "<p class=\"notice\">" + escape_html(mesh_t(loc, "editor.key.rotated")) + "</p>"
+    } else if state == "waiting" {
+        said = said + "<p class=\"notice\">" + escape_html(mesh_t(loc, "editor.key.waiting")) + "</p>"
+    } else if state == "cannot" {
+        said = said + "<p class=\"notice bad\">" + escape_html(mesh_t(loc, "editor.key.cannot")) + "</p>"
+    }
+    let help: string = "<p class=\"agora-seen\">" + escape_html(mesh_t(loc, "editor.key.help")) + "</p>"
+    if state == "waiting" || state == "cannot" || project_node_revoked(id, index) {
+        return said + help
+    }
+    return said + help + editor_form(loc, editor_node_action(id, index) + "/rotate", "revoke", index,
+        editor_hidden("action", "rotate"), mesh_t(loc, "editor.key.rotate"))
+}
+
+// mesh_p_node_rotate moves a board to its next key epoch: the plan says so, the
+// manifest is written from it and sent to a gateway on another host, and the
+// gateway gives the board its new key the next time it hears it. A board whose
+// last rotation is not confirmed yet is not rotated again — it would be two
+// epochs behind its gateway and refused — nor one that cannot store a key.
+fn mesh_p_node_rotate(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let nid: string = param(req, "node")
+    let file: string = project_file(id)
+    let index: u32 = project_node_by_id(file, nid)
+    if index == 0 {
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "editor.msg.node_gone"), true))
+    }
+    let body: string = request_body(req)
+    if editor_stale(body, index) {
+        return editor_answer(req, id, "node:" + nid, "revoke",
+            editor_notice(i18n_t(req, "editor.msg.node_changed"), true))
+    }
+    if form_field(body, "action") != "rotate" || !editor_is_board(index) || mesh_node_uid(id, index) == "" {
+        return editor_answer(req, id, "node:" + nid, "revoke", "")
+    }
+    let name: string = editor_name(i18n_locale(req), index)
+    let epoch: u32 = project_node_epoch(id, index)
+    let refused: string = rotate_refusal(mesh_rekey_report(id), mesh_node_uid(id, index), epoch)
+    if refused == "unconfirmed" {
+        return editor_answer(req, id, "node:" + nid, "revoke",
+            editor_notice(mesh_fill(i18n_t(req, "editor.key.not_yet"), "name", name), true))
+    }
+    if refused == "cannot" {
+        return editor_answer(req, id, "node:" + nid, "revoke",
+            editor_notice(mesh_fill(i18n_t(req, "editor.key.cannot"), "name", name), true))
+    }
+    let next: u32 = epoch + 1
+    ignore_bool(plan_set(file, "node." + rho_int_to_str(index) + ".epoch", rho_int_to_str(next)))
+    info("mesh", "board " + nid + " in " + id + " rotated to key epoch " + rho_int_to_str(next))
+    var said: string = mesh_fill(mesh_fill(i18n_t(req, "editor.key.done"), "name", name), "epoch", rho_int_to_str(next))
+    ignore_bool(mesh_manifest_write(id, true))
+    if gateway_push_manifest(id) != 0 {
+        said = said + " " + i18n_t(req, "editor.revoke.not_sent")
+    }
+    return editor_answer(req, id, "node:" + nid, "revoke", editor_notice(said, false))
 }
 
 fn project_node_revoked(id: string, index: u32) bool {

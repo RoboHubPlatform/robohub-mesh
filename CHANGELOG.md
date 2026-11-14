@@ -503,3 +503,7 @@ Mesh writes the node manifest each gateway checks (`nodes.txt` beside the gatewa
 ## [0.19.1] - 2026-11-14
 
 Building and flashing a board no longer waits for the gateway to stop. The job runner's lock was passed to every program a job started, so a native gateway Mesh had started kept it, and new jobs queued with nothing running them until the gateway stopped. The lock now stays with the runner (and has a new name, which a gateway started by an older Mesh does not hold). A job that waits in the queue with nothing running it is said, on every open page and on the job strip, with what holds the runner.
+
+## [0.20.0] - 2026-11-14
+
+A board's Access tab shows its key epoch and the gateway's word on it, and can rotate its key; firmware is built with the current key, its epoch and the mesh's key scope, so a board moved to another mesh does not keep a key from the old one. A board whose platform has a production mode can be built and flashed for production: off by default, a signing key named per mesh (0600, never in the plan), and a flash that shows every step, the irreversible ones marked, and waits for the board's name to be typed.

@@ -292,6 +292,18 @@ fn jobs_queue_board(loc: string, index: u32) string {
     if jobs_open_for(id, target, "") != "" {
         return mesh_fill(mesh_t(loc, "jobs.board_busy"), "name", editor_name(loc, index))
     }
+    // A production build is refused before anything is prepared when its board
+    // has no production mode, or its plan needs the signing key and the mesh
+    // names none it can use (production.rho).
+    let production: bool = production_node_on(id, index)
+    var plan_text_of_board: string = ""
+    if production {
+        let refused: string = production_refusal(loc, id, index, production_node_board(index))
+        if refused != "" {
+            return refused
+        }
+        plan_text_of_board = production_board_plan_text(production_node_board(index))
+    }
     jobs_set_node(index)
     let prepared: u32 = prepare_node()
     let dir: string = node_dir()
@@ -303,8 +315,21 @@ fn jobs_queue_board(loc: string, index: u32) string {
     }
     let signature: string = deploy_node_signature(plan_text(wizard_file()), index)
     let name: string = editor_name(loc, index)
-    let build: string = jobs_add(id, "build", target, mesh_fill(mesh_t(loc, "jobs.label.build"), "name", name),
-        jobs_script_header("build " + name) + "cd " + shell_quote(dir) + "\nrho build -target " + shell_quote(board) + " .\n",
+    let program: string = path_base(dir)
+    let otp: bool = production && production_needs_otp(plan_text_of_board)
+    var key: string = ""
+    if production && production_needs_key(plan_text_of_board) {
+        key = production_key_path(id)
+    }
+    let plan_file: string = dir + "/production-plan.txt"
+    var build_label: string = mesh_fill(mesh_t(loc, "jobs.label.build"), "name", name)
+    var flash_label: string = mesh_fill(mesh_t(loc, "jobs.label.flash"), "name", name)
+    if production {
+        build_label = mesh_fill(mesh_t(loc, "production.label.build"), "name", name)
+        flash_label = mesh_fill(mesh_t(loc, "production.label.flash"), "name", name)
+    }
+    let build: string = jobs_add(id, "build", target, build_label,
+        jobs_script_header("build " + name) + production_build_script(board, dir, binary, program, production, key, otp, plan_file),
         signature, "", "")
     // A gateway on another host admits the board only once its node manifest
     // names it: the flash sends the current one there (one on this machine reads
@@ -317,10 +342,14 @@ fn jobs_queue_board(loc: string, index: u32) string {
             shell_quote(mesh_manifest_file(id)) + " ]; then (" + manifest_command +
             ") || echo 'the gateway could not be sent its node list; restart the gateway to apply it'; fi\n"
     }
-    ignore_string(jobs_add(id, "flash", target, mesh_fill(mesh_t(loc, "jobs.label.flash"), "name", name),
-        jobs_script_header("flash " + name) + "rho flash -target " + shell_quote(board) + " -project " +
-        shell_quote(dir) + " " + shell_quote(binary) + "\n" + send,
-        signature, build, programming_instruction(loc, board)))
+    let flash: string = jobs_add(id, "flash", target, flash_label,
+        jobs_script_header("flash " + name) + production_flash_script(board, dir, binary, program, production, otp) + send,
+        signature, build, programming_instruction(loc, board))
+    if production {
+        // What the inspector shows before the flash may run, and the name that
+        // has to be typed for it.
+        ignore_bool(rho_write_text(jobs_path(id, flash, "production"), "plan=" + plan_file + "\nboard=" + board + "\n"))
+    }
     return ""
 }
 
@@ -637,7 +666,10 @@ fn jobs_inspector(loc: string, project: string, seq: string, notice: string) str
     let label: string = jobs_meta(project, seq, "label")
     let action: string = jobs_url(project, seq)
     var controls: string = ""
-    if state == "waiting" {
+    let production: bool = state == "waiting" && production_job(project, seq)
+    if production {
+        controls = production_waiting(loc, project, seq, action)
+    } else if state == "waiting" {
         controls = "<div class=\"ins-impact\"><b>" + mesh_t(loc, "jobs.your_turn") + "</b><span>" + escape_html(jobs_read(project, seq, "wait")) +
             "</span></div><div class=\"ins-foot\" style=\"position:static;margin:0;border:0;background:none;padding:0\">" +
             jobs_control(loc, action, "cancel", mesh_t(loc, "jobs.cancel"), "ag-btn") +
@@ -658,7 +690,9 @@ fn jobs_inspector(loc: string, project: string, seq: string, notice: string) str
         log = "…" + rho_str_slice(log, length - 6000, 6000)
     }
     var refresh: string = ""
-    if state == "running" || state == "queued" || state == "waiting" {
+    // A production flash whose steps are shown waits for a name to be typed,
+    // which a refresh would wipe.
+    if (state == "running" || state == "queued" || state == "waiting") && !(production && production_job_ready(project, seq)) {
         refresh = " hx-get=\"" + action + "\" hx-trigger=\"every 2s\" hx-target=\"#agora-inspector\""
     }
     var shown: string = log
@@ -939,6 +973,9 @@ fn mesh_p_job_post(req: Request) Response {
         return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "jobs.job_gone"), true))
     }
     let selection: string = "job:" + seq
+    if verb == "go" && jobs_state(id, seq) == "waiting" && production_job(id, seq) {
+        return production_go(req, id, seq)
+    }
     if verb == "go" && jobs_state(id, seq) == "waiting" {
         ignore_bool(rho_write_text(jobs_path(id, seq, "go"), "\n"))
         return jobs_answer(req, id, selection, editor_notice(i18n_t(req, "jobs.flashing"), false))

@@ -306,7 +306,7 @@ fn editor_node_inspector(loc: string, id: string, index: u32, tab: string, notic
     } else if current == "data" && !is_module_node(index) {
         body = editor_data_tab(loc, id, index)
     } else if current == "revoke" && editor_is_board(index) {
-        body = editor_revoke_tab(loc, id, index)
+        body = editor_revoke_tab(loc, id, index) + production_section(loc, id, index)
     } else if current == "delete" {
         body = editor_delete_tab(loc, id, index)
     } else {
