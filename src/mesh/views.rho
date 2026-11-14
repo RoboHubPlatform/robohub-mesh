@@ -19,6 +19,63 @@ module mesh.views
 // gateway and is sent no token.
 const MESH_GATEWAY_SCOPE: string = "gateway:*"
 
+// MESH_LOCALES are the languages Mesh's pages are drawn in, as the catalogs in
+// locales/ and the i18n module know them.
+const MESH_LOCALES: string = "en ro"
+
+// mesh_t is a key in the language named by its code. A page drawn for a request
+// uses i18n_t; what is drawn without one — the agora, the fleet and the faults the
+// background worker sends to every open page — is drawn once per language, and
+// names its language rather than a request. A key the catalog does not have is
+// shown as it is, so a message stored before it became a key still reads.
+fn mesh_t(loc: string, key: string) string {
+    return template_fill("{{t " + json_string(key) + "}}", vars("__locale", loc))
+}
+
+// mesh_t_stored is a message a background pass stored for a page to show later:
+// a key, translated for the page reading it, or a sentence stored before it was
+// a key (or by a request, already in its language), shown as it is.
+fn mesh_t_stored(loc: string, value: string) string {
+    if value == "" || rho_str_index_of(value, " ") >= 0 {
+        return value
+    }
+    return mesh_t(loc, value)
+}
+
+// mesh_fill puts a value where a translated sentence says `{name}`, so a value
+// sits where each language wants it ("{name} added." / "{name} a fost adăugat.").
+// It is text: the caller escapes the result for the page.
+fn mesh_fill(text: string, name: string, value: string) string {
+    let mark: string = "{" + name + "}"
+    let at: i32 = rho_str_index_of(text, mark)
+    if at < 0 {
+        return text
+    }
+    let after: u32 = u32(at) + u32(rho_strlen(mark))
+    return rho_str_slice(text, 0, u32(at)) + value + rho_str_slice(text, after, u32(rho_strlen(text)) - after)
+}
+
+// mesh_locale_at is the n-th of MESH_LOCALES, or "" past the last.
+fn mesh_locale_at(n: u32) string {
+    var rest: string = MESH_LOCALES
+    var index: u32 = 0
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var code: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            code = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if index == n {
+            return code
+        }
+        index = index + 1
+    }
+    return ""
+}
+
 fn page(req: Request, title: string, body: string) Response {
     let panel: string = template_fill(template_get("mesh-panel"), vars("body", mesh_with_project(body)))
     return html(status_ok(), mesh_shell(req, title, panel))
@@ -263,43 +320,44 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
     let description: string = project_description(id)
     let form0: string = "<form class=\"grid\" method=\"post\" action=\"/mesh/project/" +
         escape_html(id) + "/settings\">" +
-        mesh_input("name", "Project name", name, "The name shown on the dashboard.") +
-        mesh_input("description", "Short description", description,
-            "One line about what this mesh is for.") +
-        mesh_input("gateway_url", "Gateway URL", state_value_in(file, "gateway_url"),
-            "The robohub-gateway this project owns. Aquarium reads it through the Mesh API.") +
-        mesh_input("telemetry_retention_days", "Telemetry retention (days)",
+        mesh_input("name", i18n_t(req, "project.name"), name, i18n_t(req, "project.name_help")) +
+        mesh_input("description", i18n_t(req, "project.description"), description,
+            i18n_t(req, "project.description_help")) +
+        mesh_input("gateway_url", i18n_t(req, "project.gateway_url"), state_value_in(file, "gateway_url"),
+            i18n_t(req, "project.gateway_url_help")) +
+        mesh_input("telemetry_retention_days", i18n_t(req, "project.retention"),
             state_value_in(file, "telemetry_retention_days"),
-            "How long raw readings are kept. Minute and hourly rollups are kept longer.") +
-        "<button type=\"submit\">Save project</button></form>"
+            i18n_t(req, "project.retention_help")) +
+        "<button type=\"submit\">" + i18n_t(req, "project.save") + "</button></form>"
     let token_section: string = "<section class=\"token-section\" style=\"margin-top:1.4rem\">" +
-        "<h2>Application tokens</h2>" +
-        "<p>Each application gets its own token for this project. A token is scoped to this project, expires after the chosen number of days, and can be revoked without affecting another application.</p>" +
+        "<h2>" + i18n_t(req, "tokens.title") + "</h2>" +
+        "<p>" + i18n_t(req, "tokens.intro") + "</p>" +
         "<form class=\"grid\" method=\"post\" action=\"/mesh/project/" +
         escape_html(id) + "/token\">" +
-        "<label>Application name<input name=\"name\" placeholder=\"aquarium\"></label>" +
-        "<label>Valid for (days)<input name=\"days\" value=\"90\" inputmode=\"numeric\"></label>" +
-        "<button type=\"submit\">Generate token</button></form>" +
-        "<div class=\"table-wrap\">" + mesh_tokens_html(id) + "</div></section>"
+        "<label>" + i18n_t(req, "tokens.app_name") + "<input name=\"name\" placeholder=\"aquarium\"></label>" +
+        "<label>" + i18n_t(req, "tokens.days") + "<input name=\"days\" value=\"90\" inputmode=\"numeric\"></label>" +
+        "<button type=\"submit\">" + i18n_t(req, "tokens.generate") + "</button></form>" +
+        "<div class=\"table-wrap\">" + mesh_tokens_html(i18n_locale(req), id) + "</div></section>"
     let form: string = form0 + token_section
     // The mesh is opened by its address; the settings page links back to it.
-    let active_form: string = "<section class=\"settings-copy\"><h2>Copy as a template</h2>" +
-        "<p>A new mesh with this one's plan — its gateway, boards, modules and links — and its own area and ports; " +
-        "nothing of what was deployed.</p><form class=\"inline-row\" method=\"post\" action=\"/mesh/project/copy\">" +
+    let active_form: string = "<section class=\"settings-copy\"><h2>" + i18n_t(req, "project.copy_title") + "</h2>" +
+        "<p>" + i18n_t(req, "project.copy_intro") + "</p><form class=\"inline-row\" method=\"post\" action=\"/mesh/project/copy\">" +
         "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
-        "<input name=\"name\" aria-label=\"Name of the copy\" placeholder=\"" + escape_html(project_name(id)) + " copy\">" +
-        "<button type=\"submit\">Copy</button></form></section>"
+        "<input name=\"name\" aria-label=\"" + escape_html(i18n_t(req, "project.copy_name")) + "\" placeholder=\"" +
+        escape_html(mesh_fill(i18n_t(req, "project.copy_placeholder"), "name", project_name(id))) + "\">" +
+        "<button type=\"submit\">" + i18n_t(req, "project.copy") + "</button></form></section>"
     let content: string = template_fill(template_get("mesh-project-settings"),
+        i18n_vars(req) +
         vars("project", escape_html(id)) +
         vars("location", project_location(id)) +
         vars("notice", escape_html(mesh_take_in(file, "message.project"))) +
         vars("form", form) +
         vars("active", active_form) +
         vars("actions", "<form method=\"post\" action=\"/mesh/project/delete\" " +
-            "onsubmit=\"return confirm('Delete this project and its settings?');\">" +
+            "onsubmit=\"return confirm(" + escape_html(json_string(i18n_t(req, "project.delete_confirm"))) + ");\">" +
             "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
-            "<button type=\"submit\" class=\"danger\">Delete project</button></form>"))
-    return html(status_ok(), mesh_shell(req, "Project settings",
+            "<button type=\"submit\" class=\"danger\">" + i18n_t(req, "project.delete") + "</button></form>"))
+    return html(status_ok(), mesh_shell(req, i18n_t(req, "nav.project_settings"),
         "<section class=\"mesh-form-panel page-panel\">" + content + "</section>"))
 }
 
@@ -322,7 +380,7 @@ fn mesh_project_settings_post(req: Request) Response {
     save_setting_at(file, "gateway_url", str_trim(form_field(body, "gateway_url")))
     save_setting_at(file, "telemetry_retention_days",
         str_trim(form_field(body, "telemetry_retention_days")))
-    save_setting_at(file, "message.project", "Project settings saved.")
+    save_setting_at(file, "message.project", i18n_t(req, "project.saved"))
     info("mesh", "project " + id + " settings saved")
     return mesh_redirect("/mesh/project/" + param(req, "id") + "/settings")
 }
@@ -399,10 +457,9 @@ fn mesh_select(name: string, label: string, options: string, help: string) strin
         "\">" + options + "</select>" + help_html + "</label>"
 }
 
-fn mesh_device_actions(index: u32) string {
+fn mesh_device_actions(loc: string, index: u32) string {
     if !rho_str_eq(node_device_transport(index), "http") {
-        return "<p><small>This device is carried by the node it is attached to; that " +
-            "node performs the read and publishes it.</small></p>"
+        return "<p><small>" + mesh_t(loc, "device.carried") + "</small></p>"
     }
     var switch_forms: string = ""
     let kind: string = device_kind(node_device_name(index))
@@ -410,20 +467,20 @@ fn mesh_device_actions(index: u32) string {
         switch_forms = "<form method=\"post\" action=\"/mesh/device/set\">" +
             "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
             "<input type=\"hidden\" name=\"state\" value=\"on\">" +
-            "<button type=\"submit\">Switch on</button></form>" +
+            "<button type=\"submit\">" + mesh_t(loc, "device.switch_on") + "</button></form>" +
             "<form method=\"post\" action=\"/mesh/device/set\">" +
             "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
             "<input type=\"hidden\" name=\"state\" value=\"off\">" +
-            "<button type=\"submit\" class=\"quiet\">Switch off</button></form>"
+            "<button type=\"submit\" class=\"quiet\">" + mesh_t(loc, "device.switch_off") + "</button></form>"
     }
     return "<div class=\"device-actions\">" +
         "<form method=\"post\" action=\"/mesh/device/poll\">" +
         "<input type=\"hidden\" name=\"id\" value=\"" + rho_int_to_str(index) + "\">" +
-        "<button type=\"submit\" class=\"quiet\">Poll device</button></form>" +
+        "<button type=\"submit\" class=\"quiet\">" + mesh_t(loc, "device.poll") + "</button></form>" +
         switch_forms + "</div>" +
-        "<p><small>Last: state " + escape_html(mesh_device_state(index)) +
-        ", power " + escape_html(mesh_device_last(index)) + " W at " +
-        escape_html(mesh_device_checked(index)) + "</small></p>"
+        "<p><small>" + escape_html(mesh_fill(mesh_fill(mesh_fill(mesh_t(loc, "device.last"),
+            "state", mesh_device_state(index)), "power", mesh_device_last(index)), "time", mesh_device_checked(index))) +
+        "</small></p>"
 }
 
 fn mesh_menu_link(label: string, href: string, icon: string) string {
@@ -481,8 +538,8 @@ fn mesh_project_mismatch(req: Request) bool {
     return sent != "" && sent != current_project()
 }
 
-fn mesh_project_refused() Response {
-    save_setting("mesh_message", "That form was for another project, opened in another tab since. Nothing was saved; this is the active project now.")
+fn mesh_project_refused(loc: string) Response {
+    save_setting("mesh_message", mesh_t(loc, "project.refused"))
     return mesh_redirect("/mesh")
 }
 
@@ -512,7 +569,7 @@ fn mesh_with_project(body: string) string {
 fn mesh_context(req: Request) string {
     let active: string = current_project()
     if active == "" {
-        return "<span class=\"foot-label\">No active project</span>"
+        return "<span class=\"foot-label\">" + i18n_t(req, "project.none_active") + "</span>"
     }
     var out: string = "<span class=\"foot-label\">" + i18n_t(req, "nav.mesh") + "</span> <strong>" +
         escape_html(project_name(active)) + "</strong>"
@@ -552,7 +609,7 @@ fn mesh_topbar(req: Request) string {
     let keeper_port: string = getenv("RHO_KEEPER_PORT")
     var who: string = header_str(req, "X-Rho-Subject")
     if who == "" {
-        who = "Signed in"
+        who = i18n_t(req, "common.signed_in")
     }
     var signout: string = ""
     if keeper_port != "" {
@@ -560,9 +617,32 @@ fn mesh_topbar(req: Request) string {
             "\" data-app-route=\"/logout\">" + i18n_t(req, "nav.sign_out") + "</a>"
     }
     let links: string = ui_language(i18n_locale(req), request_path(req))
-    return ui_topbar_remote("mesh", "Mesh", keeper_port,
-        "<nav class=\"topnav\" aria-label=\"Mesh navigation\">" + mesh_menu(req) + "</nav>",
+    let bar: string = ui_topbar_remote("mesh", "Mesh", keeper_port,
+        "<nav class=\"topnav\" aria-label=\"" + escape_html(i18n_t(req, "common.navigation")) + "\">" + mesh_menu(req) + "</nav>",
         ui_person(req, who, "", links, signout, false))
+    // The shared top bar writes its two menu headings in English and has no keys
+    // for them yet; until it does, Mesh puts its own in their place.
+    return mesh_heading(mesh_heading(bar, "Applications", i18n_t(req, "common.applications")),
+        "Language", i18n_t(req, "common.language"))
+}
+
+// mesh_heading is the top bar with one of its menu headings (<h6>) in the
+// page's language.
+fn mesh_heading(bar: string, english: string, shown: string) string {
+    let mark: string = "<h6>" + english + "</h6>"
+    var out: string = ""
+    var rest: string = bar
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, mark)
+        if at < 0 {
+            out = out + rest
+            rest = ""
+        } else {
+            out = out + rho_str_slice(rest, 0, u32(at)) + "<h6>" + escape_html(shown) + "</h6>"
+            rest = rho_str_slice(rest, u32(at) + u32(rho_strlen(mark)), u32(rho_strlen(rest)) - u32(at) - u32(rho_strlen(mark)))
+        }
+    }
+    return out
 }
 
 fn mesh_shell(req: Request, title: string, content: string) string {
@@ -577,9 +657,9 @@ fn mesh_docs_page(req: Request) Response {
     // The guide ships with the application, embedded when it is built.
     var content: string = docs_render_source(rho_asset_dir("mesh") + "/docs/index.md")
     if content == "" {
-        content = "<h1>Documentation</h1><p>No documentation was found for this application.</p>"
+        content = "<h1>" + i18n_t(req, "nav.docs") + "</h1><p>" + i18n_t(req, "docs.missing") + "</p>"
     }
-    return html(status_ok(), mesh_shell(req, "Documentation",
+    return html(status_ok(), mesh_shell(req, i18n_t(req, "nav.docs"),
         "<section class=\"mesh-form-panel page-panel doc-panel\">" + content + "</section>"))
 }
 
@@ -588,7 +668,7 @@ fn mesh_secret(name: string, label: string, value: string) string {
         escape_html(name) + "\" value=\"" + escape_html(value) + "\"></label>"
 }
 
-fn serial_settings(index: u32) string {
+fn serial_settings(loc: string, index: u32) string {
     let prefix: string = "node." + rho_int_to_str(index) + "."
     let link: string = node_value(index, "link", "uart")
     var parent_label: string = "Parent serial port"
@@ -616,7 +696,7 @@ fn serial_settings(index: u32) string {
         default_value("gateway", "native") == "native"
     var parent_control: string = ""
     if parent_native {
-        let ports: string = serial_port_options(parent)
+        let ports: string = serial_port_options(loc, parent)
         if ports != "" {
             parent_control = mesh_select(prefix + "parent_endpoint", parent_label, ports,
                 "Serial devices on this host; choose the one the node is on.")
@@ -652,14 +732,14 @@ fn wifi_settings(index: u32) string {
             default_value(prefix + "port", default_value("uplink_port", fleet_uplink_port(current_project()))), "")
 }
 
-fn network_settings(index: u32) string {
+fn network_settings(loc: string, index: u32) string {
     let prefix: string = "node." + rho_int_to_str(index) + "."
     let link: string = node_value(index, "link", "uart")
     if link == "wifi" {
         return wifi_settings(index)
     }
     if link == "uart" || link == "usb" || link == "console" || link == "rs485" {
-        return serial_settings(index)
+        return serial_settings(loc, index)
     }
     if link == "spi" || link == "i2c" {
         return mesh_input(prefix + "parent_endpoint", "Parent bus",

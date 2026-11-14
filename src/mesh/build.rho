@@ -901,10 +901,10 @@ fn build_complete() bool {
     return (status == "running" || status == "programmed") && all_nodes_programmed()
 }
 
-fn update_build_step() void {
+fn update_build_step(loc: string) void {
     if build_complete() {
         save_setting("step_build", "done")
-        save_setting("build_message", "Gateway running and every node programmed.")
+        save_setting("build_message", mesh_t(loc, "build.complete"))
     } else {
         save_setting("step_build", "pending")
     }
@@ -916,7 +916,7 @@ fn mesh_gateway_restart(req: Request) Response {
         return mesh_denied(req)
     }
     if mesh_project_mismatch(req) {
-        return mesh_project_refused()
+        return mesh_project_refused(i18n_locale(req))
     }
     if current_project() == "" {
         return mesh_redirect("/mesh")
@@ -941,14 +941,13 @@ fn mesh_gateway_restart(req: Request) Response {
         } else {
             save_setting("status.gateway", "programmed")
         }
-        update_build_step()
+        update_build_step(i18n_locale(req))
         deployed_record_gateway(current_project())
-        save_setting("message.build", "Gateway restarted.")
+        save_setting("message.build", i18n_t(req, "build.restarted"))
         info("mesh", "gateway restarted")
     } else {
         save_setting("status.gateway", "failed")
-        save_setting("message.build", "Gateway restart failed (build or start exited " +
-            rho_int_to_str(code) + "). The output is below.")
+        save_setting("message.build", mesh_fill(i18n_t(req, "build.restart_failed"), "code", rho_int_to_str(code)))
         error("mesh", "gateway restart failed with status " + rho_int_to_str(code))
     }
     return mesh_gateway_return(req)
@@ -970,7 +969,7 @@ fn mesh_gateway_stop(req: Request) Response {
         return mesh_denied(req)
     }
     if mesh_project_mismatch(req) {
-        return mesh_project_refused()
+        return mesh_project_refused(i18n_locale(req))
     }
     if current_project() == "" {
         return mesh_redirect("/mesh")
@@ -996,19 +995,19 @@ fn mesh_gateway_stop(req: Request) Response {
     save_setting("status.gateway", "pending")
     save_setting("step_build", "pending")
     save_setting("step_verify", "pending")
-    save_setting("message.build", "Gateway stopped.")
+    save_setting("message.build", i18n_t(req, "build.stopped"))
     info("mesh", "gateway stopped")
     return mesh_gateway_return(req)
 }
 
-fn programming_instruction(board: string) string {
+fn programming_instruction(loc: string, board: string) string {
     if board == "pico2w" {
-        return "Put the Pico 2W in BOOTSEL: hold BOOT, tap RST/EN, release RST/EN, then release BOOT. The board should appear as an RP2350 drive."
+        return mesh_t(loc, "build.bootsel_pico2w")
     }
     if board == "lolin32-lite" {
-        return "Put the ESP32 in download mode: hold BOOT/GPIO0, tap EN/RST, release EN/RST, then release BOOT."
+        return mesh_t(loc, "build.bootsel_esp32")
     }
-    return "Put the board in its programming mode before continuing."
+    return mesh_t(loc, "build.bootsel_other")
 }
 
 fn pico_serial_path() string {
@@ -1066,7 +1065,7 @@ fn serial_port_list() string {
     return rho_read_text(report)
 }
 
-fn serial_port_options(selected: string) string {
+fn serial_port_options(loc: string, selected: string) string {
     var out: string = ""
     var rest: string = serial_port_list()
     while rest != "" {
@@ -1084,7 +1083,7 @@ fn serial_port_options(selected: string) string {
         }
     }
     if selected != "" && rho_str_index_of(out, "value=\"" + selected + "\"") < 0 {
-        out = out + option(selected, selected + " (not present)", "", selected)
+        out = out + option(selected, selected + " " + mesh_t(loc, "build.port_absent"), "", selected)
     }
     return out
 }

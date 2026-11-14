@@ -737,12 +737,12 @@ fn mesh_api_telemetry_stream(req: Request) Response {
     ignore_bool(rho_write_secret(snapshot, telemetry_latest_events(project)))
     return sse_events(telemetry_event_stream(project), snapshot, 500)
 }
-fn mesh_fault_events_file() string {
-    return wizard_dir() + "/fault-events.jsonl"
+fn mesh_fault_events_file(loc: string) string {
+    return wizard_dir() + "/fault-events-" + loc + ".jsonl"
 }
 
-fn mesh_fault_snapshot_file() string {
-    return wizard_dir() + "/fault-snapshot.jsonl"
+fn mesh_fault_snapshot_file(loc: string) string {
+    return wizard_dir() + "/fault-snapshot-" + loc + ".jsonl"
 }
 
 // The fault watermark is a sidecar for the same reason: the telemetry worker
@@ -817,13 +817,22 @@ fn mesh_fault_emit(project: string) void {
             }
         }
     }
-    var rows: string = mesh_fault_rows(project)
-    if rows == "" {
-        rows = "<tr><td colspan=\"4\">" + "No faults recorded." + "</td></tr>"
+    // Each language a faults page is open in has its own stream.
+    var n: u32 = 0
+    var loc: string = mesh_locale_at(0)
+    while loc != "" {
+        let file: string = mesh_fault_events_file(loc)
+        if rho_path_exists(file) {
+            var rows: string = mesh_fault_rows(loc, project)
+            if rows == "" {
+                rows = "<tr><td colspan=\"4\">" + mesh_t(loc, "faults.empty") + "</td></tr>"
+            }
+            let line: string = "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"
+            ignore_bool(rho_write_text(file, rho_read_text(file) + line))
+        }
+        n = n + 1
+        loc = mesh_locale_at(n)
     }
-    let line: string = "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"
-    let file: string = mesh_fault_events_file()
-    ignore_bool(rho_write_text(file, rho_read_text(file) + line))
     mesh_fault_save(project, highest)
 }
 
@@ -850,13 +859,15 @@ fn mesh_faults_events(req: Request) Response {
     if project == "" {
         return text(status_bad_request(), "no project")
     }
-    var rows: string = mesh_fault_rows(project)
+    var rows: string = mesh_fault_rows(i18n_locale(req), project)
     if rows == "" {
         rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
     }
-    ignore_bool(rho_write_text(mesh_fault_snapshot_file(),
+    let loc: string = i18n_locale(req)
+    ignore_bool(rho_write_text(mesh_fault_snapshot_file(loc),
         "{\"event\":\"faults\",\"data\":" + json_string(rows) + "}\n"))
-    return sse_events(mesh_fault_events_file(), mesh_fault_snapshot_file(), 1000)
+    rho_append_text(mesh_fault_events_file(loc), "")
+    return sse_events(mesh_fault_events_file(loc), mesh_fault_snapshot_file(loc), 1000)
 }
 
 fn json_number_or_zero(value: string) string {
@@ -884,7 +895,7 @@ fn mesh_api_gateway_status(req: Request) Response {
     return Response{ 200, mesh_gateway_status_json(project), "application/json", "" }
 }
 
-fn mesh_fault_rows(project: string) string {
+fn mesh_fault_rows(loc: string, project: string) string {
     var out: string = ""
     var rest: string = telemetry_fault_rows(project, 100)
     while rest != "" {
@@ -920,8 +931,8 @@ fn mesh_fault_rows(project: string) string {
             severity_css = "bad"
         }
         out = out + template_fill(template_get("fault-row"),
-            vars("id", id) + vars("severity", severity) +
-            vars("severity_css", severity_css) + vars("created", created) + vars("age", agora_ms_age(created)) +
+            vars("__locale", loc) + vars("id", id) + vars("severity", severity) +
+            vars("severity_css", severity_css) + vars("created", created) + vars("age", agora_ms_age(loc, created)) +
             vars("message", agora_fault_text(message)) + vars("csrf", forms_csrf_field()))
     }
     return out
@@ -931,9 +942,9 @@ fn mesh_faults_page(req: Request) Response {
     let project: string = current_project()
     if project == "" {
         return page(req, i18n_t(req, "faults.title"),
-            "<p>Choose a project first.</p>")
+            "<p>" + i18n_t(req, "faults.no_project") + "</p>")
     }
-    let rows: string = mesh_fault_rows(project)
+    let rows: string = mesh_fault_rows(i18n_locale(req), project)
     if rows == "" {
         rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
     }
@@ -958,7 +969,7 @@ fn mesh_fault_clear(req: Request) Response {
         ignore_string(telemetry_fault_clear(project, id))
     }
     if has_header(req, "HX-Request") && rho_str_eq(header_str(req, "HX-Request"), "true") {
-        let rows: string = mesh_fault_rows(project)
+        let rows: string = mesh_fault_rows(i18n_locale(req), project)
         if rows == "" {
             rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
         }

@@ -209,12 +209,12 @@ fn jobs_board_dir(index: u32) string {
 // board's sources are prepared now, from the plan as it is; the build and the
 // flash run in the background, the flash once the person says the board is in
 // its programming mode.
-fn jobs_queue_board(index: u32) string {
+fn jobs_queue_board(loc: string, index: u32) string {
     let id: string = current_project()
     let nid: string = project_node_id(wizard_file(), index)
     let target: string = "node." + nid
     if jobs_open_for(id, target, "") != "" {
-        return editor_name(index) + " already has a job to finish."
+        return mesh_fill(mesh_t(loc, "jobs.board_busy"), "name", editor_name(loc, index))
     }
     jobs_set_node(index)
     let prepared: u32 = prepare_node()
@@ -223,26 +223,26 @@ fn jobs_queue_board(index: u32) string {
     let binary: string = node_binary()
     jobs_set_node(0)
     if prepared != 0 {
-        return "the sources of " + editor_name(index) + " could not be prepared"
+        return mesh_fill(mesh_t(loc, "jobs.prepare_failed"), "name", editor_name(loc, index))
     }
     let signature: string = deploy_node_signature(plan_text(wizard_file()), index)
-    let name: string = editor_name(index)
-    let build: string = jobs_add(id, "build", target, "Build " + name,
+    let name: string = editor_name(loc, index)
+    let build: string = jobs_add(id, "build", target, mesh_fill(mesh_t(loc, "jobs.label.build"), "name", name),
         jobs_script_header("build " + name) + "cd " + shell_quote(dir) + "\nrho build -target " + shell_quote(board) + " .\n",
         signature, "", "")
-    ignore_string(jobs_add(id, "flash", target, "Flash " + name,
+    ignore_string(jobs_add(id, "flash", target, mesh_fill(mesh_t(loc, "jobs.label.flash"), "name", name),
         jobs_script_header("flash " + name) + "rho flash -target " + shell_quote(board) + " -project " +
         shell_quote(dir) + " " + shell_quote(binary) + "\n",
-        signature, build, programming_instruction(board)))
+        signature, build, programming_instruction(loc, board)))
     return ""
 }
 
 // jobs_queue_gateway writes the gateway's build and start for the open
 // project, from the same handlers the old pages run.
-fn jobs_queue_gateway() string {
+fn jobs_queue_gateway(loc: string) string {
     let id: string = current_project()
     if jobs_open_for(id, "gateway", "") != "" {
-        return "the gateway already has a job to finish."
+        return mesh_t(loc, "jobs.gateway_busy")
     }
     ignore_u32(rho_exec("mkdir", "-p " + jobs_dir(id), jobs_report("mkdir")))
     let script: string = jobs_dir(id) + "/recording.sh"
@@ -254,11 +254,11 @@ fn jobs_queue_gateway() string {
     }
     jobs_set_recording("")
     if code != 0 {
-        return "the gateway's start could not be written (" + rho_int_to_str(code) + ")"
+        return mesh_fill(mesh_t(loc, "jobs.gateway_unwritten"), "code", rho_int_to_str(code))
     }
-    var label: string = "Restart the gateway"
+    var label: string = mesh_t(loc, "jobs.label.restart_gateway")
     if default_value("gateway", "native") != "native" {
-        label = "Program the gateway"
+        label = mesh_t(loc, "jobs.label.program_gateway")
     }
     ignore_string(jobs_add(id, "gateway", "gateway", label, rho_read_text(script),
         deploy_gateway_signature(plan_text(wizard_file())), "", ""))
@@ -340,7 +340,7 @@ fn jobs_finish(project: string) bool {
                 deployed_set(project, "gateway", signature)
             } else if jobs_state(project, seq) == "failed" {
                 save_setting_at(file, "status.gateway", "failed")
-                save_setting_at(file, "message.build", "The gateway did not start.")
+                save_setting_at(file, "message.build", "jobs.gateway_not_started")
             }
             agora_check_health(project)
         }
@@ -381,7 +381,7 @@ fn jobs_tick() void {
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if id != "" && rho_path_exists(jobs_dir(id)) && jobs_finish(id) && rho_str_eq(id, current_project()) {
-            agora_publish(agora_events_file(id), project_location(id) + "/agora-last.jsonl", agora_snapshot(id))
+            agora_publish_mesh(id)
         }
     }
 }
@@ -392,7 +392,7 @@ fn jobs_tick() void {
 
 // jobs_card_line is a board's or the gateway's job, on its card: what it is
 // doing, or what it waits for.
-fn jobs_card_line(project: string, target: string) string {
+fn jobs_card_line(loc: string, project: string, target: string) string {
     var rest: string = jobs_list(project)
     var last: string = ""
     while rest != "" {
@@ -406,7 +406,7 @@ fn jobs_card_line(project: string, target: string) string {
         }
         if seq != "" && rho_str_eq(jobs_meta(project, seq, "target"), target) {
             if jobs_open(project, seq) {
-                return jobs_badge(project, seq)
+                return jobs_badge(loc, project, seq)
             }
             last = seq
         }
@@ -414,25 +414,25 @@ fn jobs_card_line(project: string, target: string) string {
     // The last job for it, when it failed: a later one that did not would be
     // the last.
     if last != "" && jobs_state(project, last) == "failed" {
-        return jobs_badge(project, last)
+        return jobs_badge(loc, project, last)
     }
     return ""
 }
 
-fn jobs_badge(project: string, seq: string) string {
+fn jobs_badge(loc: string, project: string, seq: string) string {
     let state: string = jobs_state(project, seq)
     let label: string = jobs_meta(project, seq, "label")
     var css: string = "quiet"
-    var text: string = label + " · queued"
+    var text: string = label + " · " + mesh_t(loc, "jobs.state.queued")
     if state == "running" {
         css = "planned"
-        text = label + " · running"
+        text = label + " · " + mesh_t(loc, "jobs.state.running")
     } else if state == "waiting" {
         css = "planned"
-        text = label + " · waiting for you"
+        text = label + " · " + mesh_t(loc, "jobs.waiting_for_you")
     } else if state == "failed" {
         css = "down"
-        text = label + " · failed"
+        text = label + " · " + mesh_t(loc, "jobs.state.failed")
     }
     return "<div class=\"agora-live\"><span class=\"agora-state " + css + "\">" + escape_html(text) + "</span></div>"
 }
@@ -472,7 +472,7 @@ fn jobs_percent(project: string, seq: string) string {
 
 // jobs_strip is the activity strip's jobs: the one running with how far it
 // has come, those waiting for the person, the last one finished, and the log.
-fn jobs_strip(project: string) string {
+fn jobs_strip(loc: string, project: string) string {
     var out: string = ""
     var rest: string = jobs_list(project)
     var queued: u32 = 0
@@ -496,7 +496,7 @@ fn jobs_strip(project: string) string {
         if state == "running" {
             let percent: string = jobs_percent(project, seq)
             var bar: string = "<span class=\"ag-bar-track\"><i class=\"run\"></i></span>"
-            var shown: string = "running"
+            var shown: string = mesh_t(loc, "jobs.state.running")
             if percent != "" {
                 bar = "<span class=\"ag-bar-track\"><i style=\"width:" + escape_html(percent) + "%\"></i></span>"
                 shown = escape_html(percent) + " %"
@@ -504,7 +504,7 @@ fn jobs_strip(project: string) string {
             out = out + "<a class=\"agora-job running\"" + jobs_open_attrs(project, seq) + "><b>" + label + "</b>" + bar +
                 shown + "</a>"
         } else if state == "waiting" {
-            out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label + " · waiting for you</a>"
+            out = out + "<a class=\"agora-job waiting\"" + jobs_open_attrs(project, seq) + ">" + label + " · " + mesh_t(loc, "jobs.waiting_for_you") + "</a>"
         } else if state == "queued" {
             queued = queued + 1
         } else {
@@ -512,7 +512,7 @@ fn jobs_strip(project: string) string {
         }
     }
     if queued > 0 {
-        out = out + "<span>" + rho_int_to_str(queued) + " queued</span>"
+        out = out + "<span>" + escape_html(mesh_fill(mesh_t(loc, "jobs.queued_count"), "count", rho_int_to_str(queued))) + "</span>"
     }
     if last != "" {
         let state: string = jobs_state(project, last)
@@ -523,36 +523,36 @@ fn jobs_strip(project: string) string {
         let finished: u32 = u32(rho_int_from_str(jobs_read(project, last, "finished")))
         var when: string = ""
         if finished > 0 {
-            when = " · " + agora_age(finished)
+            when = " · " + agora_age(loc, finished)
         }
         out = out + "<a class=\"agora-job" + css + "\"" + jobs_open_attrs(project, last) + ">" +
-            escape_html(jobs_meta(project, last, "label")) + " · " + state + when + "</a>"
+            escape_html(jobs_meta(project, last, "label")) + " · " + jobs_state_text(loc, state) + when + "</a>"
     }
     if newest != "" {
-        out = out + "<a class=\"ag-log\"" + jobs_open_attrs(project, newest) + ">Log ▴</a>"
+        out = out + "<a class=\"ag-log\"" + jobs_open_attrs(project, newest) + ">" + mesh_t(loc, "jobs.log") + " ▴</a>"
     }
     return out
 }
 
 // jobs_inspector is one job in the inspector: what it is, where it is, its
 // log, and what the person can do about it.
-fn jobs_inspector(project: string, seq: string, notice: string) string {
+fn jobs_inspector(loc: string, project: string, seq: string, notice: string) string {
     if !jobs_exists(project, seq, "job") {
-        return look_head("Job", "Not there any more", "") + look_body(notice)
+        return look_head(loc, mesh_t(loc, "jobs.job"), mesh_t(loc, "jobs.gone_title"), "") + look_body(notice)
     }
     let state: string = jobs_state(project, seq)
     let label: string = jobs_meta(project, seq, "label")
     let action: string = jobs_url(project, seq)
     var controls: string = ""
     if state == "waiting" {
-        controls = "<div class=\"ins-impact\"><b>Your turn</b><span>" + escape_html(jobs_read(project, seq, "wait")) +
+        controls = "<div class=\"ins-impact\"><b>" + mesh_t(loc, "jobs.your_turn") + "</b><span>" + escape_html(jobs_read(project, seq, "wait")) +
             "</span></div><div class=\"ins-foot\" style=\"position:static;margin:0;border:0;background:none;padding:0\">" +
-            jobs_control(action, "cancel", "Cancel", "ag-btn") +
-            jobs_control(action, "go", "The board is ready: flash it", "ag-btn primary") + "</div>"
+            jobs_control(loc, action, "cancel", mesh_t(loc, "jobs.cancel"), "ag-btn") +
+            jobs_control(loc, action, "go", mesh_t(loc, "jobs.board_ready"), "ag-btn primary") + "</div>"
     } else if state == "queued" {
-        controls = jobs_control(action, "cancel", "Cancel", "ag-btn")
+        controls = jobs_control(loc, action, "cancel", mesh_t(loc, "jobs.cancel"), "ag-btn")
     } else if state == "failed" || state == "cancelled" || state == "skipped" {
-        controls = jobs_control(action, "retry", "Try again", "ag-btn primary")
+        controls = jobs_control(loc, action, "retry", mesh_t(loc, "jobs.retry"), "ag-btn primary")
         ignore_bool(rho_write_text(jobs_path(project, seq, "seen"), "\n"))
     }
     var log: string = rho_read_text(jobs_path(project, seq, "log"))
@@ -566,7 +566,7 @@ fn jobs_inspector(project: string, seq: string, notice: string) string {
     }
     var shown: string = log
     if shown == "" {
-        shown = "Nothing yet."
+        shown = mesh_t(loc, "jobs.log_empty")
     }
     var css: string = ""
     if state == "running" {
@@ -578,12 +578,20 @@ fn jobs_inspector(project: string, seq: string, notice: string) string {
     } else if state == "done" {
         css = " online"
     }
-    return "<div" + refresh + " style=\"display:contents\">" + look_head("Job", label,
-        "<span class=\"ag-pill" + css + "\">" + state + "</span>") + look_body(notice + controls +
+    return "<div" + refresh + " style=\"display:contents\">" + look_head(loc, mesh_t(loc, "jobs.job"), label,
+        "<span class=\"ag-pill" + css + "\">" + jobs_state_text(loc, state) + "</span>") + look_body(notice + controls +
         "<pre class=\"job-log\">" + escape_html(shown) + "</pre>") + "</div>"
 }
 
-fn jobs_control(action: string, verb: string, label: string, css: string) string {
+// jobs_state_text is a job's state as a page in `loc` shows it.
+fn jobs_state_text(loc: string, state: string) string {
+    if state == "" {
+        return ""
+    }
+    return mesh_t(loc, "jobs.state." + state)
+}
+
+fn jobs_control(loc: string, action: string, verb: string, label: string, css: string) string {
     var klass: string = ""
     if css != "" {
         klass = " class=\"" + css + "\""
@@ -622,7 +630,7 @@ fn jobs_diff_text(value: string) string {
 
 // jobs_diff_rows are one change's diff, shown under it when Review diff is
 // open: each part that differs, as it runs and as it is planned.
-fn jobs_diff_rows(deployed: string, planned: string) string {
+fn jobs_diff_rows(loc: string, deployed: string, planned: string) string {
     var out: string = ""
     var rest: string = deploy_diff(deployed, planned)
     while rest != "" {
@@ -639,7 +647,7 @@ fn jobs_diff_rows(deployed: string, planned: string) string {
         }
         let was: string = jobs_diff_text(field(line, 1))
         let now: string = jobs_diff_text(field(line, 2))
-        out = out + "<div class=\"ins-diff-row\"><span>" + escape_html(field(line, 0)) + "</span><del>" + escape_html(was) +
+        out = out + "<div class=\"ins-diff-row\"><span>" + escape_html(deployed_segment_text(loc, field(line, 0))) + "</span><del>" + escape_html(was) +
             "</del><ins>" + escape_html(now) + "</ins></div>"
     }
     if out == "" {
@@ -650,7 +658,7 @@ fn jobs_diff_rows(deployed: string, planned: string) string {
 
 // jobs_apply_plan is what "Apply changes" will do, before it is asked to, as
 // rows, with how many jobs it makes.
-fn jobs_apply_plan(project: string) string {
+fn jobs_apply_plan(loc: string, project: string) string {
     var items: string = ""
     var rest: string = deployed_out_of_date(project)
     while rest != "" {
@@ -666,54 +674,53 @@ fn jobs_apply_plan(project: string) string {
         if index == 0 {
             continue
         }
-        items = items + "<div class=\"ins-row\"><b>Build and flash " + escape_html(editor_name(index)) + "</b><span>" +
-            escape_html(deployed_node_reason(project, index)) + "</span></div>" +
-            jobs_diff_rows(deployed_get(project, deployed_node_key(project, index)),
+        items = items + "<div class=\"ins-row\"><b>" + escape_html(mesh_fill(mesh_t(loc, "jobs.build_and_flash"), "name", editor_name(loc, index))) + "</b><span>" +
+            escape_html(deployed_reason_text(loc, deployed_node_reason(project, index))) + "</span></div>" +
+            jobs_diff_rows(loc, deployed_get(project, deployed_node_key(project, index)),
                 deploy_node_signature(deployed_plan(project), index))
     }
     let gateway: string = deployed_gateway_reason(project)
     if gateway != "" {
-        var what: string = "Restart the gateway"
+        var what: string = mesh_t(loc, "jobs.label.restart_gateway")
         if default_value("gateway", "native") != "native" {
-            what = "Build and program the gateway"
+            what = mesh_t(loc, "jobs.build_program_gateway")
         }
-        items = items + "<div class=\"ins-row\"><b>" + what + "</b><span>" + escape_html(gateway) + "</span></div>" +
-            jobs_diff_rows(deployed_get(project, "gateway"), deploy_gateway_signature(deployed_plan(project)))
+        items = items + "<div class=\"ins-row\"><b>" + what + "</b><span>" + escape_html(deployed_reason_text(loc, gateway)) + "</span></div>" +
+            jobs_diff_rows(loc, deployed_get(project, "gateway"), deploy_gateway_signature(deployed_plan(project)))
     }
     return items
 }
 
-fn jobs_apply_inspector(project: string, notice: string) string {
-    let items: string = jobs_apply_plan(project)
+fn jobs_apply_inspector(loc: string, project: string, notice: string) string {
+    let items: string = jobs_apply_plan(loc, project)
     let count: u32 = fleet_line_count(deployed_out_of_date(project))
     var changes: u32 = count
     if deployed_gateway_reason(project) != "" {
         changes = changes + 1
     }
     if items == "" {
-        return look_head("Apply changes", "Nothing to apply", "") + look_body(notice +
-            "<p class=\"ins-help\">Every board and the gateway run what is planned.</p>")
+        return look_head(loc, mesh_t(loc, "nav.apply"), mesh_t(loc, "jobs.nothing_title"), "") + look_body(notice +
+            "<p class=\"ins-help\">" + mesh_t(loc, "jobs.all_current") + "</p>")
     }
     let action: string = editor_base(project) + "/apply"
     var jobs: u32 = count * 2
     if deployed_gateway_reason(project) != "" {
         jobs = jobs + 1
     }
-    var heading: string = "Apply " + rho_int_to_str(changes) + " changes"
+    var heading: string = mesh_fill(mesh_t(loc, "jobs.apply_n"), "count", rho_int_to_str(changes))
     if changes == 1 {
-        heading = "Apply 1 change"
+        heading = mesh_t(loc, "jobs.apply_1")
     }
-    var run: string = "Run " + rho_int_to_str(jobs) + " jobs"
+    var run: string = mesh_fill(mesh_t(loc, "jobs.run_n"), "count", rho_int_to_str(jobs))
     if jobs == 1 {
-        run = "Run 1 job"
+        run = mesh_t(loc, "jobs.run_1")
     }
-    return look_head(heading, project_name(project), "") + look_body(notice +
+    return look_head(loc, heading, project_name(project), "") + look_body(notice +
         "<div class=\"ins-rows\">" + items + "</div>" +
-        "<p class=\"ins-help\">Builds run in the background. Flashing a board asks you to put it in its programming " +
-        "mode — BOOTSEL for a Pico — when it is that board's turn, on its card.</p>" +
+        "<p class=\"ins-help\">" + mesh_t(loc, "jobs.apply_help") + "</p>" +
         "<form method=\"post\" action=\"" + action + "\" hx-post=\"" + action + "\" hx-target=\"#agora-inspector\">" +
-        "<div class=\"ins-foot\"><button type=\"button\" class=\"ag-btn\" onclick=\"this.closest('.ins-body').classList.toggle('show-diff')\">Review diff</button>" +
-        "<button type=\"submit\" class=\"ag-btn primary\">" + run + "</button></div></form>")
+        "<div class=\"ins-foot\"><button type=\"button\" class=\"ag-btn\" onclick=\"this.closest('.ins-body').classList.toggle('show-diff')\">" + mesh_t(loc, "jobs.review_diff") + "</button>" +
+        "<button type=\"submit\" class=\"ag-btn primary\">" + escape_html(run) + "</button></div></form>")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -739,7 +746,7 @@ fn jobs_answer(req: Request, id: string, selection: string, notice: string) Resp
 
 // jobs_apply queues what is out of date in the open mesh — everything, one
 // board ("node:<id>") or the gateway — and answers "<queued>|<problems>".
-fn jobs_apply(id: string, only: string) string {
+fn jobs_apply(loc: string, id: string, only: string) string {
     var problems: string = ""
     var queued: u32 = 0
     if only == "" || rho_str_index_of(only, "node:") == 0 {
@@ -764,7 +771,7 @@ fn jobs_apply(id: string, only: string) string {
             if index == 0 {
                 continue
             }
-            let failure: string = jobs_queue_board(index)
+            let failure: string = jobs_queue_board(loc, index)
             if failure == "" {
                 queued = queued + 1
             } else {
@@ -773,7 +780,7 @@ fn jobs_apply(id: string, only: string) string {
         }
     }
     if only == "gateway" || (only == "" && deployed_gateway_reason(id) != "") {
-        let failure: string = jobs_queue_gateway()
+        let failure: string = jobs_queue_gateway(loc)
         if failure == "" {
             queued = queued + 1
         } else {
@@ -795,11 +802,11 @@ fn mesh_p_apply_post(req: Request) Response {
         return mesh_redirect("/mesh/fleet")
     }
     let only: string = form_field(request_body(req), "only")
-    let result: string = jobs_apply(id, only)
+    let result: string = jobs_apply(i18n_locale(req), id, only)
     let problems: string = field(result, 1)
-    var said: string = "Nothing to apply."
+    var said: string = i18n_t(req, "jobs.nothing_to_apply")
     if field(result, 0) != "0" {
-        said = "Queued. Builds run now; each flash waits on its board's card for you."
+        said = i18n_t(req, "jobs.queued")
     }
     var selection: string = "apply"
     if only == "gateway" {
@@ -832,34 +839,34 @@ fn mesh_p_job_post(req: Request) Response {
     let seq: string = sanitize(param(req, "job"))
     let verb: string = param(req, "verb")
     if !jobs_exists(id, seq, "job") || rho_str_index_of(seq, "/") >= 0 || rho_str_index_of(seq, ".") >= 0 {
-        return editor_answer(req, id, "", "", editor_notice("That job is not there any more.", true))
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "jobs.job_gone"), true))
     }
     let selection: string = "job:" + seq
     if verb == "go" && jobs_state(id, seq) == "waiting" {
         ignore_bool(rho_write_text(jobs_path(id, seq, "go"), "\n"))
-        return jobs_answer(req, id, selection, editor_notice("Flashing.", false))
+        return jobs_answer(req, id, selection, editor_notice(i18n_t(req, "jobs.flashing"), false))
     }
     if verb == "cancel" && jobs_open(id, seq) && jobs_state(id, seq) != "running" {
         ignore_bool(rho_write_text(jobs_path(id, seq, "cancel"), "\n"))
-        return jobs_answer(req, id, selection, editor_notice("Cancelled.", false))
+        return jobs_answer(req, id, selection, editor_notice(i18n_t(req, "jobs.cancelled"), false))
     }
     if verb == "retry" && !jobs_open(id, seq) {
         let target: string = jobs_meta(id, seq, "target")
         var failure: string = ""
         if target == "gateway" {
-            failure = jobs_queue_gateway()
+            failure = jobs_queue_gateway(i18n_locale(req))
         } else {
             let index: u32 = project_node_by_id(project_file(id), rho_str_slice(target, 5, u32(rho_strlen(target)) - 5))
             if index == 0 {
-                failure = "that board is not in this mesh any more"
+                failure = i18n_t(req, "jobs.board_gone")
             } else {
-                failure = jobs_queue_board(index)
+                failure = jobs_queue_board(i18n_locale(req), index)
             }
         }
         if failure != "" {
             return editor_answer(req, id, selection, "", editor_notice(failure, true))
         }
-        return jobs_answer(req, id, "apply", editor_notice("Queued again.", false))
+        return jobs_answer(req, id, "apply", editor_notice(i18n_t(req, "jobs.queued_again"), false))
     }
     return editor_answer(req, id, selection, "", "")
 }

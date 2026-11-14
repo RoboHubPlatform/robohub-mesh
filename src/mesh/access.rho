@@ -72,7 +72,7 @@ fn mesh_denied(req: Request) Response {
     if has_header(req, "HX-Request") || rho_str_index_of(request_path(req), "/api/") >= 0 {
         return Response{ 403, "{\"ok\":false,\"error\":\"your grants do not allow that\"}", "application/json", "" }
     }
-    return html(403, mesh_shell(req, "Not allowed",
-        "<section class=\"mesh-form-panel page-panel\"><h1>Not allowed</h1><p>Your grants do not allow that. " +
-        "An admin of the keeper can change them under Users &amp; access.</p><p><a href=\"/mesh\">Back to the fleet</a></p></section>"))
+    return html(403, mesh_shell(req, i18n_t(req, "access.title"),
+        "<section class=\"mesh-form-panel page-panel\"><h1>" + i18n_t(req, "access.title") + "</h1><p>" +
+        escape_html(i18n_t(req, "access.denied")) + "</p><p><a href=\"/mesh\">" + i18n_t(req, "access.back") + "</a></p></section>"))
 }

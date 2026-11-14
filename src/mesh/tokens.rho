@@ -139,15 +139,14 @@ fn mesh_project_token_generate(req: Request) Response {
     let token: string = mesh_token_mint(id, name, days)
     if token == "" {
         save_setting_at(file, "message.project",
-            "Mesh does not mint tokens. An application that reads this project declares deploy.calls: [mesh] and keeper registers it as a client; its short-lived tokens are issued by keeper.")
+            i18n_t(req, "tokens.not_minted"))
         return mesh_project_settings_for(req, id)
     }
     let now: u32 = mesh_token_now()
     let expires: u32 = now + days * 86400
     mesh_token_rewrite(id, name, mesh_token_line(name, token, now, expires, 0))
     save_setting_at(file, "message.project",
-        "Generated a token for " + name + " valid until " + mesh_token_date(expires) +
-        ". Copy it now; it is shown in the token table.")
+        mesh_fill(mesh_fill(i18n_t(req, "tokens.generated"), "name", name), "date", mesh_token_date(expires)))
     info("mesh", "generated a token for " + name + " on project " + id)
     return mesh_project_settings_for(req, id)
 }
@@ -196,15 +195,15 @@ fn mesh_project_token_revoke(req: Request) Response {
     }
     ignore_bool(rho_write_secret(mesh_tokens_file(id), out))
     save_setting_at(file, "message.project",
-        if found { "Token " + name + " revoked." } else { "No token named " + name + "." })
+        if found { mesh_fill(i18n_t(req, "tokens.revoked"), "name", name) } else { mesh_fill(i18n_t(req, "tokens.none_named"), "name", name) })
     info("mesh", "revoked token " + name + " on project " + id)
     return mesh_redirect("/mesh/project/" + id + "/settings")
 }
 
-fn mesh_tokens_html(project: string) string {
+fn mesh_tokens_html(loc: string, project: string) string {
     mesh_tokens_migrate(project)
     let now: u32 = mesh_token_now()
-    var out: string = "<table><thead><tr><th>Application</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>"
+    var out: string = "<table><thead><tr><th>" + mesh_t(loc, "tokens.application") + "</th><th>" + mesh_t(loc, "tokens.expires") + "</th><th>" + mesh_t(loc, "tokens.status") + "</th><th></th></tr></thead><tbody>"
     var count: u32 = 0
     var rest: string = mesh_token_entries(project)
     while rest != "" {
@@ -234,19 +233,19 @@ fn mesh_tokens_html(project: string) string {
         let input_id: string = "mesh-project-token-" + escape_html(name)
         out = out + "<tr><td><strong>" + escape_html(name) + "</strong></td><td>" +
             escape_html(mesh_token_date(expires)) + "</td><td>" +
-            escape_html(status) + "</td><td>" +
+            escape_html(mesh_t(loc, "tokens.status." + status)) + "</td><td>" +
             "<input id=\"" + input_id + "\" type=\"hidden\" value=\"" +
             escape_html(token) + "\">" +
             "<button type=\"button\" class=\"quiet\" onclick=\"navigator.clipboard.writeText(document.getElementById('" +
-            input_id + "').value)\">Copy</button> " +
+            input_id + "').value)\">" + mesh_t(loc, "tokens.copy") + "</button> " +
             "<form method=\"post\" action=\"/mesh/project/" + escape_html(project) +
             "/token/revoke\" style=\"display:inline\">" +
             "<input type=\"hidden\" name=\"name\" value=\"" + escape_html(name) + "\">" +
-            "<button type=\"submit\" class=\"quiet\">Revoke</button></form></td></tr>"
+            "<button type=\"submit\" class=\"quiet\">" + mesh_t(loc, "tokens.revoke") + "</button></form></td></tr>"
         count = count + 1
     }
     if count == 0 {
-        out = out + "<tr><td colspan=\"4\">No application tokens yet.</td></tr>"
+        out = out + "<tr><td colspan=\"4\">" + mesh_t(loc, "tokens.empty") + "</td></tr>"
     }
     return out + "</tbody></table>"
 }

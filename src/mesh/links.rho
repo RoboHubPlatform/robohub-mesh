@@ -140,20 +140,20 @@ fn link_listens(project: string) bool {
 
 // link_set makes `project` report through `parent` ("" for nobody), in both
 // plans, and answers why it could not.
-fn link_set(project: string, parent: string) string {
+fn link_set(loc: string, project: string, parent: string) string {
     let previous: string = link_parent(project)
     if rho_str_eq(previous, parent) {
         return ""
     }
     if parent != "" {
         if rho_str_eq(parent, project) || link_above(parent, project) {
-            return "a mesh cannot report through itself or a mesh that reports through it"
+            return mesh_t(loc, "links.ring")
         }
         if !rho_path_exists(project_file(parent)) {
-            return "that mesh is not there"
+            return mesh_t(loc, "links.missing")
         }
         if link_relay_uid(project) == "" {
-            return "no id could be made for its gateway"
+            return mesh_t(loc, "links.no_id")
         }
     }
     save_setting_at(project_file(project), "mesh_parent", parent)
@@ -189,9 +189,9 @@ fn link_children_words(project: string) string {
 }
 
 // link_options are the meshes a mesh may report through.
-fn link_options(project: string) string {
+fn link_options(loc: string, project: string) string {
     let current: string = link_parent(project)
-    var options: string = option("", "Nobody: this gateway is the top of its mesh", "", current)
+    var options: string = option("", mesh_t(loc, "links.nobody"), "", current)
     var rest: string = project_ids()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")

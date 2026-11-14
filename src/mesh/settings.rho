@@ -142,20 +142,20 @@ fn mesh_settings_form(req: Request, tab: string) string {
             i18n_t(req, "settings.save"), i18n_locale(req))
     }
     if rho_str_eq(tab, "auth") {
-        return "<dl class=\"settings\"><dt>Issuer</dt><dd>keeper</dd>" +
-            "<dt>Mode</dt><dd>direct</dd>" +
-            "<dt>Login URL</dt><dd><code>http://127.0.0.1:19090/auth/login</code></dd></dl>"
+        return "<dl class=\"settings\"><dt>" + i18n_t(req, "settings.about.issuer") + "</dt><dd>keeper</dd>" +
+            "<dt>" + i18n_t(req, "settings.about.mode") + "</dt><dd>direct</dd>" +
+            "<dt>" + i18n_t(req, "settings.about.login_url") + "</dt><dd><code>http://127.0.0.1:19090/auth/login</code></dd></dl>"
     }
     if rho_str_eq(tab, "gateway") {
-        return "<dl class=\"settings\"><dt>Provider</dt><dd>mesh-gateway</dd>" +
-            "<dt>Route</dt><dd>/mesh</dd><dt>Port</dt><dd>8478</dd>" +
-            "<dt>Current project</dt><dd>" + escape_html(current_project()) + "</dd></dl>"
+        return "<dl class=\"settings\"><dt>" + i18n_t(req, "settings.about.provider") + "</dt><dd>mesh-gateway</dd>" +
+            "<dt>" + i18n_t(req, "settings.about.route") + "</dt><dd>/mesh</dd><dt>" + i18n_t(req, "settings.about.port") + "</dt><dd>8478</dd>" +
+            "<dt>" + i18n_t(req, "settings.about.current_project") + "</dt><dd>" + escape_html(current_project()) + "</dd></dl>"
     }
     if rho_str_eq(tab, "configuration") {
-        return "<dl class=\"settings\"><dt>Application</dt><dd>mesh</dd>" +
-            "<dt>Registry</dt><dd><code>" + escape_html(mesh_registry_source()) + "</code></dd>" +
-            "<dt>Plugins</dt><dd>robohub-auth</dd>" +
-            "<dt>Alert channels</dt><dd>" + escape_html(mesh_alert_list()) + "</dd></dl>"
+        return "<dl class=\"settings\"><dt>" + i18n_t(req, "settings.about.application") + "</dt><dd>mesh</dd>" +
+            "<dt>" + i18n_t(req, "settings.about.registry") + "</dt><dd><code>" + escape_html(mesh_registry_source()) + "</code></dd>" +
+            "<dt>" + i18n_t(req, "settings.about.plugins") + "</dt><dd>robohub-auth</dd>" +
+            "<dt>" + i18n_t(req, "settings.about.alert_channels") + "</dt><dd>" + escape_html(mesh_alert_list()) + "</dd></dl>"
     }
     var fields: FormField[1]
     fields[0] = FormField{ "tabs", "select", i18n_t(req, "settings.orientation"), "",

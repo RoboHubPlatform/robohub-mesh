@@ -97,12 +97,12 @@ fn look_transports(parent_board: string, board: string) string {
 /*  The inspector's parts                                                     */
 /* -------------------------------------------------------------------------- */
 
-fn look_head(kicker: string, title: string, state: string) string {
+fn look_head(loc: string, kicker: string, title: string, state: string) string {
     var shown: string = ""
     if state != "" {
         shown = "<div class=\"ins-state\">" + state + "</div>"
     }
-    return "<div class=\"ins-head\"><button type=\"button\" class=\"ins-fold\" aria-label=\"Fold the inspector\" " +
+    return "<div class=\"ins-head\"><button type=\"button\" class=\"ins-fold\" aria-label=\"" + mesh_t(loc, "card.fold_inspector") + "\" " +
         "onclick=\"this.closest('.agora-inspector').classList.toggle('folded')\">⌄</button><div class=\"ins-kicker\">" + escape_html(kicker) + "</div><h2>" +
         escape_html(title) + "</h2>" + shown + "</div>"
 }
@@ -111,30 +111,30 @@ fn look_body(inner: string) string {
     return "<div class=\"ins-body\">" + inner + "</div>"
 }
 
-fn look_impact(text: string) string {
+fn look_impact(loc: string, text: string) string {
     if text == "" {
         return ""
     }
-    return "<div class=\"ins-impact\" id=\"ins-impact\"><b>Applying this change</b><span>" + escape_html(text) + "</span></div>"
+    return "<div class=\"ins-impact\" id=\"ins-impact\"><b>" + mesh_t(loc, "card.applying") + "</b><span>" + escape_html(text) + "</span></div>"
 }
 
-fn look_foot(submit: string, discard: bool) string {
+fn look_foot(loc: string, submit: string, discard: bool) string {
     var reset: string = ""
     if discard {
-        reset = "<button type=\"reset\" class=\"ag-btn\">Discard</button>"
+        reset = "<button type=\"reset\" class=\"ag-btn\">" + mesh_t(loc, "card.discard") + "</button>"
     }
     return "<div class=\"ins-foot\">" + reset + "<button type=\"submit\" class=\"ag-btn primary\">" + escape_html(submit) + "</button></div>"
 }
 
 // look_form is an inspector form: its fields, what saving it does, and the
 // footer with Discard and the button that saves it.
-fn look_form(action: string, tab: string, index: u32, inner: string, impact: string, submit: string) string {
-    return look_form_live(action, tab, index, inner, impact, submit, "")
+fn look_form(loc: string, action: string, tab: string, index: u32, inner: string, impact: string, submit: string) string {
+    return look_form_live(loc, action, tab, index, inner, impact, submit, "")
 }
 
 // look_form_live is an inspector form whose impact is worked out again from
 // the form each time a field changes, by posting it to `preview`.
-fn look_form_live(action: string, tab: string, index: u32, inner: string, impact: string, submit: string, preview: string) string {
+fn look_form_live(loc: string, action: string, tab: string, index: u32, inner: string, impact: string, submit: string, preview: string) string {
     var rev: string = ""
     if index > 0 {
         rev = editor_hidden("rev", editor_rev(index))
@@ -145,8 +145,8 @@ fn look_form_live(action: string, tab: string, index: u32, inner: string, impact
             "hx-target=\"#ins-impact\" hx-swap=\"outerHTML\">" + inner + "</div>"
     }
     return "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
-        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", tab) + rev + fields + look_impact(impact) +
-        look_foot(submit, true) + "</form>"
+        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", tab) + rev + fields + look_impact(loc, impact) +
+        look_foot(loc, submit, true) + "</form>"
 }
 
 // look_segment is a choice of a few, as a row of buttons; a choice that is not
@@ -183,7 +183,7 @@ fn look_segment(name: string, options: string, selected: string, allowed: string
 
 // look_board_tiles are the boards a node can be, as tiles: those a parent can
 // talk to, each with the transports they share.
-fn look_board_tiles(role: string, parent: string, selected: string) string {
+fn look_board_tiles(loc: string, role: string, parent: string, selected: string) string {
     let parent_board: string = endpoint_board(parent)
     var out: string = "<div class=\"tiles\">"
     var rest: string = board_rows()
@@ -216,17 +216,17 @@ fn look_board_tiles(role: string, parent: string, selected: string) string {
         shown = shown + 1
     }
     if shown == 0 {
-        return "<p class=\"ins-help\">No board in the registry can talk to " + escape_html(editor_parent_name(parent)) + ".</p>"
+        return "<p class=\"ins-help\">" + escape_html(mesh_fill(mesh_t(loc, "card.no_board_for"), "parent", editor_parent_name(loc, parent))) + "</p>"
     }
     return out + "</div>"
 }
 
 // look_module_picker is the modules a board can carry, by category, each one
 // click to fit, with a search over their names and summaries.
-fn look_module_picker(action: string, index: u32) string {
+fn look_module_picker(loc: string, action: string, index: u32) string {
     let rows: string = module_rows()
     if rows == "" {
-        return "<p class=\"ins-help\">No modules were found in robohub-drivers.</p>"
+        return "<p class=\"ins-help\">" + mesh_t(loc, "card.no_modules") + "</p>"
     }
     var groups: string = ""
     var categories: string = ""
@@ -279,13 +279,13 @@ fn look_module_picker(action: string, index: u32) string {
                 escape_html(shown_name) + "<span>" + escape_html(about) + "</span></button>"
         }
         if items != "" {
-            groups = groups + "<h4 data-cat>" + escape_html(category_title(category)) + "</h4>" + items
+            groups = groups + "<h4 data-cat>" + escape_html(category_title(loc, category)) + "</h4>" + items
         }
     }
     return "<form class=\"mod-pick\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
         "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "modules") + editor_hidden("rev", editor_rev(index)) +
         editor_hidden("action", "add") +
-        "<input type=\"search\" placeholder=\"Search modules by name or what they measure\" aria-label=\"Search modules\" " +
+        "<input type=\"search\" placeholder=\"" + mesh_t(loc, "card.search_modules_hint") + "\" aria-label=\"" + mesh_t(loc, "card.search_modules") + "\" " +
         "oninput=\"var q=this.value.toLowerCase();this.form.querySelectorAll('[data-q]').forEach(function(e){e.hidden=q!=''&&e.dataset.q.indexOf(q)<0})\">" +
         "<div class=\"mod-list\">" + groups + "</div></form>"
 }
@@ -295,7 +295,7 @@ fn look_module_picker(action: string, index: u32) string {
 /* -------------------------------------------------------------------------- */
 
 // look_job_pill is a node's job, as its card's pill, or "".
-fn look_job_pill(project: string, target: string) string {
+fn look_job_pill(loc: string, project: string, target: string) string {
     var rest: string = jobs_list(project)
     var last: string = ""
     while rest != "" {
@@ -331,15 +331,36 @@ fn look_job_pill(project: string, target: string) string {
     return ""
 }
 
-fn look_pill(css_text: string) string {
-    return "<span class=\"ag-pill " + escape_html(field(css_text, 0)) + "\">" + escape_html(field(css_text, 1)) + "</span>"
+fn look_pill(loc: string, css_text: string) string {
+    return "<span class=\"ag-pill " + escape_html(field(css_text, 0)) + "\">" + escape_html(look_pill_text(loc, field(css_text, 1))) + "</span>"
+}
+
+// look_pill_text is a pill's label as a page in `loc` shows it. The labels stay
+// English in the "css|label" a card is worked out with, since code compares them.
+fn look_pill_text(loc: string, label: string) string {
+    if label == "waiting for you" { return mesh_t(loc, "card.pill.waiting") }
+    if label == "flashing" { return mesh_t(loc, "card.pill.flashing") }
+    if label == "building" { return mesh_t(loc, "card.pill.building") }
+    if label == "queued" { return mesh_t(loc, "card.pill.queued") }
+    if label == "needs build" { return mesh_t(loc, "card.pill.needs_build") }
+    if label == "online" { return mesh_t(loc, "card.pill.online") }
+    if label == "quiet" { return mesh_t(loc, "card.pill.quiet") }
+    if label == "no data" { return mesh_t(loc, "card.pill.no_data") }
+    if label == "not checked" { return mesh_t(loc, "card.pill.not_checked") }
+    if label == "not answering" { return mesh_t(loc, "card.pill.not_answering") }
+    if label == "not started" { return mesh_t(loc, "card.pill.not_started") }
+    if label == "restart to apply" { return mesh_t(loc, "card.pill.restart_to_apply") }
+    if label == "build failed" { return mesh_t(loc, "card.pill.build_failed") }
+    if label == "flash failed" { return mesh_t(loc, "card.pill.flash_failed") }
+    if label == "gateway failed" { return mesh_t(loc, "card.pill.gateway_failed") }
+    return label
 }
 
 // look_board_status is a board's one pill: its job, then whether it runs what
 // is planned, then whether it reports.
-fn look_board_status(id: string, index: u32, readings: string) string {
+fn look_board_status(loc: string, id: string, index: u32, readings: string) string {
     let nid: string = state_value("node." + rho_int_to_str(index) + ".id")
-    let job: string = look_job_pill(id, "node." + nid)
+    let job: string = look_job_pill(loc, id, "node." + nid)
     if job != "" {
         return job
     }
@@ -356,17 +377,17 @@ fn look_board_status(id: string, index: u32, readings: string) string {
     return "|no data"
 }
 
-fn look_seen(readings: string, source: string) string {
+fn look_seen(loc: string, readings: string, source: string) string {
     let last: u32 = agora_last_seen(readings, source)
     if last == 0 {
-        return "never seen"
+        return mesh_t(loc, "card.never_seen")
     }
-    return "last seen " + agora_age(last)
+    return mesh_fill(mesh_t(loc, "card.last_seen"), "age", agora_age(loc, last))
 }
 
 // look_module_chip is a module on its board's card: its short name, and its
 // newest reading when it has one.
-fn look_module_chip(id: string, board: u32, fitted: u32, readings: string) string {
+fn look_module_chip(loc: string, id: string, board: u32, fitted: u32, readings: string) string {
     let source: string = state_value("node." + rho_int_to_str(board) + ".id")
     // A board's firmware names a module's readings by the module's tag (the
     // first eight digits of its id) since modules have stable ids; one built
@@ -451,11 +472,11 @@ fn look_card_open(fragment: string, page_url: string) string {
     return " hx-get=\"" + fragment + "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" tabindex=\"0\""
 }
 
-fn look_board_card(id: string, index: u32, readings: string, selected: string) string {
+fn look_board_card(loc: string, id: string, index: u32, readings: string, selected: string) string {
     let nid: string = editor_node_id(id, index)
     let row: string = "node." + rho_int_to_str(index)
     let source: string = state_value(row + ".id")
-    let status: string = look_board_status(id, index, readings)
+    let status: string = look_board_status(loc, id, index, readings)
     var chips: string = ""
     var rest: string = node_module_children(index)
     while rest != "" {
@@ -469,10 +490,10 @@ fn look_board_card(id: string, index: u32, readings: string, selected: string) s
         }
         let fitted: u32 = u32(rho_int_from_str(item))
         if fitted > 0 {
-            chips = chips + look_module_chip(id, index, fitted, readings)
+            chips = chips + look_module_chip(loc, id, index, fitted, readings)
         }
     }
-    chips = chips + "<a class=\"ag-add-chip\"" + editor_open_node(id, index, "modules") + " onclick=\"event.stopPropagation()\">+ module</a>"
+    chips = chips + "<a class=\"ag-add-chip\"" + editor_open_node(id, index, "modules") + " onclick=\"event.stopPropagation()\">" + mesh_t(loc, "card.add_module") + "</a>"
     var progress: string = ""
     if field(status, 1) == "building" || field(status, 1) == "flashing" {
         progress = "<div class=\"ag-progress\"><i></i></div>"
@@ -486,14 +507,14 @@ fn look_board_card(id: string, index: u32, readings: string, selected: string) s
     return "<div class=\"ag-node\" id=\"agora-node-" + rho_int_to_str(index) + "\"><div class=\"ag-card board" + css + "\"" +
         look_card_open(fragment, page_url) + look_drag(id, index) + " data-drop=\"" + row + "\"><div class=\"ag-head\"><a href=\"" + page_url + "\" hx-get=\"" + fragment +
         "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">" +
-        escape_html(editor_name(index)) + "</a>" + look_pill(status) + "</div><div class=\"ag-meta\">" +
-        escape_html(node_value(index, "board", "")) + " · " + escape_html(look_seen(readings, source)) +
+        escape_html(editor_name(loc, index)) + "</a>" + look_pill(loc, status) + "</div><div class=\"ag-meta\">" +
+        escape_html(node_value(index, "board", "")) + " · " + escape_html(look_seen(loc, readings, source)) +
         "</div><div class=\"ag-chips\">" + chips + "</div>" + progress + "</div>" +
-        "<a class=\"ag-plus\" title=\"Add a node under " + escape_html(editor_name(index)) + "\"" +
+        "<a class=\"ag-plus\" title=\"" + escape_html(mesh_fill(mesh_t(loc, "card.add_node_under"), "name", editor_name(loc, index))) + "\"" +
         editor_open_new(id, "compute", row) + ">+</a></div>"
 }
 
-fn look_device_card(id: string, index: u32, readings: string, selected: string) string {
+fn look_device_card(loc: string, id: string, index: u32, readings: string, selected: string) string {
     let nid: string = editor_node_id(id, index)
     let source: string = state_value("node." + rho_int_to_str(index) + ".id")
     let last: u32 = agora_last_seen(readings, source)
@@ -530,7 +551,7 @@ fn look_device_card(id: string, index: u32, readings: string, selected: string) 
     return "<div class=\"ag-node\" id=\"agora-node-" + rho_int_to_str(index) + "\"><div class=\"ag-card device" + css + "\"" +
         look_card_open(fragment, page_url) + look_drag(id, index) + "><div class=\"ag-head\"><a href=\"" + page_url + "\" hx-get=\"" + fragment +
         "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">" +
-        escape_html(editor_name(index)) + "</a>" + look_pill(status) + "</div><div class=\"ag-meta\">" +
+        escape_html(editor_name(loc, index)) + "</a>" + look_pill(loc, status) + "</div><div class=\"ag-meta\">" +
         escape_html(look_short(device_label(node_device_name(index)))) + " · " + escape_html(node_value(index, "address", "")) +
         "</div><div class=\"ag-chips\">" + values + "</div></div></div>"
 }
@@ -550,7 +571,7 @@ fn look_sealed(id: string) string {
     return rho_int_to_str(sealed)
 }
 
-fn look_gateway_card(id: string, selected: string) string {
+fn look_gateway_card(loc: string, id: string, selected: string) string {
     let health: string = agora_health(id)
     var status: string = "|not checked"
     if health == "online" {
@@ -560,7 +581,7 @@ fn look_gateway_card(id: string, selected: string) string {
     } else if health == "stopped" {
         status = "|not started"
     }
-    let job: string = look_job_pill(id, "gateway")
+    let job: string = look_job_pill(loc, id, "gateway")
     if job != "" {
         status = job
     } else if deployed_gateway_reason(id) != "" && deployed_gateway_reason(id) != "never programmed" {
@@ -590,7 +611,7 @@ fn look_gateway_card(id: string, selected: string) string {
     let page_url: string = editor_page_url(id, "gateway")
     var linked: string = ""
     if link_parent(id) != "" {
-        linked = "<div class=\"ag-meta\">reports through " + escape_html(project_name(link_parent(id))) + "</div>"
+        linked = "<div class=\"ag-meta\">" + escape_html(mesh_fill(mesh_t(loc, "card.reports_through"), "mesh", project_name(link_parent(id)))) + "</div>"
     }
     // A board that is the gateway carries modules too.
     var chips: string = ""
@@ -608,24 +629,24 @@ fn look_gateway_card(id: string, selected: string) string {
             }
             let fitted: u32 = u32(rho_int_from_str(item))
             if fitted > 0 {
-                chips = chips + look_module_chip(id, 0, fitted, readings)
+                chips = chips + look_module_chip(loc, id, 0, fitted, readings)
             }
         }
         chips = "<div class=\"ag-chips\">" + chips + "<a class=\"ag-add-chip\"" + editor_open_new(id, "device", "gateway") +
-            " onclick=\"event.stopPropagation()\">+ device</a></div>"
+            " onclick=\"event.stopPropagation()\">" + mesh_t(loc, "card.add_device") + "</a></div>"
     }
     return "<div class=\"ag-node\" id=\"agora-node-gateway\"><div class=\"ag-card gateway" + css + "\"" +
         look_card_open(fragment, page_url) + " data-drop=\"gateway\"><div class=\"ag-head\"><a href=\"" + page_url + "\" hx-get=\"" + fragment +
-        "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">Gateway</a>" +
-        look_pill(status) + "</div><div class=\"ag-meta\">" + escape_html(where) + "</div>" + linked +
-        "<div class=\"ag-stats\"><span><b>" + rho_int_to_str(boards) + "</b>nodes</span><span><b>" +
-        rho_int_to_str(devices) + "</b>devices</span><span title=\"Boards programmed with this mesh's key, of all its boards\"><b>" +
-        look_sealed(id) + "/" + rho_int_to_str(boards) + "</b>sealed links</span></div>" + chips + "</div></div>"
+        "\" hx-target=\"#agora-inspector\" hx-push-url=\"" + page_url + "\" onclick=\"event.stopPropagation()\">" + mesh_t(loc, "nav.gateway") + "</a>" +
+        look_pill(loc, status) + "</div><div class=\"ag-meta\">" + escape_html(where) + "</div>" + linked +
+        "<div class=\"ag-stats\"><span><b>" + rho_int_to_str(boards) + "</b>" + mesh_t(loc, "card.stat_nodes") + "</span><span><b>" +
+        rho_int_to_str(devices) + "</b>" + mesh_t(loc, "card.stat_devices") + "</span><span title=\"" + mesh_t(loc, "card.sealed_title") + "\"><b>" +
+        look_sealed(id) + "/" + rho_int_to_str(boards) + "</b>" + mesh_t(loc, "card.stat_sealed") + "</span></div>" + chips + "</div></div>"
 }
 
 // look_link_badge is the link a board hangs from, with what tells it apart:
 // the baud of a serial line, the port of a network link.
-fn look_link_badge(id: string, index: u32) string {
+fn look_link_badge(loc: string, id: string, index: u32) string {
     let link: string = node_value(index, "link", "uart")
     let prefix: string = "node." + rho_int_to_str(index) + "."
     var detail: string = ""
@@ -638,14 +659,14 @@ fn look_link_badge(id: string, index: u32) string {
     if detail != "" {
         text = text + " · " + detail
     }
-    return "<a class=\"ag-badge\"" + editor_open_edge(id, index) + " title=\"Edit this link\">" + escape_html(text) + "</a>"
+    return "<a class=\"ag-badge\"" + editor_open_edge(id, index) + " title=\"" + mesh_t(loc, "card.edit_link") + "\">" + escape_html(text) + "</a>"
 }
 
 fn look_branch(badge: string, card: string, children: string) string {
     return "<li class=\"mesh-branch\">" + badge + card + children + "</li>"
 }
 
-fn look_children(id: string, parent: string, readings: string, selected: string) string {
+fn look_children(loc: string, id: string, parent: string, readings: string, selected: string) string {
     var out: string = ""
     var index: u32 = 1
     let count: u32 = node_count()
@@ -653,13 +674,13 @@ fn look_children(id: string, parent: string, readings: string, selected: string)
         if node_value(index, "parent", "gateway") == parent && node_attached(index) && !is_module_node(index) {
             if is_device_node(index) {
                 out = out + look_branch("<span class=\"ag-badge dev\">" + escape_html(transport_label(node_value(index, "transport", "http"))) +
-                    "</span>", look_device_card(id, index, readings, selected), "")
+                    "</span>", look_device_card(loc, id, index, readings, selected), "")
             } else {
-                var below: string = look_children(id, "node." + rho_int_to_str(index), readings, selected)
+                var below: string = look_children(loc, id, "node." + rho_int_to_str(index), readings, selected)
                 if below != "" {
                     below = "<ul class=\"mesh-children\">" + below + "</ul>"
                 }
-                out = out + look_branch(look_link_badge(id, index), look_board_card(id, index, readings, selected), below)
+                out = out + look_branch(look_link_badge(loc, id, index), look_board_card(loc, id, index, readings, selected), below)
             }
         }
         index = index + 1
@@ -670,14 +691,14 @@ fn look_children(id: string, parent: string, readings: string, selected: string)
 // look_tree is the mesh as the canvas draws it: the gateway, the boards and
 // devices under it with their links, the meshes that report through it, and a
 // card to add the next node.
-fn look_tree(id: string, selected: string) string {
+fn look_tree(loc: string, id: string, selected: string) string {
     let readings: string = agora_readings(id)
-    var items: string = look_children(id, "gateway", readings, selected) + agora_linked_items(id)
+    var items: string = look_children(loc, id, "gateway", readings, selected) + agora_linked_items(loc, id)
     items = items + look_branch("<span class=\"ag-badge\" style=\"visibility:hidden\">+</span>",
-        "<a class=\"ag-newcard\"" + editor_open_new(id, "compute", "gateway") + ">+ Add node</a>", "")
-    var out: string = look_gateway_card(id, selected) + "<ul class=\"mesh-children\">" + items + "</ul>"
+        "<a class=\"ag-newcard\"" + editor_open_new(id, "compute", "gateway") + ">" + mesh_t(loc, "card.add_node") + "</a>", "")
+    var out: string = look_gateway_card(loc, id, selected) + "<ul class=\"mesh-children\">" + items + "</ul>"
     if node_count() == 0 {
-        out = out + agora_first_run(id)
+        out = out + agora_first_run(loc, id)
     }
     return out
 }
@@ -690,7 +711,7 @@ const LOOK_DRAG: string = "<script>(function(){var app=document.currentScript.cl
 
 // look_bar is the agora's bar: which mesh, whether its gateway answers, its
 // area, what is out of date, and Apply changes.
-fn look_bar(id: string) string {
+fn look_bar(loc: string, id: string) string {
     var meshes: string = ""
     var rest: string = project_ids()
     while rest != "" {
@@ -711,39 +732,32 @@ fn look_bar(id: string) string {
         }
     }
     let health: string = agora_health(id)
-    var live: string = "<span class=\"ag-chip\">gateway not checked yet</span>"
+    var live: string = "<span class=\"ag-chip\">" + mesh_t(loc, "agora.gateway_not_checked") + "</span>"
     if health == "online" {
-        live = "<span class=\"ag-chip live\"><i class=\"ag-dot\"></i>Live · gateway online</span>"
+        live = "<span class=\"ag-chip live\"><i class=\"ag-dot\"></i>" + mesh_t(loc, "agora.gateway_online") + "</span>"
     } else if health == "offline" {
-        live = "<span class=\"ag-chip down\"><i class=\"ag-dot\"></i>gateway not answering · " +
-            agora_age(agora_health_since(id)) + "</span>"
+        live = "<span class=\"ag-chip down\"><i class=\"ag-dot\"></i>" + mesh_t(loc, "agora.gateway_not_answering") + " · " +
+            agora_age(loc, agora_health_since(id)) + "</span>"
     } else if health == "stopped" {
-        live = "<span class=\"ag-chip\"><i class=\"ag-dot\"></i>gateway not started</span>"
+        live = "<span class=\"ag-chip\"><i class=\"ag-dot\"></i>" + mesh_t(loc, "agora.gateway_not_started") + "</span>"
     }
     let stale: u32 = agora_out_of_date()
     var waiting: string = ""
     if stale == 1 {
-        waiting = "<span class=\"ag-chip warn\">1 node out of date</span>"
+        waiting = "<span class=\"ag-chip warn\">" + mesh_t(loc, "agora.one_out_of_date") + "</span>"
     } else if stale > 1 {
-        waiting = "<span class=\"ag-chip warn\">" + rho_int_to_str(stale) + " nodes out of date</span>"
+        waiting = "<span class=\"ag-chip warn\">" + mesh_fill(mesh_t(loc, "agora.many_out_of_date"), "count", rho_int_to_str(stale)) + "</span>"
     }
     var apply: string = ""
     if stale > 0 || deployed_gateway_reason(id) != "" {
-        apply = "<a class=\"ag-btn primary\"" + editor_open(editor_base(id) + "/apply", editor_page_url(id, "apply")) + ">Apply changes</a>"
+        apply = "<a class=\"ag-btn primary\"" + editor_open(editor_base(id) + "/apply", editor_page_url(id, "apply")) + ">" + mesh_t(loc, "nav.apply") + "</a>"
     }
     var failed: string = ""
     if rho_str_eq(state_value_in(project_file(id), "status.gateway"), "failed") {
-        failed = "<span class=\"ag-chip down\">" + escape_html(state_value_in(project_file(id), "message.build")) + "</span>"
+        failed = "<span class=\"ag-chip down\">" + escape_html(mesh_t_stored(loc, state_value_in(project_file(id), "message.build"))) + "</span>"
     }
-    return "<select class=\"ag-mesh\" aria-label=\"Mesh\" onchange=\"location.href='/mesh/p/'+this.value\">" + meshes +
-        "</select>" + live + "<span class=\"ag-chip\">area " + escape_html(project_area_id(project_file(id))) + "</span>" +
+    return "<select class=\"ag-mesh\" aria-label=\"" + mesh_t(loc, "nav.mesh") + "\" onchange=\"location.href='/mesh/p/'+this.value\">" + meshes +
+        "</select>" + live + "<span class=\"ag-chip\">" + mesh_t(loc, "agora.area") + " " + escape_html(project_area_id(project_file(id))) + "</span>" +
         failed + "<span class=\"ag-spacer\"></span>" + waiting + apply +
-        "<a class=\"ag-btn\" href=\"/mesh/project/" + escape_html(id) + "/settings\">Settings</a>"
-}
-
-// look_translate is a page in the language the request asks for, from Mesh's
-// catalog of whole labels (locales/phrases.<locale>.txt), through the shared i18n
-// module.
-fn look_translate(req: Request, html_text: string) string {
-    return i18n_phrases(req, html_text, rho_asset_dir("mesh") + "/locales")
+        "<a class=\"ag-btn\" href=\"/mesh/project/" + escape_html(id) + "/settings\">" + mesh_t(loc, "page.settings") + "</a>"
 }

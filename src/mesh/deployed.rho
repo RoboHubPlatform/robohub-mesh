@@ -128,3 +128,54 @@ fn deployed_out_of_date(project: string) string {
     }
     return out
 }
+
+// deployed_reason_text is a reason (deploy_reason) as a page in `loc` shows it.
+// The reason itself stays in English words, because code compares it and the
+// domain tests read it; only what a person sees is translated.
+fn deployed_reason_text(loc: string, reason: string) string {
+    if reason == "" {
+        return ""
+    }
+    if reason == "never programmed" {
+        return mesh_t(loc, "deploy.never_programmed")
+    }
+    if reason == "changed" {
+        return mesh_t(loc, "deploy.changed")
+    }
+    let suffix: string = " changed"
+    let length: u32 = u32(rho_strlen(reason))
+    if length <= u32(rho_strlen(suffix)) ||
+        !rho_str_eq(rho_str_slice(reason, length - u32(rho_strlen(suffix)), u32(rho_strlen(suffix))), suffix) {
+        return reason
+    }
+    var list: string = ""
+    var rest: string = rho_str_slice(reason, 0, length - u32(rho_strlen(suffix)))
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, ", ")
+        var words: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            words = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 2, u32(rho_strlen(rest)) - u32(at) - 2)
+        }
+        if list != "" {
+            list = list + ", "
+        }
+        list = list + deployed_segment_text(loc, words)
+    }
+    return mesh_fill(mesh_t(loc, "deploy.changed_list"), "list", list)
+}
+
+// deployed_segment_text is one of deploy_segment_words in `loc`.
+fn deployed_segment_text(loc: string, words: string) string {
+    var rest: string = DEPLOY_SEGMENTS
+    while rest != "" {
+        let label: string = deploy_words_next(rest)
+        rest = deploy_words_rest(rest)
+        if rho_str_eq(deploy_segment_words(label), words) {
+            return mesh_t(loc, "deploy.segment." + label)
+        }
+    }
+    return words
+}

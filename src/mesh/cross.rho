@@ -94,20 +94,18 @@ fn cross_mesh_options(id: string) string {
 }
 
 // cross_move_form is the inspector's part that moves a node to another mesh.
-fn cross_move_form(id: string, index: u32) string {
+fn cross_move_form(loc: string, id: string, index: u32) string {
     let options: string = cross_mesh_options(id)
     if options == "" || is_module_node(index) {
         return ""
     }
     let action: string = editor_base(id) + "/node/" + editor_node_id(id, index) + "/move-to"
-    return "<details class=\"inspector-move\"><summary>Move to another mesh</summary>" +
-        "<p class=\"agora-seen\">It keeps its id and its history, takes its modules with it, and hangs from the other " +
-        "mesh's gateway; what hangs from it here stays, under its parent. It is out of date until it is built " +
-        "with the other mesh's key.</p>" +
+    return "<details class=\"inspector-move\"><summary>" + mesh_t(loc, "cross.move_title") + "</summary>" +
+        "<p class=\"agora-seen\">" + mesh_t(loc, "cross.move_help") + "</p>" +
         "<form class=\"inspector-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
         "\" hx-target=\"#agora-inspector\">" + editor_hidden("rev", editor_rev(index)) +
-        mesh_select("target", "Mesh", options, "") +
-        "<div class=\"form-actions\"><button type=\"submit\">Move</button></div></form></details>"
+        mesh_select("target", mesh_t(loc, "nav.mesh"), options, "") +
+        "<div class=\"form-actions\"><button type=\"submit\">" + mesh_t(loc, "cross.move") + "</button></div></form></details>"
 }
 
 fn mesh_p_node_move(req: Request) Response {
@@ -123,15 +121,15 @@ fn mesh_p_node_move(req: Request) Response {
     let body: string = request_body(req)
     let target: string = form_field(body, "target")
     if index == 0 || is_module_node(index) {
-        return editor_answer(req, id, "", "", editor_notice("That node is not in this mesh any more.", true))
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "cross.node_gone"), true))
     }
     if editor_stale(body, index) {
-        return editor_answer(req, id, "node:" + nid, "", editor_notice("This node was changed elsewhere since you opened it.", true))
+        return editor_answer(req, id, "node:" + nid, "", editor_notice(i18n_t(req, "cross.node_stale"), true))
     }
     if target == "" || rho_str_eq(target, id) || !rho_path_exists(project_file(target)) {
-        return editor_answer(req, id, "node:" + nid, "", editor_notice("Choose another mesh to move it to.", true))
+        return editor_answer(req, id, "node:" + nid, "", editor_notice(i18n_t(req, "cross.choose_target"), true))
     }
-    let name: string = editor_name(index)
+    let name: string = editor_name(i18n_locale(req), index)
     let source_file: string = project_file(id)
     let target_file: string = project_file(target)
     project_node_numbers(source_file)
@@ -160,7 +158,7 @@ fn mesh_p_node_move(req: Request) Response {
     }
     lines = lines + editor_line("node.count", rho_int_to_str(count))
     if !plan_set_many(target_file, lines) {
-        return editor_answer(req, id, "node:" + nid, "", editor_notice("The other mesh's plan could not be written.", true))
+        return editor_answer(req, id, "node:" + nid, "", editor_notice(i18n_t(req, "cross.write_failed"), true))
     }
     if moves != "" {
         ignore_bool(plan_set_many(source_file, moves))
@@ -177,9 +175,10 @@ fn mesh_p_node_move(req: Request) Response {
     ignore_string(telemetry_move_source(id, target, nid))
     info("mesh", "node " + nid + " moved from " + id + " to " + target)
     editor_publish(target)
-    return editor_answer(req, id, "", "", "<p class=\"notice\">" + escape_html(name) + " moved to " +
-        escape_html(project_name(target)) + ". <a href=\"/mesh/p/" + escape_html(target) + "?select=node:" +
-        escape_html(nid) + "\">Open it there</a></p>")
+    return editor_answer(req, id, "", "", "<p class=\"notice\">" +
+        escape_html(mesh_fill(mesh_fill(i18n_t(req, "cross.moved"), "name", name), "mesh", project_name(target))) +
+        " <a href=\"/mesh/p/" + escape_html(target) + "?select=node:" +
+        escape_html(nid) + "\">" + i18n_t(req, "cross.open_there") + "</a></p>")
 }
 
 // cross_template_lines are a plan as the start of another: what is planned,
@@ -259,7 +258,7 @@ fn mesh_apply_all(req: Request) Response {
         if deployed_out_of_date(id) == "" && deployed_gateway_reason(id) == "" {
             continue
         }
-        queued = queued + u32(rho_int_from_str(field(jobs_apply(id, ""), 0)))
+        queued = queued + u32(rho_int_from_str(field(jobs_apply(i18n_locale(req), id, ""), 0)))
     }
     info("mesh", "applied in every mesh: " + rho_int_to_str(queued) + " jobs")
     return mesh_redirect("/mesh")
@@ -332,17 +331,19 @@ fn mesh_search(req: Request) Response {
             index = index + 1
         }
     }
-    var summary: string = "<p class=\"agora-seen\">Search every mesh by a node's name, its id, its board, module or device.</p>"
+    var summary: string = "<p class=\"agora-seen\">" + i18n_t(req, "cross.search_help") + "</p>"
     if wanted != "" {
-        summary = "<p class=\"agora-seen\">" + rho_int_to_str(found) + " found for “" + escape_html(wanted) + "”.</p>"
+        summary = "<p class=\"agora-seen\">" +
+            escape_html(mesh_fill(mesh_fill(i18n_t(req, "cross.found"), "count", rho_int_to_str(found)), "query", wanted)) + "</p>"
     }
-    let body: string = AGORA_STYLE + FLEET_STYLE + "<div class=\"fleet-panel\"><div class=\"fbar\">" + fleet_search_form(wanted) +
-        "<span class=\"spacer\"></span><a href=\"/mesh\">Fleet</a></div><aside class=\"inbox\" style=\"border-left:0\">" +
+    let body: string = AGORA_STYLE + FLEET_STYLE + "<div class=\"fleet-panel\"><div class=\"fbar\">" + fleet_search_form(i18n_locale(req), wanted) +
+        "<span class=\"spacer\"></span><a href=\"/mesh\">" + i18n_t(req, "nav.fleet") + "</a></div><aside class=\"inbox\" style=\"border-left:0\">" +
         summary + out + "</aside></div>"
-    return html(status_ok(), look_translate(req, mesh_shell(req, "Search · Fleet", body)))
+    return html(status_ok(), mesh_shell(req, i18n_t(req, "cross.search") + " · " + i18n_t(req, "nav.fleet"), body))
 }
 
-fn fleet_search_form(wanted: string) string {
+fn fleet_search_form(loc: string, wanted: string) string {
     return "<form class=\"fleet-search\" method=\"get\" action=\"/mesh/search\"><input type=\"search\" name=\"q\" value=\"" +
-        escape_html(wanted) + "\" placeholder=\"Search nodes in every mesh\" aria-label=\"Search nodes in every mesh\"></form>"
+        escape_html(wanted) + "\" placeholder=\"" + escape_html(mesh_t(loc, "cross.search_placeholder")) + "\" aria-label=\"" +
+        escape_html(mesh_t(loc, "cross.search_placeholder")) + "\"></form>"
 }

@@ -87,7 +87,7 @@ fn mesh_device_poll(req: Request) Response {
         return mesh_denied(req)
     }
     if mesh_project_mismatch(req) {
-        return mesh_project_refused()
+        return mesh_project_refused(i18n_locale(req))
     }
     let body: string = request_body(req)
     let index: u32 = rho_int_from_str(form_field(body, "id"))
@@ -146,7 +146,7 @@ fn mesh_device_set(req: Request) Response {
         return mesh_denied(req)
     }
     if mesh_project_mismatch(req) {
-        return mesh_project_refused()
+        return mesh_project_refused(i18n_locale(req))
     }
     let body: string = request_body(req)
     let index: u32 = rho_int_from_str(form_field(body, "id"))

@@ -301,7 +301,7 @@ fn driver_rows_read() string {
     return out
 }
 
-fn module_picker(selected: string) string {
+fn module_picker(loc: string, selected: string) string {
     let rows: string = module_rows()
     if rows == "" {
         return "<p>No module boards were found under robohub-drivers/boards.</p>"
@@ -327,7 +327,7 @@ fn module_picker(selected: string) string {
         if first || category_selected(rows, category, selected) > 0 {
             open = true
         }
-        out = out + category_section(rows, category, selected, open, "radio", "module")
+        out = out + category_section(loc, rows, category, selected, open, "radio", "module")
         rendered = rendered + category + " "
         first = false
     }
@@ -349,7 +349,7 @@ fn module_picker(selected: string) string {
         if category == "" || words_contain(rendered, category) {
             continue
         }
-        out = out + category_section(rows, category, selected,
+        out = out + category_section(loc, rows, category, selected,
             category_selected(rows, category, selected) > 0, "radio", "module")
         rendered = rendered + category + " "
     }
@@ -536,10 +536,10 @@ fn device_kind(name: string) string {
     return field(device_row(name), 2)
 }
 
-fn device_picker(selected: string) string {
+fn device_picker(loc: string, selected: string) string {
     // Only the options: mesh_select owns the <select> element. Returning a
     // second select here nested it and left the outer one empty.
-    var out: string = "<option value=\"\">Choose a device</option>"
+    var out: string = "<option value=\"\">" + escape_html(mesh_t(loc, "device.choose")) + "</option>"
     var rest: string = device_rows()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -629,16 +629,16 @@ fn gateway_sensors() string {
     return legacy
 }
 
-fn device_parent_options(selected: string) string {
-    var options: string = option("mesh", "Free standing (network)", "", selected) +
-        option("gateway", "Gateway", "", selected)
+fn device_parent_options(loc: string, selected: string) string {
+    var options: string = option("mesh", mesh_t(loc, "catalog.free_standing"), "", selected) +
+        option("gateway", mesh_t(loc, "nav.gateway"), "", selected)
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
         if !is_module_node(index) && !is_device_node(index) {
             options = options + option("node." + rho_int_to_str(index),
-                "Node " + rho_int_to_str(index) + " (" +
-                node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
+                mesh_t(loc, "catalog.node") + " " + rho_int_to_str(index) + " (" +
+                node_value(index, "name", mesh_t(loc, "catalog.node") + " " + rho_int_to_str(index)) + ")", "", selected)
         }
         index = index + 1
     }
@@ -665,18 +665,18 @@ fn gateway_allows_modules() bool {
     return gateway != "" && gateway != "native"
 }
 
-fn module_parent_options(selected: string) string {
+fn module_parent_options(loc: string, selected: string) string {
     var options: string = ""
     if gateway_allows_modules() {
-        options = options + option("gateway", "Gateway", "", selected)
+        options = options + option("gateway", mesh_t(loc, "nav.gateway"), "", selected)
     }
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
         if !is_module_node(index) && !is_device_node(index) {
             options = options + option("node." + rho_int_to_str(index),
-                "Node " + rho_int_to_str(index) + " (" +
-                node_value(index, "name", "Node " + rho_int_to_str(index)) + ")", "", selected)
+                mesh_t(loc, "catalog.node") + " " + rho_int_to_str(index) + " (" +
+                node_value(index, "name", mesh_t(loc, "catalog.node") + " " + rho_int_to_str(index)) + ")", "", selected)
         }
         index = index + 1
     }
@@ -837,9 +837,9 @@ fn sensor_labels(sensors: string) string {
     return out
 }
 
-fn category_title(category: string) string {
+fn category_title(loc: string, category: string) string {
     if rho_strlen(category) == 0 {
-        return "Other"
+        return mesh_t(loc, "catalog.other")
     }
     let first: string = rho_str_slice(category, 0, 1)
     let rest: string = rho_str_slice(category, 1, u32(rho_strlen(category)) - 1)
@@ -966,7 +966,7 @@ fn category_class(category: string) string {
     return out
 }
 
-fn category_section(rows: string, category: string, selected: string, open: bool, input_type: string, input_name: string) string {
+fn category_section(loc: string, rows: string, category: string, selected: string, open: bool, input_type: string, input_name: string) string {
     var opened: string = ""
     if open {
         opened = " open"
@@ -980,7 +980,7 @@ fn category_section(rows: string, category: string, selected: string, open: bool
     }
     return "<details class=\"sensor-group cat-" + category_class(category) + "\"" + opened + ">" +
         "<summary><span class=\"sensor-group-title\"><strong>" +
-        escape_html(category_title(category)) + "</strong><small>" +
+        escape_html(category_title(loc, category)) + "</strong><small>" +
         rho_int_to_str(chosen) + " of " + rho_int_to_str(total) +
         " selected</small></span>" + chosen_names +
         "</summary><div class=\"sensor-grid\">" +
@@ -1018,7 +1018,7 @@ fn node_assignments_count(assignments: string, prefix: string) u32 {
 // node_bus_plan returns one row per attached module:
 //   name|status|detail
 // where status is `ok`, `shared` or `conflict`.
-fn node_bus_plan(index: u32) string {
+fn node_bus_plan(loc: string, index: u32) string {
     var rows: string = ""
     var assignments: string = ""
     var rest: string = module_names_for(node_module_children(index))
@@ -1037,13 +1037,13 @@ fn node_bus_plan(index: u32) string {
         }
         let manifest: string = module_manifest(name)
         if manifest == "" {
-            rows = rows + name + "|conflict|the module is no longer in robohub-drivers|not found\n"
+            rows = rows + name + "|conflict|" + mesh_t(loc, "catalog.bus.missing") + "|" + mesh_t(loc, "catalog.bus.not_found") + "\n"
             continue
         }
         let kind: string = yaml.value(manifest, "board.bus.type")
         let instance: string = yaml.value(manifest, "board.bus.instance")
         if kind == "" {
-            rows = rows + name + "|ok|no bus declared; nothing to share\n"
+            rows = rows + name + "|ok|" + mesh_t(loc, "catalog.bus.none") + "\n"
             continue
         }
         if kind == "onewire" {
@@ -1072,25 +1072,26 @@ fn node_bus_plan(index: u32) string {
                         chosen = chosen + 1
                     }
                     if assigned != "" {
-                        rows = rows + name + "|shared|I2C " + instance + " at " + assigned +
-                            " (from " + addresses + ")\n"
+                        rows = rows + name + "|shared|" + mesh_fill(mesh_fill(mesh_fill(mesh_t(loc, "catalog.bus.i2c_from"),
+                            "instance", instance), "address", assigned), "range", addresses) + "\n"
                     } else {
-                        rows = rows + name + "|conflict|no free address in " + addresses +
-                            " on " + instance + "\n"
+                        rows = rows + name + "|conflict|" + mesh_fill(mesh_fill(mesh_t(loc, "catalog.bus.i2c_full"),
+                            "range", addresses), "instance", instance) + "\n"
                     }
                 } else {
-                    rows = rows + name + "|shared|I2C " + instance +
-                        ", address not declared; set it in the build\n"
+                    rows = rows + name + "|shared|" + mesh_fill(mesh_t(loc, "catalog.bus.i2c_undeclared"),
+                        "instance", instance) + "\n"
                 }
                 continue
             }
             let key: string = "i2c:" + instance + ":" + address
             if node_assignments_used(assignments, key) {
-                rows = rows + name + "|conflict|I2C address " + address +
-                    " is already used on " + instance + "\n"
+                rows = rows + name + "|conflict|" + mesh_fill(mesh_fill(mesh_t(loc, "catalog.bus.i2c_used"),
+                    "address", address), "instance", instance) + "\n"
             } else {
                 assignments = node_assignments_add(assignments, key)
-                rows = rows + name + "|shared|I2C " + instance + " at " + address + "\n"
+                rows = rows + name + "|shared|" + mesh_fill(mesh_fill(mesh_t(loc, "catalog.bus.i2c_at"),
+                    "instance", instance), "address", address) + "\n"
             }
             continue
         }
@@ -1103,11 +1104,12 @@ fn node_bus_plan(index: u32) string {
             }
             let key: string = "spi:" + instance + ":cs:" + cs
             if node_assignments_used(assignments, key) {
-                rows = rows + name + "|conflict|SPI " + instance + " chip select " +
-                    cs + " is already used\n"
+                rows = rows + name + "|conflict|" + mesh_fill(mesh_fill(mesh_t(loc, "catalog.bus.spi_used"),
+                    "instance", instance), "cs", cs) + "\n"
             } else {
                 assignments = node_assignments_add(assignments, key)
-                rows = rows + name + "|shared|SPI " + instance + " with " + cs + "\n"
+                rows = rows + name + "|shared|" + mesh_fill(mesh_fill(mesh_t(loc, "catalog.bus.spi_with"),
+                    "instance", instance), "cs", cs) + "\n"
             }
             continue
         }
@@ -1117,10 +1119,10 @@ fn node_bus_plan(index: u32) string {
         let key: string = kind + ":" + instance + ":" + channel
         var where: string = kind + " " + instance
         if channel != "" {
-            where = where + " channel " + channel
+            where = where + " " + mesh_t(loc, "catalog.bus.channel") + " " + channel
         }
         if node_assignments_used(assignments, key) {
-            rows = rows + name + "|conflict|" + where + " is already used\n"
+            rows = rows + name + "|conflict|" + mesh_fill(mesh_t(loc, "catalog.bus.used"), "where", where) + "\n"
         } else {
             assignments = node_assignments_add(assignments, key)
             rows = rows + name + "|ok|" + where + "\n"
@@ -1130,7 +1132,7 @@ fn node_bus_plan(index: u32) string {
 }
 
 fn node_bus_conflicts(index: u32) bool {
-    var rest: string = node_bus_plan(index)
+    var rest: string = node_bus_plan("en", index)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
         let line: string = ""
@@ -1153,7 +1155,7 @@ fn node_bus_conflicts(index: u32) bool {
 // making the parent fail to build.
 fn node_build_sensors(index: u32) string {
     var out: string = ""
-    var plan: string = node_bus_plan(index)
+    var plan: string = node_bus_plan("en", index)
     var rest: string = plan
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -1181,7 +1183,7 @@ fn node_build_sensors(index: u32) string {
 // with `m<index>.` so two sensors that measure the same quantity on one node
 // stay two series instead of overwriting each other.
 fn node_telemetry_sensors(index: u32) string {
-    let plan: string = node_bus_plan(index)
+    let plan: string = node_bus_plan("en", index)
     var children: string = node_module_children(index)
     var out: string = ""
     var rest_plan: string = plan
@@ -1211,8 +1213,8 @@ fn node_telemetry_sensors(index: u32) string {
     return out
 }
 
-fn node_bus_html(index: u32) string {
-    let plan: string = node_bus_plan(index)
+fn node_bus_html(loc: string, index: u32) string {
+    let plan: string = node_bus_plan(loc, index)
     if plan == "" {
         return "<p><small>No modules attached.</small></p>"
     }
@@ -1425,7 +1427,7 @@ fn driver_manifest(name: string) string {
     return field(row_by_name(driver_rows(), name), 5)
 }
 
-fn options_from_rows(rows: string, kind: string, role: string, selected: string) string {
+fn options_from_rows(loc: string, rows: string, kind: string, role: string, selected: string) string {
     var out: string = ""
     var rest: string = rows
     while rest != "" {
@@ -1442,8 +1444,14 @@ fn options_from_rows(rows: string, kind: string, role: string, selected: string)
             continue
         }
         let name: string = field(line, 0)
-        let label: string = field(line, 1)
-        let description: string = field(line, 2)
+        var label: string = field(line, 1)
+        var description: string = field(line, 2)
+        // The host itself is the one board Mesh describes rather than the
+        // registry, so its words are Mesh's own.
+        if kind == "board" && name == "native" {
+            label = mesh_t(loc, "catalog.native.label")
+            description = mesh_t(loc, "catalog.native.description")
+        }
         if kind == "board" {
             if usable_board(line, role) {
                 out = out + option(name, label, description, selected)
@@ -1455,7 +1463,7 @@ fn options_from_rows(rows: string, kind: string, role: string, selected: string)
         }
     }
     if selected != "" && rho_str_index_of(out, "value=\"" + selected + "\"") < 0 {
-        out = out + option(selected, selected + " (not in this registry)", "", selected)
+        out = out + option(selected, mesh_fill(mesh_t(loc, "catalog.not_in_registry"), "name", selected), "", selected)
     }
     return out
 }

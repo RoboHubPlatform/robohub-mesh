@@ -23,10 +23,11 @@ fn mesh_home(req: Request) Response {
 
 // mesh_new_mesh_form is the card that starts a mesh: a name, and Mesh gives it
 // its own area, ports and gateway.
-fn mesh_new_mesh_form() string {
+fn mesh_new_mesh_form(loc: string) string {
     return "<form class=\"new-mesh\" id=\"new-mesh\" method=\"post\" action=\"/mesh/project/new\">" +
-        "<strong>+ New mesh</strong><input type=\"text\" name=\"name\" placeholder=\"Greenhouse\" aria-label=\"Name\" required>" +
-        "<button type=\"submit\">Create</button><small>its own area, ports and gateway</small></form>"
+        "<strong>" + mesh_t(loc, "home.new_mesh") + "</strong><input type=\"text\" name=\"name\" placeholder=\"" +
+        escape_html(mesh_t(loc, "home.new_mesh_placeholder")) + "\" aria-label=\"" + escape_html(mesh_t(loc, "home.name")) + "\" required>" +
+        "<button type=\"submit\">" + mesh_t(loc, "home.create") + "</button><small>" + mesh_t(loc, "home.new_mesh_hint") + "</small></form>"
 }
 
 // mesh_old_target is where an old address leads in the agora of the project
