@@ -23,3 +23,5 @@ jobs:
       siblings: robohub robohub-drivers robohub-devices robohub-pico robohub-linux robohub-gateway
       components: rho-auth rho-log rho-sql rho-sql-sqlite rho-robohub
       build: .
+      # The wizard smoke builds a real Pico 2W board, with rho-target's compiler.
+      machine_install: rho-target:arm-none-eabi-gcc
