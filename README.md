@@ -22,3 +22,7 @@ rho test .                   # the unit suite and the HTTP smoke test
 
 Its guide is [docs/index.md](docs/index.md); the running application serves it
 under Documentation.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -19,6 +19,7 @@ jobs:
     with:
       # robohub-pico and robohub-linux: the boards a production build is
       # offered for (or not) are read from their platforms.
-      siblings: robohub robohub-drivers robohub-devices robohub-pico robohub-linux
+      # robohub-gateway: the wizard smoke builds and starts a real gateway.
+      siblings: robohub robohub-drivers robohub-devices robohub-pico robohub-linux robohub-gateway
       components: rho-auth rho-log rho-sql rho-sql-sqlite rho-robohub
       build: .
