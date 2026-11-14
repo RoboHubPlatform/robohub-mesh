@@ -328,7 +328,7 @@ fn mesh_gateway_audience(path: string) string {
 }
 
 // mesh_http_base is an address a person wrote in the plan as a URL to request:
-// `192.168.100.99` is `http://192.168.100.99`. curl took an address with no
+// `192.0.2.10` is `http://192.0.2.10`. curl took an address with no
 // scheme; the HTTP client does not, and a plug written that way went unread.
 fn mesh_http_base(address: string) string {
     if address == "" || rho_str_starts_with(address, "http://") || rho_str_starts_with(address, "https://") {

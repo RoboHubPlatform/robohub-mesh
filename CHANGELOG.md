@@ -458,7 +458,7 @@ A module's chip on its board's card shows the board's newest reading: firmware b
 
 ## [0.18.8] - 2026-11-13
 
-A device whose address the plan writes without a scheme (`192.168.100.99`) is read again: requests now go through the HTTP client, which needs `http://`, and a Shelly written that way went quiet. The scheme is supplied when it is missing, for polls, reads and commands alike. A device read returns its answer rather than writing it to a file two polls could share.
+A device whose address the plan writes without a scheme (`192.0.2.10`) is read again: requests now go through the HTTP client, which needs `http://`, and a Shelly written that way went quiet. The scheme is supplied when it is missing, for polls, reads and commands alike. A device read returns its answer rather than writing it to a file two polls could share.
 
 ## [0.18.9] - 2026-11-13
 
