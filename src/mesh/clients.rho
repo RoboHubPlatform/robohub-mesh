@@ -87,8 +87,8 @@ fn mesh_client_rewrite(match_app: string, match_instance: string,
         if line == "" {
             continue
         }
-        let app: string = mesh_json_string_field(line, "app_name")
-        let instance: string = mesh_json_string_field(line, "instance_id")
+        let app: string = json_str_field(line, "app_name")
+        let instance: string = json_str_field(line, "instance_id")
         if rho_str_eq(app, match_app) && rho_str_eq(instance, match_instance) {
             continue
         }
@@ -102,11 +102,11 @@ fn mesh_client_rewrite(match_app: string, match_instance: string,
 
 fn mesh_client_register(req: Request) Response {
     let body: string = request_body(req)
-    let app_name: string = str_trim(mesh_json_string_field(body, "app_name"))
-    let project: string = str_trim(mesh_json_string_field(body, "project"))
-    let instance_id: string = str_trim(mesh_json_string_field(body, "instance_id"))
-    let callback_url: string = str_trim(mesh_json_string_field(body, "callback_url"))
-    let topics: string = str_trim(mesh_json_string_field(body, "topics"))
+    let app_name: string = str_trim(json_str_field(body, "app_name"))
+    let project: string = str_trim(json_str_field(body, "project"))
+    let instance_id: string = str_trim(json_str_field(body, "instance_id"))
+    let callback_url: string = str_trim(json_str_field(body, "callback_url"))
+    let topics: string = str_trim(json_str_field(body, "topics"))
     if app_name == "" || project == "" || callback_url == "" {
         return json(400, "{\"ok\":false,\"error\":\"app_name, project and callback_url are required\"}")
     }
@@ -137,10 +137,10 @@ fn mesh_client_register(req: Request) Response {
         if line == "" {
             continue
         }
-        if rho_str_eq(mesh_json_string_field(line, "app_name"), app_name) &&
-            rho_str_eq(mesh_json_string_field(line, "instance_id"), instance_id) {
-            secret = mesh_json_string_field(line, "secret")
-            let prior: string = mesh_json_string_field(line, "created_s")
+        if rho_str_eq(json_str_field(line, "app_name"), app_name) &&
+            rho_str_eq(json_str_field(line, "instance_id"), instance_id) {
+            secret = json_str_field(line, "secret")
+            let prior: string = json_str_field(line, "created_s")
             if prior != "" {
                 created = rho_int_from_str(prior)
             }
@@ -166,7 +166,7 @@ fn mesh_client_register(req: Request) Response {
 
 fn mesh_client_heartbeat(req: Request) Response {
     let body: string = request_body(req)
-    let client_id: string = str_trim(mesh_json_string_field(body, "client_id"))
+    let client_id: string = str_trim(json_str_field(body, "client_id"))
     if client_id == "" {
         return json(400, "{\"ok\":false,\"error\":\"client_id is required\"}")
     }
@@ -188,20 +188,20 @@ fn mesh_client_heartbeat(req: Request) Response {
         if line == "" {
             continue
         }
-        let id: string = mesh_json_string_field(line, "id")
+        let id: string = json_str_field(line, "id")
         if rho_str_eq(id, client_id) {
-            if !mesh_scoped(req, mesh_json_string_field(line, "project")) {
+            if !mesh_scoped(req, json_str_field(line, "project")) {
                 return mesh_scope_denied()
             }
-            let created: string = mesh_json_string_field(line, "created_s")
+            let created: string = json_str_field(line, "created_s")
             line = mesh_client_line(
                 id,
-                mesh_json_string_field(line, "app_name"),
-                mesh_json_string_field(line, "project"),
-                mesh_json_string_field(line, "instance_id"),
-                mesh_json_string_field(line, "callback_url"),
-                mesh_json_string_field(line, "secret"),
-                mesh_json_string_field(line, "topics"),
+                json_str_field(line, "app_name"),
+                json_str_field(line, "project"),
+                json_str_field(line, "instance_id"),
+                json_str_field(line, "callback_url"),
+                json_str_field(line, "secret"),
+                json_str_field(line, "topics"),
                 rho_int_from_str(created), now)
             found = true
         }
@@ -232,12 +232,12 @@ fn mesh_client_list(req: Request) Response {
         if line == "" {
             continue
         }
-        let client_project: string = mesh_json_string_field(line, "project")
+        let client_project: string = json_str_field(line, "project")
         if !mesh_scoped(req, client_project) {
             continue
         }
         let last_seen: u32 = rho_int_from_str(
-            mesh_json_string_field(line, "last_seen_s"))
+            json_str_field(line, "last_seen_s"))
         var online: string = "false"
         if now >= last_seen && now - last_seen < 90 {
             online = "true"
@@ -246,11 +246,11 @@ fn mesh_client_list(req: Request) Response {
             out = out + ","
         }
         first = false
-        out = out + "{\"id\":" + json_string(mesh_json_string_field(line, "id")) +
-            ",\"app_name\":" + json_string(mesh_json_string_field(line, "app_name")) +
-            ",\"project\":" + json_string(mesh_json_string_field(line, "project")) +
-            ",\"instance_id\":" + json_string(mesh_json_string_field(line, "instance_id")) +
-            ",\"topics\":" + json_string(mesh_json_string_field(line, "topics")) +
+        out = out + "{\"id\":" + json_string(json_str_field(line, "id")) +
+            ",\"app_name\":" + json_string(json_str_field(line, "app_name")) +
+            ",\"project\":" + json_string(json_str_field(line, "project")) +
+            ",\"instance_id\":" + json_string(json_str_field(line, "instance_id")) +
+            ",\"topics\":" + json_string(json_str_field(line, "topics")) +
             ",\"online\":" + online +
             ",\"last_seen_s\":" + rho_int_to_str(last_seen) + "}"
     }
@@ -324,9 +324,9 @@ fn mesh_client_deliver(project: string, app_name: string, client_id: string,
 
 fn mesh_publish(req: Request) Response {
     let body: string = request_body(req)
-    let project: string = str_trim(mesh_json_string_field(body, "project"))
-    let topic: string = str_trim(mesh_json_string_field(body, "topic"))
-    let payload: string = mesh_json_string_field(body, "payload")
+    let project: string = str_trim(json_str_field(body, "project"))
+    let topic: string = str_trim(json_str_field(body, "topic"))
+    let payload: string = json_str_field(body, "payload")
     if topic == "" {
         return json(400, "{\"ok\":false,\"error\":\"topic is required\"}")
     }
@@ -348,11 +348,11 @@ fn mesh_publish(req: Request) Response {
         if line == "" {
             continue
         }
-        let client_project: string = mesh_json_string_field(line, "project")
+        let client_project: string = json_str_field(line, "project")
         if !mesh_scoped(req, client_project) {
             continue
         }
-        let topics: string = mesh_json_string_field(line, "topics")
+        let topics: string = json_str_field(line, "topics")
         if project != "" && !rho_str_eq(project, client_project) {
             continue
         }
@@ -360,10 +360,10 @@ fn mesh_publish(req: Request) Response {
             continue
         }
         if mesh_client_deliver(client_project,
-                mesh_json_string_field(line, "app_name"),
-                mesh_json_string_field(line, "id"),
-                mesh_json_string_field(line, "callback_url"),
-                mesh_json_string_field(line, "secret"), topic, payload) {
+                json_str_field(line, "app_name"),
+                json_str_field(line, "id"),
+                json_str_field(line, "callback_url"),
+                json_str_field(line, "secret"), topic, payload) {
             delivered = delivered + 1
         }
     }

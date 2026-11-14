@@ -289,27 +289,8 @@ fn cross_changes_waiting() u32 {
     return count
 }
 
-// cross_lower is text with A to Z as a to z, so a search ignores case.
-fn cross_lower(text: string) string {
-    let upper: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    let lower: string = "abcdefghijklmnopqrstuvwxyz"
-    var out: string = ""
-    var i: u32 = 0
-    while i < u32(rho_strlen(text)) {
-        let ch: string = rho_str_slice(text, i, 1)
-        let at: i32 = rho_str_index_of(upper, ch)
-        if at >= 0 {
-            out = out + rho_str_slice(lower, u32(at), 1)
-        } else {
-            out = out + ch
-        }
-        i = i + 1
-    }
-    return out
-}
-
 fn cross_matches(text: string, wanted: string) bool {
-    return wanted != "" && rho_str_index_of(cross_lower(text), cross_lower(wanted)) >= 0
+    return wanted != "" && rho_str_index_of(str_lower(text), str_lower(wanted)) >= 0
 }
 
 // mesh_search finds nodes by name, id, board, module or device in every mesh.

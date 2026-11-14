@@ -70,7 +70,7 @@ fn mesh_token_rewrite(project: string, match_name: string,
         if line == "" {
             continue
         }
-        if rho_str_eq(mesh_json_string_field(line, "name"), match_name) {
+        if rho_str_eq(json_str_field(line, "name"), match_name) {
             continue
         }
         out = out + line + "\n"
@@ -185,11 +185,11 @@ fn mesh_project_token_revoke(req: Request) Response {
         if line == "" {
             continue
         }
-        if rho_str_eq(mesh_json_string_field(line, "name"), name) {
+        if rho_str_eq(json_str_field(line, "name"), name) {
             line = mesh_token_line(name,
-                mesh_json_string_field(line, "token"),
-                rho_int_from_str(mesh_json_string_field(line, "created_s")),
-                rho_int_from_str(mesh_json_string_field(line, "expires_s")), 1)
+                json_str_field(line, "token"),
+                rho_int_from_str(json_str_field(line, "created_s")),
+                rho_int_from_str(json_str_field(line, "expires_s")), 1)
             found = true
         }
         out = out + line + "\n"
@@ -220,11 +220,11 @@ fn mesh_tokens_html(project: string) string {
         if line == "" {
             continue
         }
-        let name: string = mesh_json_string_field(line, "name")
-        let token: string = mesh_json_string_field(line, "token")
+        let name: string = json_str_field(line, "name")
+        let token: string = json_str_field(line, "token")
         let expires: u32 = rho_int_from_str(
-            mesh_json_string_field(line, "expires_s"))
-        let revoked: string = mesh_json_string_field(line, "revoked")
+            json_str_field(line, "expires_s"))
+        let revoked: string = json_str_field(line, "revoked")
         var status: string = "active"
         if revoked == "1" {
             status = "revoked"
@@ -269,8 +269,8 @@ fn mesh_subject_revoked(project: string, subject: string) bool {
         if line == "" {
             continue
         }
-        if rho_str_eq(mesh_json_string_field(line, "name"), subject) &&
-            rho_str_eq(mesh_json_string_field(line, "revoked"), "1") {
+        if rho_str_eq(json_str_field(line, "name"), subject) &&
+            rho_str_eq(json_str_field(line, "revoked"), "1") {
             return true
         }
     }

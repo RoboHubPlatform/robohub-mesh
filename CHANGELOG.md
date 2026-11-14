@@ -471,3 +471,7 @@ Trimming, URL decoding and form fields come from the toolchain (rho 0.7.0) rathe
 ## [0.18.11] - 2026-11-14
 
 From a security review: a gateway's or device's token and a client's secret reach curl from an owner-only file rather than its command line, where any user of the machine could read them, and a board's `project.conf` (its Wi-Fi password) is written owner-only.
+
+## [0.18.12] - 2026-11-14
+
+Uses the toolchain's `str_lower` and `json_str_field` instead of its own copies (rho 0.8.0).

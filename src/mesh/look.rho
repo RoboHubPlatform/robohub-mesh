@@ -275,7 +275,7 @@ fn look_module_picker(action: string, index: u32) string {
             let shown_name: string = look_short(field(line, 1))
             let about: string = module_summary(field(line, 0))
             items = items + "<button type=\"submit\" name=\"module\" value=\"" + escape_html(field(line, 0)) +
-                "\" data-q=\"" + escape_html(cross_lower(shown_name + " " + field(line, 0) + " " + about)) + "\">" +
+                "\" data-q=\"" + escape_html(str_lower(shown_name + " " + field(line, 0) + " " + about)) + "\">" +
                 escape_html(shown_name) + "<span>" + escape_html(about) + "</span></button>"
         }
         if items != "" {

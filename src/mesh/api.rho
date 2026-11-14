@@ -306,20 +306,6 @@ fn mesh_sources_json(project: string, origin: string) string {
     return "[" + out + "]"
 }
 
-fn mesh_json_string_field(text: string, key: string) string {
-    let at: i32 = rho_str_index_of(text, "\"" + key + "\":\"")
-    if at < 0 {
-        return ""
-    }
-    let start: u32 = u32(at) + u32(rho_strlen(key)) + 4
-    let rest: string = rho_str_slice(text, start, u32(rho_strlen(text)) - start)
-    let end: i32 = rho_str_index_of(rest, "\"")
-    if end < 0 {
-        return ""
-    }
-    return rho_str_slice(rest, 0, u32(end))
-}
-
 fn mesh_gateway_audience(path: string) string {
     if rho_str_starts_with(path, "/api/v1/") {
         return "gateway"
@@ -395,9 +381,9 @@ fn gateway_device_object(base: string, name: string, address: string,
             object = rho_str_slice(rest, 0, u32(at) + 1)
             rest = rho_str_slice(rest, u32(at) + 3, u32(rho_strlen(rest)) - u32(at) - 3)
         }
-        let found_name: string = mesh_json_string_field(object, "name")
-        let found_address: string = mesh_json_string_field(object, "address")
-        let found_id: string = mesh_json_string_field(object, "device_id")
+        let found_name: string = json_str_field(object, "name")
+        let found_address: string = json_str_field(object, "address")
+        let found_id: string = json_str_field(object, "device_id")
         if (device_id != "" && found_id == device_id) ||
             (name != "" && found_name == name) ||
             (address != "" && found_address == address) {
@@ -558,7 +544,7 @@ fn mesh_source_value(project: string, source: string) string {
             return ""
         }
         if field_name == "state" {
-            return mesh_json_string_field(object, field_name)
+            return json_str_field(object, field_name)
         }
         return json_number(object, field_name)
     }
