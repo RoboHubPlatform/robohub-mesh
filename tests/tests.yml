@@ -16,3 +16,7 @@ suites:
     kind: command
     tags: [smoke]
     command: [python3, tests/wizard_smoke.py]
+  - name: security-smoke
+    kind: command
+    tags: [smoke, security]
+    command: [python3, tests/security_smoke.py]

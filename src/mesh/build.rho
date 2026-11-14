@@ -202,7 +202,9 @@ fn run_shell(command: string, label: string) u32 {
     let command_file: string = wizard_dir() + "/stage-command.sh"
     let stage_file: string = wizard_dir() + "/stage-run.sh"
     ignore_bool(rho_write_text(command_file, command + "\n"))
-    let script: string = "#!/bin/sh\n" +
+    // What a step makes — a board's image, a generated header with its key — is
+    // readable by Mesh's user alone.
+    let script: string = "#!/bin/sh\numask 077\n" +
         "printf '\\n== %s ==\\n' " + shell_quote(label) + " >> " + shell_quote(progress) + "\n" +
         ". " + shell_quote(command_file) + " >> " + shell_quote(progress) + " 2>&1\n" +
         "exit $?\n"
@@ -473,7 +475,10 @@ fn prepare_node() u32 {
     let target: string = node_dir()
     let command: string = "rm -rf " + shell_quote(target) + " && mkdir -p " + shell_quote(target) +
         " && cp -a " + shell_quote(source) + "/. " + shell_quote(target) + "/" +
-        " && rm -rf " + shell_quote(target + "/build")
+        " && rm -rf " + shell_quote(target + "/build") +
+        // The board's folder will hold its key (robohub_secret.h) and its Wi-Fi
+        // password (project.conf), and its image both: Mesh's user alone reads it.
+        " && chmod -R go-rwx " + shell_quote(target)
     let code: u32 = run_shell(command, "prepare-node")
     if code != 0 {
         return code
@@ -712,9 +717,12 @@ fn handler_start_native() u32 {
     if attached {
         prefix = "echo 'pico: attached to this host'; "
     }
+    let scheme: string = gateway_scheme(current_project())
+    // The gateway admits the boards its manifest lists; it is read beside the key.
+    ignore_bool(mesh_manifest_write(current_project(), true))
     let command: string = prefix +
-        "echo 'gateway: http://127.0.0.1:" + rest + " (this host)'; " +
-        "echo 'gateway: http://" + address + ":" + rest + " (network)'; " +
+        "echo 'gateway: " + scheme + "://127.0.0.1:" + rest + " (this host)'; " +
+        "echo 'gateway: " + scheme + "://" + address + ":" + rest + " (network)'; " +
         // This mesh's gateway is replaced; another mesh's keeps running. The
         // process id is written beside the project, which is what stops it.
         fleet_stop_command(current_project()) + "; cd " +
@@ -725,9 +733,16 @@ fn handler_start_native() u32 {
     if started != 0 {
         return started
     }
+    // The probe asks this machine's own gateway whether it is up and sends
+    // nothing; a certificate made for the gateway's network name does not name
+    // 127.0.0.1, so it is not checked here.
+    var insecure: string = ""
+    if scheme == "https" {
+        insecure = "-k "
+    }
     let probe: string = "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do " +
-        "if curl -fsS -m 1 " + shell_quote("http://127.0.0.1:" + rest + "/healthz") + " >/dev/null 2>&1; then exit 0; fi; " +
-        "sleep 0.25; done; echo " + shell_quote("gateway did not answer at http://127.0.0.1:" + rest) + "; exit 1"
+        "if curl -fsS " + insecure + "-m 1 " + shell_quote(scheme + "://127.0.0.1:" + rest + "/healthz") + " >/dev/null 2>&1; then exit 0; fi; " +
+        "sleep 0.25; done; echo " + shell_quote("gateway did not answer at " + scheme + "://127.0.0.1:" + rest) + "; exit 1"
     let probed: u32 = run_shell(probe, "start-gateway-probe")
     if probed == 0 {
         // The gateway Mesh started is the one Mesh reads; recording it here is
@@ -735,7 +750,7 @@ fn handler_start_native() u32 {
         let active: string = current_project()
         if active != "" {
             save_setting_at(project_file(active), "gateway_url",
-                "http://127.0.0.1:" + rest)
+                scheme + "://127.0.0.1:" + rest)
         }
     }
     return probed
@@ -770,20 +785,25 @@ fn handler_start_board() u32 {
         }
         var device_key: string = ""
         if mesh_gateway_key_path(current_project()) != "" {
-            let key_push: u32 = run_shell(adb + " push " + shell_quote(mesh_gateway_key_file(current_project())) +
-                " " + shell_quote(apps_dir + "/gateway.key") + " && " + adb + " shell chmod 600 " +
-                shell_quote(apps_dir + "/gateway.key"), "push-gateway-secret")
+            let key_push: u32 = run_shell(adb_secret_push(adb, mesh_gateway_key_file(current_project()),
+                apps_dir + "/gateway.key"), "push-gateway-secret")
             if key_push != 0 {
                 return key_push
             }
             device_key = apps_dir + "/gateway.key"
+            // The boards it admits, beside its key.
+            ignore_bool(mesh_manifest_write(current_project(), true))
+            let manifest_push: u32 = run_shell(adb_secret_push(adb, mesh_manifest_file(current_project()),
+                apps_dir + "/nodes.txt"), "push-gateway-manifest")
+            if manifest_push != 0 {
+                return manifest_push
+            }
         }
         // The key it reports through its parent with, beside its own.
         var device_relay: string = ""
         if link_parent(current_project()) != "" && link_relay_key(current_project()) != "" {
-            let relay_push: u32 = run_shell(adb + " push " + shell_quote(link_relay_key_file(current_project())) +
-                " " + shell_quote(apps_dir + "/relay.key") + " && " + adb + " shell chmod 600 " +
-                shell_quote(apps_dir + "/relay.key"), "push-relay-secret")
+            let relay_push: u32 = run_shell(adb_secret_push(adb, link_relay_key_file(current_project()),
+                apps_dir + "/relay.key"), "push-relay-secret")
             if relay_push != 0 {
                 return relay_push
             }
@@ -823,19 +843,24 @@ fn handler_start_board() u32 {
         // by the gateway's user alone on the machine it runs on.
         var remote_key: string = ""
         if mesh_gateway_key_path(current_project()) != "" {
-            let secret_code: u32 = run_shell("scp " + shell_quote(mesh_gateway_key_file(current_project())) + " " +
-                shell_quote(target + ":" + remote + "/gateway.key") + " && ssh " + shell_quote(target) + " " +
-                shell_quote("chmod 600 " + shell_quote(remote + "/gateway.key")), "push-gateway-secret")
+            let secret_code: u32 = run_shell(ssh_secret_copy(target, mesh_gateway_key_file(current_project()),
+                remote + "/gateway.key"), "push-gateway-secret")
             if secret_code != 0 {
                 return secret_code
             }
             remote_key = remote + "/gateway.key"
+            // The boards it admits, beside its key.
+            ignore_bool(mesh_manifest_write(current_project(), true))
+            let manifest_code: u32 = run_shell(ssh_secret_copy(target, mesh_manifest_file(current_project()),
+                remote + "/nodes.txt"), "push-gateway-manifest")
+            if manifest_code != 0 {
+                return manifest_code
+            }
         }
         var remote_relay: string = ""
         if link_parent(current_project()) != "" && link_relay_key(current_project()) != "" {
-            let relay_code: u32 = run_shell("scp " + shell_quote(link_relay_key_file(current_project())) + " " +
-                shell_quote(target + ":" + remote + "/relay.key") + " && ssh " + shell_quote(target) + " " +
-                shell_quote("chmod 600 " + shell_quote(remote + "/relay.key")), "push-relay-secret")
+            let relay_code: u32 = run_shell(ssh_secret_copy(target, link_relay_key_file(current_project()),
+                remote + "/relay.key"), "push-relay-secret")
             if relay_code != 0 {
                 return relay_code
             }
@@ -850,7 +875,7 @@ fn handler_start_board() u32 {
             let active: string = current_project()
             if active != "" {
                 save_setting_at(project_file(active), "gateway_url",
-                    "http://" + host + ":" + default_value("rest_port", fleet_rest_port(current_project())))
+                    gateway_scheme(active) + "://" + host + ":" + default_value("rest_port", fleet_rest_port(current_project())))
             }
         }
         return started
@@ -858,18 +883,124 @@ fn handler_start_board() u32 {
     return 1
 }
 
-fn gateway_reachable_for(gateway: string, host: string, rest: string) bool {
+fn gateway_reachable_for(project: string, gateway: string, host: string, rest: string) bool {
     var address: string = host
     if gateway == "native" {
         address = "127.0.0.1"
     }
     let report: string = wizard_report("gateway-health")
-    let url: string = "http://" + address + ":" + rest + "/healthz"
+    let scheme: string = gateway_scheme(project)
+    let url: string = scheme + "://" + address + ":" + rest + "/healthz"
     if !deploy_word_ok(address) || !mesh_arg_ok(url) {
         return false
     }
-    let code: u32 = mesh_curl("-fsS\n-m\n1\n" + url + "\n", report)
+    // A gateway on this machine is asked only whether it is up, and its
+    // certificate names its network address, not the loopback: it is not
+    // checked there. One on another machine is checked as every caller checks it.
+    var flags: string = "-fsS\n-m\n1\n"
+    if scheme == "https" && address == "127.0.0.1" {
+        flags = flags + "-k\n"
+    }
+    let code: u32 = mesh_curl(flags + url + "\n", report)
     return code == 0
+}
+
+// gateway_tls_on is whether a mesh's gateway serves HTTPS: the project names a
+// certificate and a key (paths on the gateway's machine), and gateway_env hands
+// them to it.
+fn gateway_tls_on(project: string) bool {
+    if project == "" {
+        return false
+    }
+    let file: string = project_file(project)
+    let cert: string = state_value_in(file, "gateway_tls_cert")
+    let key: string = state_value_in(file, "gateway_tls_key")
+    return cert != "" && key != "" && deploy_path_ok(cert) && deploy_path_ok(key)
+}
+
+// gateway_scheme is the scheme a mesh's gateway is reached with.
+fn gateway_scheme(project: string) string {
+    if gateway_tls_on(project) {
+        return "https"
+    }
+    return "http"
+}
+
+// remote_shell_path is a remote path as one word of the remote shell: a path
+// under the remote home keeps its `~` meaning.
+fn remote_shell_path(path: string) string {
+    if rho_str_starts_with(path, "~/") {
+        return "\"$HOME\"/" + shell_quote(rho_str_slice(path, 2, u32(rho_strlen(path)) - 2))
+    }
+    return shell_quote(path)
+}
+
+// ssh_secret_copy is the command that puts a secret file on a gateway's host:
+// streamed over ssh into a file the remote shell creates under umask 077, so it
+// is never readable by anyone else even for a moment, then renamed into place.
+fn ssh_secret_copy(target: string, local: string, remote: string) string {
+    let tmp: string = remote_shell_path(remote + ".tmp")
+    return "ssh " + shell_quote(target) + " " +
+        shell_quote("umask 077 && cat > " + tmp + " && chmod 600 " + tmp + " && mv -f " + tmp + " " +
+            remote_shell_path(remote)) + " < " + shell_quote(local)
+}
+
+// adb_secret_push puts a secret file on a gateway reached over adb: the file is
+// made empty and 0600 first, then written, so it never exists readable by
+// anyone else.
+fn adb_secret_push(adb: string, local: string, remote: string) string {
+    return adb + " shell " + shell_quote("umask 077; rm -f " + remote + "; touch " + remote + "; chmod 600 " + remote) +
+        " && " + adb + " push " + shell_quote(local) + " " + shell_quote(remote) +
+        " && " + adb + " shell chmod 600 " + shell_quote(remote)
+}
+
+// gateway_manifest_command is the command that sends a mesh's node manifest to
+// its gateway's host, beside the key it was deployed with, or "" for a gateway
+// on this machine, which reads the file Mesh wrote. "-" when the gateway's
+// deployment cannot be read.
+fn gateway_manifest_command(project: string) string {
+    let file: string = project_file(project)
+    let gateway: string = state_value_in(file, "gateway")
+    if gateway == "" || gateway == "native" {
+        return ""
+    }
+    let manifest: string = board_manifest(gateway)
+    let method: string = yaml.value(manifest, "deployment.method")
+    let local: string = mesh_manifest_file(project)
+    if method == "ssh" {
+        let user: string = yaml.value(manifest, "deployment.user")
+        let remote: string = yaml.value(manifest, "deployment.path")
+        var host: string = state_value_in(file, "gateway_host")
+        if host == "" {
+            host = "127.0.0.1"
+        }
+        if !deploy_word_ok(user) || !deploy_word_ok(host) || !deploy_path_ok(remote) {
+            return "-"
+        }
+        return ssh_secret_copy(user + "@" + host, local, remote + "/nodes.txt")
+    }
+    if method == "adb" {
+        let apps_dir: string = yaml.value(manifest, "deployment.apps_dir")
+        if !deploy_path_ok(apps_dir) {
+            return "-"
+        }
+        let adb: string = "adb -t $(adb devices -l | awk 'NR==2 {sub(\"transport_id:\", \"\", $4); print $4}')"
+        return adb_secret_push(adb, local, apps_dir + "/nodes.txt")
+    }
+    return "-"
+}
+
+// gateway_push_manifest sends a mesh's node manifest to its gateway's host
+// after a board is revoked or admitted again; 0 when it is in place.
+fn gateway_push_manifest(project: string) u32 {
+    let command: string = gateway_manifest_command(project)
+    if command == "" {
+        return 0
+    }
+    if command == "-" || !rho_path_exists(mesh_manifest_file(project)) {
+        return 1
+    }
+    return run_shell(command, "push-gateway-manifest")
 }
 
 // gateway_reachable is whether the active mesh's gateway answers, as the

@@ -1,0 +1,192 @@
+//
+// @file nodekey.rho
+// @brief The board key a Linux host node fetches with its keeper credential.
+//
+// @module mesh.nodekey
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-14
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.nodekey
+
+// A Linux host node (a gateway node on a single-board computer, say) speaks the
+// same board protocol as a microcontroller and needs the same thing: its board id
+// and the key its gateway derives for it. It is not flashed, so it cannot be
+// handed them in an image. It enrolls with the keeper instead (`rho bootstrap`),
+// and then asks here, through the keeper's origin and over HTTPS:
+//
+//   POST /app/mesh/mesh/api/nodes/key
+//   Authorization: Node <device>:<credential>
+//
+// Mesh asks the keeper, over the loopback, whom the credential belongs to
+// (/api/nodes/verify answers its device and its placement: project, area,
+// node), finds the board planned at that placement, and answers its id and key.
+// The key is derived each time and never written to a log; a client has a small
+// budget of calls, so this is not a way to guess credentials.
+
+const NODEKEY_PER_CLIENT: u32 = 10
+const NODEKEY_PER_WINDOW: u32 = 60
+const NODEKEY_WINDOW_SECONDS: u32 = 60
+
+fn nodekey_refused(status: u32, error: string) Response {
+    return Response{ status, "{\"ok\":false,\"error\":" + json_string(error) + "}", "application/json",
+        "Cache-Control: no-store" }
+}
+
+// nodekey_take counts one call against the client's budget and the budget of
+// every client together; false when either is spent.
+fn nodekey_take(req: Request) bool {
+    let dir: string = wizard_dir() + "/rate"
+    // The keeper's proxy reaches Mesh over loopback and appends the caller's
+    // address; anything else is a connection to Mesh's own port, counted by its
+    // own address.
+    let peer: string = request_remote(req)
+    var client: string = nodekey_client(header_str(req, "X-Forwarded-For"))
+    if peer != "" && peer != "127.0.0.1" && peer != "::1" {
+        client = peer
+    }
+    rho_lock("mesh.nodekey")
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + dir + "\n", wizard_report("nodekey-mkdir")))
+    let now: u32 = mesh_now_seconds()
+    let own_file: string = dir + "/nodekey-" + nodekey_slot(client)
+    let all_file: string = dir + "/nodekey-all"
+    let own: string = nodekey_count(str_trim(rho_read_text(own_file)), now, NODEKEY_WINDOW_SECONDS)
+    let all: string = nodekey_count(str_trim(rho_read_text(all_file)), now, NODEKEY_WINDOW_SECONDS)
+    ignore_bool(rho_write_text(own_file, own + "\n"))
+    ignore_bool(rho_write_text(all_file, all + "\n"))
+    rho_unlock("mesh.nodekey")
+    return !nodekey_over(own, NODEKEY_PER_CLIENT) && !nodekey_over(all, NODEKEY_PER_WINDOW)
+}
+
+// nodekey_keeper is the keeper Mesh asks: the one it was started with when that
+// is on this machine or reached over HTTPS, else the keeper's own port here. A
+// credential is never sent in the clear across a network.
+fn nodekey_keeper() string {
+    var keeper: string = mesh_keeper_url()
+    if keeper == "" {
+        return "http://127.0.0.1:19090"
+    }
+    while rho_str_ends_with_slash(keeper) {
+        keeper = rho_str_slice(keeper, 0, u32(rho_strlen(keeper)) - 1)
+    }
+    if rho_str_starts_with(keeper, "https://") || rho_str_starts_with(keeper, "http://127.0.0.1:") ||
+        rho_str_starts_with(keeper, "http://localhost:") || rho_str_eq(keeper, "http://127.0.0.1") ||
+        rho_str_eq(keeper, "http://localhost") {
+        return keeper
+    }
+    return ""
+}
+
+fn rho_str_ends_with_slash(text: string) bool {
+    let n: u32 = u32(rho_strlen(text))
+    return n > 0 && rho_str_eq(rho_str_slice(text, n - 1, 1), "/")
+}
+
+// nodekey_project is the mesh a placement is in: the project the keeper
+// recorded, when Mesh has one of that name with that area, else the one mesh on
+// this machine with that area; "" when there is none or more than one.
+fn nodekey_project(project: string, area: u32) string {
+    if project != "" && sanitize(project) == project && rho_path_exists(project_file(project)) &&
+        u32(rho_int_from_str(project_area_id(project_file(project)))) == area {
+        return project
+    }
+    var found: string = ""
+    var rest: string = project_ids()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var id: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            id = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && u32(rho_int_from_str(project_area_id(project_file(id)))) == area {
+            if found != "" {
+                return ""
+            }
+            found = id
+        }
+    }
+    return found
+}
+
+// nodekey_node is the plan row of the board planned with a node number, or 0.
+fn nodekey_node(file: string, number: u32) u32 {
+    let text: string = plan_text(file)
+    let count: u32 = project_node_count_at(file)
+    var index: u32 = 1
+    while index <= count {
+        let prefix: string = "node." + rho_int_to_str(index) + "."
+        let kind: string = plan_value(text, prefix + "kind")
+        let role: string = plan_value(text, prefix + "role")
+        if kind != "module" && kind != "device" && role != "gateway" &&
+            u32(rho_int_from_str(plan_value(text, prefix + "number"))) == number {
+            return index
+        }
+        index = index + 1
+    }
+    return 0
+}
+
+fn mesh_api_node_key(req: Request) Response {
+    if !nodekey_take(req) {
+        return Response{ 429, "{\"ok\":false,\"error\":\"too many requests\"}", "application/json",
+            "Retry-After: " + rho_int_to_str(NODEKEY_WINDOW_SECONDS) + "\nCache-Control: no-store" }
+    }
+    let authorization: string = header_str(req, "Authorization")
+    let device: string = node_auth_part(authorization, 0)
+    let credential: string = node_auth_part(authorization, 1)
+    if device == "" || credential == "" {
+        return nodekey_refused(401, "a node credential is needed: Authorization: Node <device>:<credential>")
+    }
+    let keeper: string = nodekey_keeper()
+    if keeper == "" {
+        warn("mesh", "a node asked for its board key, but the keeper is neither on this machine nor reached over https")
+        return nodekey_refused(503, "the keeper cannot be asked")
+    }
+    // The device id and the credential are letters, digits and . - _ (checked
+    // above), so the form needs no escaping.
+    let answer: string = rho_http_body("POST", keeper + "/api/nodes/verify",
+        "device_id=" + device + "&credential=" + credential, "application/x-www-form-urlencoded", "", "")
+    if answer == "" || mesh_json_bool(answer, "ok") != "on" {
+        info("mesh", "board key refused: the keeper does not know device " + device + " with that credential")
+        return nodekey_refused(403, "unknown node or credential")
+    }
+    let area: u32 = u32(rho_int_from_str(mesh_json_number(answer, "area")))
+    let number: u32 = u32(rho_int_from_str(mesh_json_number(answer, "node")))
+    let project: string = nodekey_project(json_str_field(answer, "project"), area)
+    if project == "" {
+        info("mesh", "board key refused for " + device + ": no mesh has area " + rho_int_to_str(area))
+        return nodekey_refused(404, "no mesh is planned at that area")
+    }
+    let file: string = project_file(project)
+    let index: u32 = nodekey_node(file, number)
+    if index == 0 {
+        info("mesh", "board key refused for " + device + ": " + project + " plans no board numbered " + rho_int_to_str(number))
+        return nodekey_refused(404, "no board is planned at that placement")
+    }
+    if project_node_revoked(project, index) {
+        info("mesh", "board key refused for " + device + ": its board is revoked")
+        return nodekey_refused(403, "that board is revoked")
+    }
+    let uid: string = project_node_id(file, index)
+    let gateway_key: string = mesh_gateway_key(project)
+    if uid == "" || gateway_key == "" {
+        return nodekey_refused(500, "the board's key cannot be made")
+    }
+    let key: string = rho_str_slice(rho_hmac_sha256_hex(gateway_key, "72682d64657631" + uid), 0, 32)
+    if rho_strlen(key) != 32 {
+        return nodekey_refused(500, "the board's key cannot be made")
+    }
+    // The gateway admits the board by its manifest, which now names it.
+    ignore_bool(mesh_manifest_write(project, true))
+    info("mesh", "board key issued to device " + device + " for " + project + " area " + rho_int_to_str(area) +
+        " node " + rho_int_to_str(number))
+    return Response{ 200, "{\"ok\":true,\"uid\":" + json_string(uid) + ",\"key\":" + json_string(key) +
+        ",\"project\":" + json_string(project) + ",\"area\":" + rho_int_to_str(area) +
+        ",\"node\":" + rho_int_to_str(number) + "}", "application/json", "Cache-Control: no-store" }
+}

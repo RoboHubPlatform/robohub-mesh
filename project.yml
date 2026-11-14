@@ -16,8 +16,10 @@ targets:
         options:
           issuer: keeper
           # The overview and the documentation are the shop window; the API
-          # that reads telemetry, devices and sensors is not.
-          skip_paths: "/healthz,/auth/login,/assets,/assets/,/i18n,/auth/callback,/static,/mesh/docs"
+          # that reads telemetry, devices and sensors is not. A host node asking
+          # for its board key has no ticket: it presents its keeper credential,
+          # which the endpoint checks with the keeper itself.
+          skip_paths: "/healthz,/auth/login,/assets,/assets/,/i18n,/auth/callback,/static,/mesh/docs,/mesh/api/nodes/key"
     # Every file under templates/ is a template, named by its file name.
     templates:
       - dir: templates

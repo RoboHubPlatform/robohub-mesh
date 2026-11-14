@@ -1,0 +1,272 @@
+//
+// @file manifest.rho
+// @brief The node manifest a gateway admits boards by, written from the plan.
+//
+// @module mesh.domain.manifest
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-14
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.manifest
+
+// The node manifest: what a gateway reads, beside its gateway.key, to know which
+// boards it may open a session with, where each of them is, and which of them
+// may speak for other areas. One line per node:
+//
+//   <uid>|<area>|<node>|<role>|<epoch>|<revoked>|<areas>
+//
+// uid is the node's id as the plan keeps it (node.<n>.id, 16 hex digits); area
+// and node are where it reports from; role is `board` or `relay`; epoch is the
+// key epoch (0 until keys are rotated); revoked is 1 for a board taken out of the
+// mesh without re-keying it; areas are, for a relay, the areas it may announce.
+//
+// A planned compute node is a board. One the plan gives the role `relay` carries
+// boards under it in the mesh's own area, which their own sessions speak for, so
+// it announces nothing (areas empty). A mesh linked below this one reports
+// through its gateway as a relay for its own area and every area below it.
+// Modules and devices open no session and are not listed. Nothing here reads a
+// file (tests/domain_test.rho).
+
+const MANIFEST_HEADER: string = "# RoboHub node manifest, written by Mesh. Do not edit: Mesh rewrites it.\n# uid|area|node|role|epoch|revoked|areas\n"
+
+// manifest_uid_ok is whether an id is a board id: 16 lowercase hex digits.
+fn manifest_uid_ok(uid: string) bool {
+    if strlen(uid) != 16 {
+        return false
+    }
+    var i: u32 = 0
+    while i < 16 {
+        if str_index_of("0123456789abcdef", str_slice(uid, i, 1)) < 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// manifest_node_line is one planned node's line, or "" for a node that opens no
+// session of its own (a module, a device, the gateway, a node without an id).
+fn manifest_node_line(plan: string, index: u32, area: string) string {
+    let prefix: string = "node." + int_to_str(index) + "."
+    let kind: string = plan_value(plan, prefix + "kind")
+    if kind == "module" || kind == "device" {
+        return ""
+    }
+    let role: string = plan_value(plan, prefix + "role")
+    if role == "gateway" || role == "module" || role == "device" {
+        return ""
+    }
+    let uid: string = plan_value(plan, prefix + "id")
+    if !manifest_uid_ok(uid) {
+        return ""
+    }
+    var number: string = plan_value(plan, prefix + "number")
+    if u32(int_from_str(number)) == 0 {
+        number = int_to_str(index)
+    }
+    var kept_role: string = "board"
+    if role == "relay" {
+        kept_role = "relay"
+    }
+    var revoked: string = "0"
+    if plan_value(plan, prefix + "revoked") == "1" {
+        revoked = "1"
+    }
+    return uid + "|" + area + "|" + int_to_str(u32(int_from_str(number))) + "|" + kept_role + "|0|" + revoked + "|\n"
+}
+
+// manifest_nodes are the lines of every planned node of a plan (flat text).
+fn manifest_nodes(plan: string, area: string) string {
+    var count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
+    if count > 64 {
+        count = 64
+    }
+    var out: string = ""
+    var index: u32 = 1
+    while index <= count {
+        out = out + manifest_node_line(plan, index, area)
+        index = index + 1
+    }
+    return out
+}
+
+// manifest_relay_line is the line of a mesh linked below: its gateway's id as a
+// board of this mesh, its own area, and the areas it may speak for.
+fn manifest_relay_line(uid: string, area: string, areas: string) string {
+    if !manifest_uid_ok(uid) {
+        return ""
+    }
+    return uid + "|" + int_to_str(u32(int_from_str(area))) + "|0|relay|0|0|" + areas + "\n"
+}
+
+// manifest_areas_add adds an area to a comma-separated list, once.
+fn manifest_areas_add(list: string, area: string) string {
+    if area == "" || str_index_of("," + list + ",", "," + area + ",") >= 0 {
+        return list
+    }
+    if list == "" {
+        return area
+    }
+    return list + "," + area
+}
+
+// manifest_document is the whole file.
+fn manifest_document(nodes: string, relays: string) string {
+    return MANIFEST_HEADER + nodes + relays
+}
+
+// manifest_find is the line of a uid in a manifest, or "".
+fn manifest_find(manifest: string, uid: string) string {
+    var rest: string = manifest
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        if str_index_of(line, uid + "|") == 0 {
+            return line
+        }
+    }
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  A host node asking for its board key                                      */
+/* -------------------------------------------------------------------------- */
+
+// A Linux host node that speaks the board protocol enrolls with the keeper and
+// then asks Mesh for its board id and key, presenting the keeper's credential:
+//
+//   Authorization: Node <device>:<credential>
+//
+// nodekey.rho checks the credential with the keeper and answers.
+
+// node_auth_part is the device (0) or the credential (1) of an Authorization
+// header in the Node scheme, or "" when the header is not one.
+fn node_auth_part(header: string, part: u32) string {
+    let scheme: string = "Node "
+    if str_index_of(header, scheme) != 0 {
+        return ""
+    }
+    let rest: string = str_slice(header, u32(strlen(scheme)), u32(strlen(header)) - u32(strlen(scheme)))
+    let colon: i32 = str_index_of(rest, ":")
+    if colon <= 0 {
+        return ""
+    }
+    let device: string = str_slice(rest, 0, u32(colon))
+    let credential: string = str_slice(rest, u32(colon) + 1, u32(strlen(rest)) - u32(colon) - 1)
+    if !node_auth_device_ok(device) || !node_auth_hex(credential) {
+        return ""
+    }
+    if part == 0 {
+        return device
+    }
+    return credential
+}
+
+// node_auth_device_ok is whether a device id is one the keeper issues records
+// for: letters, digits, dot, dash and underscore.
+fn node_auth_device_ok(device: string) bool {
+    let n: u32 = u32(strlen(device))
+    if n == 0 || n > 128 || str_index_of(device, "..") >= 0 {
+        return false
+    }
+    var i: u32 = 0
+    while i < n {
+        if str_index_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-", str_slice(device, i, 1)) < 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn node_auth_hex(text: string) bool {
+    let n: u32 = u32(strlen(text))
+    if n == 0 || n > 128 {
+        return false
+    }
+    var i: u32 = 0
+    while i < n {
+        if str_index_of("0123456789abcdefABCDEF", str_slice(text, i, 1)) < 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// nodekey_client is who a request is counted against: the address the keeper's
+// proxy appended to X-Forwarded-For (its rightmost entry), or the connection
+// ("direct") for a request that came to Mesh's own port.
+fn nodekey_client(forwarded: string) string {
+    var value: string = forwarded
+    var at: i32 = str_index_of(value, ",")
+    while at >= 0 {
+        value = str_slice(value, u32(at) + 1, u32(strlen(value)) - u32(at) - 1)
+        at = str_index_of(value, ",")
+    }
+    var start: u32 = 0
+    var end: u32 = u32(strlen(value))
+    while start < end && str_slice(value, start, 1) == " " {
+        start = start + 1
+    }
+    while end > start && str_slice(value, end - 1, 1) == " " {
+        end = end - 1
+    }
+    value = str_slice(value, start, end - start)
+    if value == "" {
+        return "direct"
+    }
+    return value
+}
+
+// nodekey_slot folds a client into one of a fixed number of counters, so made-up
+// addresses cannot make files without end.
+fn nodekey_slot(client: string) string {
+    if client == "direct" {
+        return "direct"
+    }
+    let alphabet: string = "0123456789abcdefABCDEF.:"
+    var hash: u32 = 7
+    var i: u32 = 0
+    while i < u32(strlen(client)) && i < 64 {
+        let at: i32 = str_index_of(alphabet, str_slice(client, i, 1))
+        var digit: u32 = 25
+        if at >= 0 {
+            digit = u32(at) + 1
+        }
+        hash = (hash * 31 + digit) % 1021
+        i = i + 1
+    }
+    return "c" + int_to_str(hash)
+}
+
+// nodekey_count is a counter (`count|window start`) after one more call.
+fn nodekey_count(state: string, now: u32, window: u32) string {
+    let bar: i32 = str_index_of(state, "|")
+    if state == "" || bar < 0 {
+        return "1|" + int_to_str(now)
+    }
+    let count: u32 = u32(int_from_str(str_slice(state, 0, u32(bar))))
+    let start: u32 = u32(int_from_str(str_slice(state, u32(bar) + 1, u32(strlen(state)) - u32(bar) - 1)))
+    if now < start || now >= start + window {
+        return "1|" + int_to_str(now)
+    }
+    return int_to_str(count + 1) + "|" + int_to_str(start)
+}
+
+fn nodekey_over(state: string, limit: u32) bool {
+    let bar: i32 = str_index_of(state, "|")
+    if bar < 0 {
+        return false
+    }
+    return u32(int_from_str(str_slice(state, 0, u32(bar)))) > limit
+}

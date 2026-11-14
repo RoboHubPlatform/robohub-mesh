@@ -48,7 +48,7 @@ fn jobs_set_node(index: u32) void {
     ignore_bool(rho_write_text(wizard_dir() + "/job-node.txt", value + "\n"))
 }
 
-const JOB_RUNNER: string = "#!/bin/sh\n# The job runner of one mesh: each job in order, a flash once the person\n# says the board is ready, and nothing that depended on a job that failed.\ncd \"$(dirname \"$0\")\" || exit 1\nwhile :; do\n  next=\"\"\n  for f in $(ls [0-9]*.sh 2>/dev/null | sort); do\n    n=\"${f%.sh}\"\n    [ -f \"$n.exit\" ] && continue\n    next=\"$n\"\n    break\n  done\n  [ -z \"$next\" ] && exit 0\n  if [ -f \"$next.cancel\" ]; then echo 130 > \"$next.exit\"; continue; fi\n  if [ -f \"$next.after\" ]; then\n    after=\"$(cat \"$next.after\")\"\n    if [ -f \"$after.exit\" ] && [ \"$(cat \"$after.exit\")\" != 0 ]; then echo 125 > \"$next.exit\"; continue; fi\n  fi\n  if [ -f \"$next.wait\" ] && [ ! -f \"$next.go\" ]; then sleep 1; continue; fi\n  date +%s > \"$next.started\"\n  sh \"$next.sh\" > \"$next.log\" 2>&1\n  code=$?\n  date +%s > \"$next.finished\"\n  echo $code > \"$next.exit\"\ndone\n"
+const JOB_RUNNER: string = "#!/bin/sh\n# The job runner of one mesh: each job in order, a flash once the person\n# says the board is ready, and nothing that depended on a job that failed.\n# What a job makes (an image holds its board's key) is Mesh's user's alone.\numask 077\ncd \"$(dirname \"$0\")\" || exit 1\nwhile :; do\n  next=\"\"\n  for f in $(ls [0-9]*.sh 2>/dev/null | sort); do\n    n=\"${f%.sh}\"\n    [ -f \"$n.exit\" ] && continue\n    next=\"$n\"\n    break\n  done\n  [ -z \"$next\" ] && exit 0\n  if [ -f \"$next.cancel\" ]; then echo 130 > \"$next.exit\"; continue; fi\n  if [ -f \"$next.after\" ]; then\n    after=\"$(cat \"$next.after\")\"\n    if [ -f \"$after.exit\" ] && [ \"$(cat \"$after.exit\")\" != 0 ]; then echo 125 > \"$next.exit\"; continue; fi\n  fi\n  if [ -f \"$next.wait\" ] && [ ! -f \"$next.go\" ]; then sleep 1; continue; fi\n  date +%s > \"$next.started\"\n  sh \"$next.sh\" > \"$next.log\" 2>&1\n  code=$?\n  date +%s > \"$next.finished\"\n  echo $code > \"$next.exit\"\ndone\n"
 
 fn jobs_dir(project: string) string {
     return project_location(project) + "/jobs"
@@ -162,7 +162,7 @@ fn jobs_add(project: string, kind: string, target: string, label: string, script
     // A board's manifest names its dependencies under the workspace, and a job
     // runs with whatever environment Mesh was started with: it is said here.
     let workspace: string = mesh_workspace()
-    ignore_bool(rho_write_text(jobs_path(project, seq, "sh"), "set -e\nexport ROBOHUB_WORKSPACE=\"${ROBOHUB_WORKSPACE:-" +
+    ignore_bool(rho_write_text(jobs_path(project, seq, "sh"), "set -e\numask 077\nexport ROBOHUB_WORKSPACE=\"${ROBOHUB_WORKSPACE:-" +
         workspace + "}\"\n" + script))
     if after != "" {
         ignore_bool(rho_write_text(jobs_path(project, seq, "after"), after + "\n"))
@@ -230,9 +230,20 @@ fn jobs_queue_board(loc: string, index: u32) string {
     let build: string = jobs_add(id, "build", target, mesh_fill(mesh_t(loc, "jobs.label.build"), "name", name),
         jobs_script_header("build " + name) + "cd " + shell_quote(dir) + "\nrho build -target " + shell_quote(board) + " .\n",
         signature, "", "")
+    // A gateway on another host admits the board only once its node manifest
+    // names it: the flash sends the current one there (one on this machine reads
+    // the file Mesh keeps).
+    ignore_bool(mesh_manifest_write(id, false))
+    var send: string = ""
+    let manifest_command: string = gateway_manifest_command(id)
+    if manifest_command != "" && manifest_command != "-" {
+        send = jobs_script_header("send the node list to the gateway") + "if [ -f " +
+            shell_quote(mesh_manifest_file(id)) + " ]; then (" + manifest_command +
+            ") || echo 'the gateway could not be sent its node list; restart the gateway to apply it'; fi\n"
+    }
     ignore_string(jobs_add(id, "flash", target, mesh_fill(mesh_t(loc, "jobs.label.flash"), "name", name),
         jobs_script_header("flash " + name) + "rho flash -target " + shell_quote(board) + " -project " +
-        shell_quote(dir) + " " + shell_quote(binary) + "\n",
+        shell_quote(dir) + " " + shell_quote(binary) + "\n" + send,
         signature, build, programming_instruction(loc, board)))
     return ""
 }

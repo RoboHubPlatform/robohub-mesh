@@ -16,6 +16,7 @@ include "../src/mesh/domain/plan_text.rho"
 include "../src/mesh/domain/transport.rho"
 include "../src/mesh/domain/impact.rho"
 include "../src/mesh/domain/deploy.rho"
+include "../src/mesh/domain/manifest.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -211,6 +212,64 @@ test fn the_diff_names_what_changed_and_how() void {
     print("[PASS] the_diff_names_what_changed_and_how\n")
 }
 
+/* -------------------------------------------------------------------------- */
+/*  The node manifest                                                         */
+/* -------------------------------------------------------------------------- */
+
+const MANIFEST_PLAN: string = "node.count=5\n" +
+    "node.1.id=0123456789abcdef\nnode.1.number=4\nnode.1.role=relay\nnode.1.kind=compute\n" +
+    "node.2.id=1111222233334444\nnode.2.number=9\nnode.2.role=node\nnode.2.revoked=1\n" +
+    "node.3.id=aaaabbbbccccdddd\nnode.3.kind=module\nnode.3.role=module\n" +
+    "node.4.id=5555666677778888\nnode.4.kind=device\n" +
+    "node.5.number=12\nnode.5.role=node\n"
+
+test fn the_manifest_lists_every_board_with_its_placement() void {
+    let lines: string = manifest_nodes(MANIFEST_PLAN, "3")
+    check(str_eq(manifest_find(lines, "0123456789abcdef"), "0123456789abcdef|3|4|relay|0|0|"),
+        "a relay is listed with its area, number and role, announcing nothing")
+    check(str_eq(manifest_find(lines, "1111222233334444"), "1111222233334444|3|9|board|0|1|"),
+        "a revoked board is listed as revoked")
+    check(str_eq(manifest_find(lines, "aaaabbbbccccdddd"), ""), "a module opens no session and is not listed")
+    check(str_eq(manifest_find(lines, "5555666677778888"), ""), "a device is not listed")
+    check(str_index_of(lines, "|12|") < 0, "a board without an id has no key and no line")
+    let document: string = manifest_document(lines, manifest_relay_line("9999aaaabbbbcccc", "07", "7,8"))
+    check(str_index_of(document, "#") == 0, "the file starts with what it is")
+    check(str_eq(manifest_find(document, "9999aaaabbbbcccc"), "9999aaaabbbbcccc|7|0|relay|0|0|7,8"),
+        "a mesh linked below is a relay for its areas")
+    check(str_eq(manifest_relay_line("not-an-id", "7", "7"), ""), "a relay without an id has no line")
+    check(str_eq(manifest_areas_add(manifest_areas_add("7", "8"), "7"), "7,8"), "an area is listed once")
+    check(!manifest_uid_ok("0123456789ABCDEF"), "an id is lowercase hex")
+    print("[PASS] the_manifest_lists_every_board_with_its_placement\n")
+}
+
+test fn a_node_credential_is_read_from_its_header() void {
+    let header: string = "Node gateway-node-01:00ff00ff00ff"
+    check(str_eq(node_auth_part(header, 0), "gateway-node-01"), "the device")
+    check(str_eq(node_auth_part(header, 1), "00ff00ff00ff"), "the credential")
+    check(str_eq(node_auth_part("Bearer abc", 0), ""), "another scheme is not a node credential")
+    check(str_eq(node_auth_part("Node :00ff", 0), ""), "a credential without a device")
+    check(str_eq(node_auth_part("Node dev:", 1), ""), "a device without a credential")
+    check(str_eq(node_auth_part("Node dev&x=1:00ff", 0), ""), "a device that would add a form field")
+    check(str_eq(node_auth_part("Node dev:00ff&credential=1", 1), ""), "a credential that would add a form field")
+    print("[PASS] a_node_credential_is_read_from_its_header\n")
+}
+
+test fn a_node_key_client_has_a_budget() void {
+    check(str_eq(nodekey_client(""), "direct"), "a request to Mesh's own port")
+    check(str_eq(nodekey_client("203.0.113.9, 192.168.1.20"), "192.168.1.20"), "the keeper proxy's entry")
+    check(str_eq(nodekey_slot("192.168.1.20"), nodekey_slot("192.168.1.20")), "one client, one counter")
+    var state: string = ""
+    var i: u32 = 0
+    while i < 10 {
+        state = nodekey_count(state, 500, 60)
+        i = i + 1
+    }
+    check(!nodekey_over(state, 10), "ten calls are within the budget")
+    check(nodekey_over(nodekey_count(state, 530, 60), 10), "the eleventh is not")
+    check(str_eq(nodekey_count(state, 560, 60), "1|560"), "a new window starts again")
+    print("[PASS] a_node_key_client_has_a_budget\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -227,5 +286,8 @@ fn main() void {
     a_board_on_wifi_follows_the_gateway_address()
     a_board_never_programmed_says_so()
     the_diff_names_what_changed_and_how()
+    the_manifest_lists_every_board_with_its_placement()
+    a_node_credential_is_read_from_its_header()
+    a_node_key_client_has_a_budget()
     print("mesh domain tests ok\n")
 }

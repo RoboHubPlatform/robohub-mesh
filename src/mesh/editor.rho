@@ -140,7 +140,7 @@ fn editor_notice(text: string, bad: bool) string {
 fn editor_tabs(loc: string, id: string, index: u32, current: string) string {
     var names: string = "node data delete"
     if editor_is_board(index) {
-        names = "node link modules data delete"
+        names = "node link modules data revoke delete"
     } else if is_module_node(index) {
         names = "node delete"
     }
@@ -164,6 +164,7 @@ fn editor_tabs(loc: string, id: string, index: u32, current: string) string {
         if tab == "modules" { label = mesh_t(loc, "editor.tab.modules") }
         if tab == "data" { label = mesh_t(loc, "editor.tab.data") }
         if tab == "delete" { label = mesh_t(loc, "editor.tab.delete") }
+        if tab == "revoke" { label = mesh_t(loc, "editor.tab.revoke") }
         if tab == "node" && is_device_node(index) { label = mesh_t(loc, "editor.tab.device") }
         if tab == "node" && is_module_node(index) { label = mesh_t(loc, "editor.tab.module") }
         out = out + "<a" + css + editor_open_node(id, index, tab) + ">" + label + "</a>"
@@ -304,6 +305,8 @@ fn editor_node_inspector(loc: string, id: string, index: u32, tab: string, notic
         body = editor_modules_tab(loc, id, index)
     } else if current == "data" && !is_module_node(index) {
         body = editor_data_tab(loc, id, index)
+    } else if current == "revoke" && editor_is_board(index) {
+        body = editor_revoke_tab(loc, id, index)
     } else if current == "delete" {
         body = editor_delete_tab(loc, id, index)
     } else {

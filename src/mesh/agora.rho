@@ -102,7 +102,7 @@ fn agora_check_health(id: string) void {
     var state: string = "none"
     if kind != "" {
         state = "offline"
-        if gateway_reachable_for(kind, agora_gateway_host(id), agora_gateway_port(id)) {
+        if gateway_reachable_for(id, kind, agora_gateway_host(id), agora_gateway_port(id)) {
             state = "online"
         } else if !agora_gateway_started(id) {
             state = "stopped"

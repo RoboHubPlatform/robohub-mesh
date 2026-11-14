@@ -495,3 +495,7 @@ The live faults stream of each language is appended to instead of read and writt
 ## [0.18.17] - 2026-11-14
 
 The tree in the agora and the plan no longer draws a board's children over its neighbour's: a branch with children is as wide as they are, and a tree wider than the canvas scrolls from its left edge instead of losing it. The wizard smoke test listens on loopback only.
+
+## [0.19.0] - 2026-11-14
+
+Mesh writes the node manifest each gateway checks (`nodes.txt` beside the gateway key) and sends it with the key, created private before anything is written. A board can be revoked from its inspector and admitted again. Mesh's folders, keys and built firmware are private to its user (0700/0600), including those made before. A gateway with a certificate is recorded and checked over https. A host node fetches its board key with its enrollment credential (`/mesh/api/nodes/key`, rate limited). Needs rho 0.9.0.

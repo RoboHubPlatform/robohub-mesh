@@ -166,6 +166,7 @@ fn new_project(name: string) string {
     ignore_u32(rho_exec("mkdir", "-p " + dir, wizard_report("mkdir-projects")))
     let id: string = project_id_from_name(name)
     ignore_u32(rho_exec("mkdir", "-p " + project_location(id), wizard_report("mkdir-project")))
+    ignore_u32(rho_exec_args("chmod", "700\n" + dir + "\n" + project_location(id) + "\n", wizard_report("mkdir-project")))
     var display: string = sanitize(name)
     if display == "" {
         display = "Mesh project"
@@ -189,9 +190,35 @@ fn load_project(id: string) bool {
     return rho_write_text(current_project_file(), safe + "\n")
 }
 
+// mesh_home_dir is Mesh's own folder under the home, or "" when both of its
+// folders were named elsewhere.
+fn mesh_home_dir() string {
+    let home: string = getenv("HOME")
+    if home == "" || (getenv("RHO_MESH_STATE_DIR") != "" && getenv("ROBOHUB_MESH_PROJECTS") != "") {
+        return ""
+    }
+    return home + "/.rho/mesh"
+}
+
+// mesh_tree_private makes Mesh's folders readable by Mesh's user alone: the
+// projects hold each gateway's key, the boards' folders their keys and Wi-Fi
+// passwords, and the images built from them both. Mesh runs it when it starts,
+// which also closes what an older Mesh left readable.
+fn mesh_tree_private() void {
+    let report: string = wizard_report("mesh-private")
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + wizard_dir() + "\n" + projects_dir() + "\n", report))
+    let home: string = mesh_home_dir()
+    if home != "" {
+        ignore_u32(rho_exec_args("chmod", "-R\ngo-rwx\n" + home + "\n", report))
+    }
+    ignore_u32(rho_exec_args("chmod", "-R\ngo-rwx\n" + wizard_dir() + "\n" + projects_dir() + "\n", report))
+}
+
 fn ensure_wizard_dir() void {
     let dir: string = wizard_dir()
     ignore_u32(rho_exec("mkdir", "-p " + projects_dir(), dir + "/mkdir.txt"))
+    // A folder made here is Mesh's user's alone (mesh_tree_private).
+    ignore_u32(rho_exec_args("chmod", "700\n" + dir + "\n" + projects_dir() + "\n", dir + "/mkdir.txt"))
     let current: string = current_project_file()
 
     // A project written before plan.yml is imported before anything asks

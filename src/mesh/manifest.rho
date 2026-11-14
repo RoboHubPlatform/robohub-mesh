@@ -1,0 +1,204 @@
+//
+// @file manifest.rho
+// @brief Writing a mesh's node manifest beside its gateway key, and taking a board out of it.
+//
+// @module mesh.manifest
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-14
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.manifest
+
+// A mesh's gateway admits the boards its node manifest lists (domain/manifest.rho
+// says what a line is). Mesh writes the manifest as nodes.txt beside the
+// project's gateway.key whenever the plan is written — a board added, moved,
+// revoked or deleted, a mesh linked below — and at every gateway start, which
+// copies it to the gateway's host with the key. It is written only when it
+// changes, whole (a temporary file and a rename) and readable by Mesh's user
+// alone. A project that has no gateway key yet has no boards with keys, and no
+// manifest until it has one.
+
+fn mesh_manifest_file(project: string) string {
+    return project_location(project) + "/nodes.txt"
+}
+
+// mesh_manifest_areas_below are the areas a mesh speaks for when it reports
+// through its parent: its own, and those of every mesh below it.
+fn mesh_manifest_areas_below(project: string, depth: u32) string {
+    var areas: string = rho_int_to_str(u32(rho_int_from_str(project_area_id(project_file(project)))))
+    if depth >= 8 || link_children_list(project) == "" {
+        return areas
+    }
+    var rest: string = link_children(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var child: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            child = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if child == "" {
+            continue
+        }
+        var below: string = mesh_manifest_areas_below(child, depth + 1)
+        while below != "" {
+            let comma: i32 = rho_str_index_of(below, ",")
+            var area: string = below
+            if comma < 0 {
+                below = ""
+            } else {
+                area = rho_str_slice(below, 0, u32(comma))
+                below = rho_str_slice(below, u32(comma) + 1, u32(rho_strlen(below)) - u32(comma) - 1)
+            }
+            areas = manifest_areas_add(areas, area)
+        }
+    }
+    return areas
+}
+
+// mesh_manifest_relays are the lines of the meshes linked below a mesh. A
+// child's id under its parent is made when the link is; one not made yet has no
+// key and no line.
+fn mesh_manifest_relays(project: string) string {
+    if link_children_list(project) == "" {
+        return ""
+    }
+    var out: string = ""
+    var rest: string = link_children(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var child: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            child = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if child == "" {
+            continue
+        }
+        let file: string = project_file(child)
+        out = out + manifest_relay_line(state_value_in(file, "relay_uid"), project_area_id(file),
+            mesh_manifest_areas_below(child, 0))
+    }
+    return out
+}
+
+// mesh_manifest_text is a mesh's manifest as its plan says now.
+fn mesh_manifest_text(project: string) string {
+    let file: string = project_file(project)
+    let area: string = rho_int_to_str(u32(rho_int_from_str(project_area_id(file))))
+    return manifest_document(manifest_nodes(plan_text(file), area), mesh_manifest_relays(project))
+}
+
+// mesh_manifest_write writes a mesh's manifest when it changed; true when it is
+// in place. `force` writes it for a project that has no gateway key yet (a
+// gateway start, which makes the key).
+fn mesh_manifest_write(project: string, force: bool) bool {
+    if project == "" || !rho_path_exists(project_file(project)) {
+        return false
+    }
+    if !force && !rho_path_exists(mesh_gateway_key_file(project)) {
+        return false
+    }
+    let text: string = mesh_manifest_text(project)
+    let path: string = mesh_manifest_file(project)
+    if rho_str_eq(rho_read_text(path), text) {
+        return true
+    }
+    return rho_write_secret(path, text)
+}
+
+// mesh_manifest_after_plan_write keeps the manifests a plan write can change in
+// step: the plan's own mesh, and the mesh it reports through, whose relay line
+// names this mesh's areas.
+fn mesh_manifest_after_plan_write(path: string) void {
+    let project: string = plan_project_id(path)
+    if project == "" || !rho_str_eq(project_file(project), path) {
+        return
+    }
+    ignore_bool(mesh_manifest_write(project, false))
+    let parent: string = state_value_in(path, "mesh_parent")
+    if parent != "" && !rho_str_eq(parent, project) {
+        ignore_bool(mesh_manifest_write(parent, false))
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Revoking a board                                                          */
+/* -------------------------------------------------------------------------- */
+
+// editor_revoke_tab says whether a board is admitted by its gateway, and offers
+// to take it out — the gateway refuses its HELLO and drops its session — or to
+// admit it again. Its key is not changed, so a board revoked because it was lost
+// stays refused for as long as it is revoked.
+fn editor_revoke_tab(loc: string, id: string, index: u32) string {
+    var text: string = ""
+    var inner: string = ""
+    var submit: string = ""
+    if project_node_revoked(id, index) {
+        text = "<p class=\"notice bad\">" + escape_html(mesh_fill(mesh_t(loc, "editor.revoke.is_revoked"), "name", editor_name(loc, index))) + "</p>" +
+            "<p>" + escape_html(mesh_t(loc, "editor.revoke.restore_help")) + "</p>"
+        inner = editor_hidden("action", "restore")
+        submit = mesh_t(loc, "editor.revoke.restore")
+    } else {
+        text = "<p>" + escape_html(mesh_fill(mesh_t(loc, "editor.revoke.question"), "name", editor_name(loc, index))) + "</p>" +
+            "<p class=\"agora-seen\">" + escape_html(mesh_t(loc, "editor.revoke.help")) + "</p>"
+        inner = editor_hidden("action", "revoke")
+        submit = mesh_t(loc, "editor.revoke.revoke")
+    }
+    return text + editor_form(loc, editor_node_action(id, index) + "/revoke", "revoke", index, inner, submit)
+}
+
+fn project_node_revoked(id: string, index: u32) bool {
+    return rho_str_eq(state_value_in(project_file(id), "node." + rho_int_to_str(index) + ".revoked"), "1")
+}
+
+// mesh_p_node_revoke takes a board out of its mesh, or admits it again: the
+// plan says so, the manifest is written from it, a gateway on this machine reads
+// it within seconds, and a gateway on another machine is sent the new one.
+fn mesh_p_node_revoke(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let nid: string = param(req, "node")
+    let file: string = project_file(id)
+    let index: u32 = project_node_by_id(file, nid)
+    if index == 0 {
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "editor.msg.node_gone"), true))
+    }
+    let body: string = request_body(req)
+    if editor_stale(body, index) {
+        return editor_answer(req, id, "node:" + nid, "revoke",
+            editor_notice(i18n_t(req, "editor.msg.node_changed"), true))
+    }
+    let name: string = editor_name(i18n_locale(req), index)
+    let action: string = form_field(body, "action")
+    let key: string = "node." + rho_int_to_str(index) + ".revoked"
+    var said: string = ""
+    if action == "revoke" {
+        ignore_bool(plan_set(file, key, "1"))
+        said = mesh_fill(i18n_t(req, "editor.revoke.done"), "name", name)
+        info("mesh", "board " + nid + " revoked in " + id)
+    } else if action == "restore" {
+        ignore_bool(plan_set(file, key, ""))
+        said = mesh_fill(i18n_t(req, "editor.revoke.restored"), "name", name)
+        info("mesh", "board " + nid + " admitted again in " + id)
+    } else {
+        return editor_answer(req, id, "node:" + nid, "revoke", "")
+    }
+    ignore_bool(mesh_manifest_write(id, true))
+    if gateway_push_manifest(id) != 0 {
+        said = said + " " + i18n_t(req, "editor.revoke.not_sent")
+    }
+    return editor_answer(req, id, "node:" + nid, "revoke", editor_notice(said, false))
+}

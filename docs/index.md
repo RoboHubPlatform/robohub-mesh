@@ -354,12 +354,40 @@ Every frame between a board and its gateway is authenticated (robohub-transport'
 - each mesh has a gateway key, made the first time it is needed and kept in its
   folder (`gateway.key`), readable by Mesh's user only, and installed with the gateway
   as `GATEWAY_KEY_FILE`; a key file that exists is never replaced;
-- each planned board has an id (`node.<n>.uid` in the plan), made once;
+- each planned board has an id (`node.<n>.id` in the plan), made once;
 - a board's key is derived from the two and written into its build as
   `src/robohub_secret.h`, which no repository tracks.
 
 A board built that way says hello to its gateway, opens a session, and sends only
-sealed frames; its gateway accepts nothing else unless `ALLOW_PLAIN_FRAMES=1`.
+sealed frames; its gateway accepts nothing else (on the serial link,
+`ALLOW_PLAIN_FRAMES=1` lets plain frames through while boards are reflashed).
+
+Mesh's tree is its user's alone: every folder is `0700`, and what holds a key or a
+password — the generated header, `project.conf`, the built `.elf` and `.uf2` — is
+`0600` (builds and jobs run under `umask 077`). Mesh closes what an older version
+left readable when it starts.
+
+**The node manifest.** Mesh writes `nodes.txt` beside `gateway.key` — one line per
+board, `uid|area|node|role|epoch|revoked|areas` — whenever the plan changes and at
+every gateway start, and installs it beside the key on the gateway's host. The
+gateway admits only the boards it lists, takes a board's readings only for its own
+placement, and an announce only from a `relay` for its own areas (a mesh linked
+below is one, for its area and those below it).
+
+**Revoke.** A board's inspector has a **Revoke** tab: it takes the board out of its
+mesh without re-keying anything — the plan says `node.<n>.revoked`, the manifest is
+rewritten, a gateway on this machine reads it within seconds and one on another
+host is sent it at once — and **Admit it again** undoes it.
+
+**Host nodes.** A Linux host that speaks the board protocol enrolls with the keeper
+and fetches its board id and key from `POST /mesh/api/nodes/key` (through the
+keeper, `Authorization: Node <device>:<credential>`): Mesh checks the credential
+with the keeper's `/api/nodes/verify` and answers the board planned at the node's
+placement. A revoked board gets nothing, the key is never logged, and a client may
+ask ten times a minute. `rho bootstrap key` is the client.
+
+When a mesh names `gateway_tls_cert` and `gateway_tls_key`, Mesh records and calls
+its gateway at an `https://` address, health checks included.
 
 ### Applications reading a mesh
 
@@ -454,7 +482,7 @@ gives another is recorded as a fault and kept as its own series. The schema is
 | What each board runs | `deployed.txt` |
 | Jobs and their logs | `jobs/` |
 | Board sources and builds | `boards/node_<number>/` |
-| Gateway key, token records | `gateway.key`, `tokens.jsonl` (owner-only) |
+| Gateway key, node manifest, token records | `gateway.key`, `nodes.txt`, `tokens.jsonl` (owner-only) |
 | Mesh's state: the fleet, application clients | `~/.rho/mesh/state/` (`RHO_MESH_STATE_DIR`), `clients.jsonl` there |
 | Telemetry store | `~/.rho/mesh/telemetry.db` (`RHO_TELEMETRY_DB` or `ROBOHUB_MESH_TELEMETRY_DB`) |
 | Settings, alert channels | Mesh's app workspace (`~/.rho/keeper/workspaces/mesh` under the keeper) |

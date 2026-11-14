@@ -21,6 +21,7 @@ include "mesh/storage.rho"
 include "mesh/domain/transport.rho"
 include "mesh/domain/impact.rho"
 include "mesh/domain/deploy.rho"
+include "mesh/domain/manifest.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
 include "mesh/store.rho"
@@ -43,6 +44,8 @@ include "mesh/cross.rho"
 include "mesh/look.rho"
 include "mesh/access.rho"
 include "mesh/devices.rho"
+include "mesh/manifest.rho"
+include "mesh/nodekey.rho"
 
 import std.web.http
 import std.web.template
@@ -97,6 +100,7 @@ route GET "/mesh/agora" => mesh_agora_page
 route GET "/mesh/p/{project}" => mesh_p_page
 route GET "/mesh/p/{project}/node/{node}" => mesh_p_node_page
 route POST "/mesh/p/{project}/node/{node}/delete" => mesh_p_node_delete
+route POST "/mesh/p/{project}/node/{node}/revoke" => mesh_p_node_revoke
 route POST "/mesh/p/{project}/node/{node}/move-to" => mesh_p_node_move
 route POST "/mesh/p/{project}/node/{node}/parent" => mesh_p_node_parent
 route POST "/mesh/p/{project}/node/{node}/impact" => mesh_p_node_impact
@@ -139,6 +143,7 @@ route GET "/mesh/node/{index}" => mesh_old_node_page
 route POST "/mesh/device/poll" => mesh_device_poll
 route POST "/mesh/device/set" => mesh_device_set
 route GET "/mesh/api/devices" => mesh_api_devices
+route POST "/mesh/api/nodes/key" => mesh_api_node_key
 route POST "/mesh/api/devices/{id}/switch" => mesh_api_device_switch
 route GET "/mesh/api/gateway" => mesh_api_gateway
 route GET "/mesh/api/sources" => mesh_api_sources
@@ -171,6 +176,8 @@ route GET "/mesh/step/{step}" => mesh_old_build_page
 // writes what it reads into the store the API serves.
 fn init() void {
     log_config_apply("mesh")
+    // Keys, Wi-Fi passwords and images built with them are Mesh's user's alone.
+    mesh_tree_private()
     info("mesh", "starting")
 }
 

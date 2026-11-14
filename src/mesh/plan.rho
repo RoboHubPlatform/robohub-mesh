@@ -127,8 +127,13 @@ fn plan_write_held(path: string, text: string) bool {
         plan_keep_revision(path, revision)
     }
     let body: string = plan_stored(plan_without(plan_without(text, "revision"), "updated"))
-    return rho_yaml_write_flat(path, "revision=" + rho_int_to_str(revision + 1) + "\n" +
+    let written: bool = rho_yaml_write_flat(path, "revision=" + rho_int_to_str(revision + 1) + "\n" +
         "updated=" + rho_int_to_str(mesh_now_seconds()) + "\n" + body, PLAN_HEADER)
+    // A board added, moved, revoked or deleted changes what the gateway admits.
+    if written {
+        mesh_manifest_after_plan_write(path)
+    }
+    return written
 }
 
 // plan_keep_revision copies the plan a write replaces into revisions/ and drops
