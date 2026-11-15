@@ -419,7 +419,7 @@ fn mesh_project_delete(req: Request) Response {
         var listing: string = project_listing()
         while listing != "" {
             let at: i32 = rho_str_index_of(listing, "\n")
-            let candidate: string = ""
+            var candidate: string = ""
             if at < 0 {
                 candidate = listing
                 listing = ""
@@ -504,7 +504,7 @@ fn mesh_project_menu(req: Request) string {
     var ids: string = project_ids()
     while ids != "" {
         let at: i32 = rho_str_index_of(ids, "\n")
-        let id: string = ""
+        var id: string = ""
         if at < 0 {
             id = ids
             ids = ""

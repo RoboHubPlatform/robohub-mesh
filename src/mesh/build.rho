@@ -237,7 +237,7 @@ fn append_kconfig(config: string, entries: string) string {
     var rest: string = entries
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, " ")
-        let entry: string = ""
+        var entry: string = ""
         if at < 0 {
             entry = rest
             rest = ""
@@ -306,7 +306,7 @@ fn append_manifest_dep(text: string, name: string, path: string) string {
     var i: u32 = u32(start) + 10
     while i < u32(rho_strlen(text)) {
         let at: i32 = index_from(text, "\n", i)
-        let end: u32 = u32(rho_strlen(text))
+        var end: u32 = u32(rho_strlen(text))
         if at >= 0 {
             end = u32(at)
         }
@@ -352,7 +352,7 @@ fn append_variant_library(text: string, preset: string, library: string) string 
     var insert: u32 = i
     while i < u32(rho_strlen(text)) {
         let at: i32 = index_from(text, "\n", i)
-        let end: u32 = u32(rho_strlen(text))
+        var end: u32 = u32(rho_strlen(text))
         if at >= 0 {
             end = u32(at)
         }
@@ -1217,7 +1217,7 @@ fn serial_port_options(loc: string, selected: string) string {
     var rest: string = serial_port_list()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let port: string = ""
+        var port: string = ""
         if at < 0 {
             port = rest
             rest = ""

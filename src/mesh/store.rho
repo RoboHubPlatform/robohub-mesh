@@ -112,7 +112,7 @@ fn project_ids() string {
     var rest: string = project_listing()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let id: string = ""
+        var id: string = ""
         if at < 0 {
             id = rest
             rest = ""
@@ -249,7 +249,7 @@ fn ensure_wizard_dir() void {
     var rest: string = rho_read_text(legacy_report)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let file: string = ""
+        var file: string = ""
         if at < 0 {
             file = rest
             rest = ""
@@ -305,7 +305,7 @@ fn state_value_in(path: string, key: string) string {
     var rest: string = text
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -327,7 +327,7 @@ fn state_value(key: string) string {
     var rest: string = text
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -576,7 +576,7 @@ fn words_contain(words: string, value: string) bool {
     var rest: string = words
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, " ")
-        let word: string = ""
+        var word: string = ""
         if at < 0 {
             word = rest
             rest = ""

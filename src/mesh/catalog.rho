@@ -170,7 +170,7 @@ fn board_rows_read() string {
     var names: string = registry_names()
     while names != "" {
         let at: i32 = rho_str_index_of(names, "\n")
-        let file: string = ""
+        var file: string = ""
         if at < 0 {
             file = names
             names = ""
@@ -195,10 +195,10 @@ fn board_rows_read() string {
                 platform_name + "|true|true|false|true|true|true|uart usb ethernet wifi|process||uart console usb ethernet wifi socket\n"
         }
 
-        let manifests: string = find_manifests(platform_path + "/boards", "find-" + module_name)
+        var manifests: string = find_manifests(platform_path + "/boards", "find-" + module_name)
         while manifests != "" {
             let end: i32 = rho_str_index_of(manifests, "\n")
-            let manifest: string = ""
+            var manifest: string = ""
             if end < 0 {
                 manifest = manifests
                 manifests = ""
@@ -253,7 +253,7 @@ fn driver_rows_read() string {
     var rest: string = drivers
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let manifest: string = ""
+        var manifest: string = ""
         if at < 0 {
             manifest = rest
             rest = ""
@@ -278,7 +278,7 @@ fn driver_rows_read() string {
     rest = boards
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let manifest: string = ""
+        var manifest: string = ""
         if at < 0 {
             manifest = rest
             rest = ""
@@ -334,7 +334,7 @@ fn module_picker(loc: string, selected: string) string {
     rest = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -371,7 +371,7 @@ fn module_rows_read() string {
     var rest: string = manifests
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let manifest: string = ""
+        var manifest: string = ""
         if at < 0 {
             manifest = rest
             rest = ""
@@ -437,7 +437,7 @@ fn device_paths() string {
     while i < u32(rho_strlen(text)) {
         let at: i32 = rho_str_index_of(
             rho_str_slice(text, i, u32(rho_strlen(text)) - i), "\n")
-        let end: u32 = u32(rho_strlen(text))
+        var end: u32 = u32(rho_strlen(text))
         if at >= 0 {
             end = i + u32(at)
         }
@@ -478,7 +478,7 @@ fn device_rows_read() string {
     var rest: string = manifests
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let entry_line: string = ""
+        var entry_line: string = ""
         if at < 0 {
             entry_line = rest
             rest = ""
@@ -543,7 +543,7 @@ fn device_picker(loc: string, selected: string) string {
     var rest: string = device_rows()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -851,7 +851,7 @@ fn category_total(rows: string, category: string) u32 {
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -871,7 +871,7 @@ fn category_selected(rows: string, category: string, selected: string) u32 {
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -894,7 +894,7 @@ fn category_cards(rows: string, category: string, selected: string, input_type: 
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -924,7 +924,7 @@ fn category_selected_labels(rows: string, category: string, selected: string) st
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1000,7 +1000,7 @@ fn node_assignments_count(assignments: string, prefix: string) u32 {
     var rest: string = assignments
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1135,7 +1135,7 @@ fn node_bus_conflicts(index: u32) bool {
     var rest: string = node_bus_plan("en", index)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1159,7 +1159,7 @@ fn node_build_sensors(index: u32) string {
     var rest: string = plan
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1222,7 +1222,7 @@ fn node_bus_html(loc: string, index: u32) string {
     var rest: string = plan
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1302,7 +1302,7 @@ fn board_options_for(role: string, driver: string, selected: string) string {
     var rest: string = board_rows()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1328,7 +1328,7 @@ fn first_board_for(role: string, driver: string) string {
     var rest: string = board_rows()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1347,7 +1347,7 @@ fn first_board(role: string) string {
     var rest: string = board_rows()
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1378,7 +1378,7 @@ fn row_by_name(rows: string, name: string) string {
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1404,7 +1404,7 @@ fn row_by_name_or_id(rows: string, value: string, id_field: u32) string {
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1432,7 +1432,7 @@ fn options_from_rows(loc: string, rows: string, kind: string, role: string, sele
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1472,7 +1472,7 @@ fn label_for(rows: string, name: string) string {
     var rest: string = rows
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
-        let line: string = ""
+        var line: string = ""
         if at < 0 {
             line = rest
             rest = ""
@@ -1576,7 +1576,7 @@ fn transport_options_for(index: u32) string {
     var found: bool = false
     while universe != "" {
         let at: i32 = rho_str_index_of(universe, " ")
-        let transport: string = ""
+        var transport: string = ""
         if at < 0 {
             transport = universe
             universe = ""

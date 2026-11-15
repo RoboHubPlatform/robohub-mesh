@@ -104,7 +104,7 @@ fn mesh_client_register(req: Request) Response {
     let body: string = request_body(req)
     let app_name: string = str_trim(json_str_field(body, "app_name"))
     let project: string = str_trim(json_str_field(body, "project"))
-    let instance_id: string = str_trim(json_str_field(body, "instance_id"))
+    var instance_id: string = str_trim(json_str_field(body, "instance_id"))
     let callback_url: string = str_trim(json_str_field(body, "callback_url"))
     let topics: string = str_trim(json_str_field(body, "topics"))
     if app_name == "" || project == "" || callback_url == "" {

@@ -25,8 +25,8 @@ fn mesh_settings_tab(req: Request) string {
 
 fn mesh_settings_nav(req: Request, active: string) string {
     var out: string = "<nav class=\"vtabnav settings-tabs\">"
-    let ids: string = "general,alerts,auth,gateway,storage,logging,configuration"
-    let keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.storage,settings.tab.logging,settings.tab.configuration"
+    var ids: string = "general,alerts,auth,gateway,storage,logging,configuration"
+    var keys: string = "settings.tab.general,settings.tab.alerts,settings.tab.auth,settings.tab.gateway,settings.tab.storage,settings.tab.logging,settings.tab.configuration"
     while ids != "" {
         let id_at: i32 = rho_str_index_of(ids, ",")
         let key_at: i32 = rho_str_index_of(keys, ",")
