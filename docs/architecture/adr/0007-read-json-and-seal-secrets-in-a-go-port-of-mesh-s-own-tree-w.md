@@ -1,7 +1,7 @@
 ---
 id: ADR-0007
 title: Read JSON and seal secrets in a Go port of Mesh's own tree, with no change to rho
-status: proposed
+status: accepted
 date: 2026-11-19
 requirements: [MESH-0026, MESH-XFER-0004, MESH-XFER-0010, MESH-XFER-0020]
 supersedes: []

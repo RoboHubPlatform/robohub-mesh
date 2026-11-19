@@ -1,7 +1,7 @@
 ---
 id: ADR-0004
 title: Carry a mesh's definition as a versioned YAML project file
-status: proposed
+status: accepted
 date: 2026-11-19
 requirements: [MESH-0025, MESH-XFER-0001, MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0004, MESH-XFER-0005, MESH-XFER-0006, MESH-XFER-0007, MESH-XFER-0008]
 supersedes: []

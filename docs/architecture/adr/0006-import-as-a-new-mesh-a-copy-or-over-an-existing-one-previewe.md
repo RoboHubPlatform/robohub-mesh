@@ -1,7 +1,7 @@
 ---
 id: ADR-0006
 title: Import as a new mesh, a copy or over an existing one, previewed and whole
-status: proposed
+status: accepted
 date: 2026-11-19
 requirements: [MESH-0025, MESH-0027, MESH-XFER-0008, MESH-XFER-0013, MESH-XFER-0014, MESH-XFER-0015, MESH-XFER-0016, MESH-XFER-0017, MESH-XFER-0018, MESH-XFER-0019, MESH-XFER-0020, MESH-XFER-0021, MESH-XFER-0022, MESH-XFER-0023, MESH-XFER-0026]
 supersedes: []

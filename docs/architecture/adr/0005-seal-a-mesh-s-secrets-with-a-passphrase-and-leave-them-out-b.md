@@ -1,7 +1,7 @@
 ---
 id: ADR-0005
 title: Seal a mesh's secrets with a passphrase, and leave them out by default
-status: proposed
+status: accepted
 date: 2026-11-19
 requirements: [MESH-0026, MESH-0028, MESH-XFER-0009, MESH-XFER-0010, MESH-XFER-0011, MESH-XFER-0012, MESH-XFER-0013, MESH-XFER-0019]
 supersedes: []

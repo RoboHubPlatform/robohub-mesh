@@ -19,7 +19,7 @@ requirements:
     rationale: A file is recognised by what it says, not by its name, and a later Mesh must know which rules it was written to.
     satisfies: [MESH-0025]
     decided_by: [ADR-0004]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -41,7 +41,7 @@ requirements:
     rationale: Importing the file must give back exactly those gateways, boards, modules, devices and links, with the ids already flashed boards report as and history is kept under.
     satisfies: [MESH-0025]
     decided_by: [ADR-0004]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -58,7 +58,7 @@ requirements:
     rationale: History belongs to the Mesh that recorded it and stays there on an overwrite (MESH-XFER-0016); a file with it would be large, stale at once and leak more than a design.
     satisfies: [MESH-0025]
     decided_by: [ADR-0004]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -75,7 +75,7 @@ requirements:
     rationale: YAML is what plan.yml is and what a person diffs and corrects; JSON is what scripts produce; the reader Mesh has for YAML skips what it does not understand, so the file is checked before it is read.
     satisfies: [MESH-0025, MESH-0027]
     decided_by: [ADR-0004, ADR-0007]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -92,7 +92,7 @@ requirements:
     rationale: A project file kept in git must show a renamed board as one changed line, not a reshuffled file.
     satisfies: [MESH-0025]
     decided_by: [ADR-0004]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -108,7 +108,7 @@ requirements:
     rationale: An editor or another tool checks a file against the same contract without running Mesh, as the ecosystem's own schemas/ do (robohub HUB-0007).
     satisfies: [MESH-0025]
     decided_by: [ADR-0004]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -125,7 +125,7 @@ requirements:
     rationale: A file exported years ago must still restore; a file from a newer Mesh must not be half-understood.
     satisfies: [MESH-0025]
     decided_by: [ADR-0004]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -142,7 +142,7 @@ requirements:
     rationale: A person correcting a file by hand needs every mistake at once, and a file that is wrong must not leave a part of a mesh behind (SYS-0062).
     satisfies: [MESH-0027]
     decided_by: [ADR-0004, ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -159,7 +159,7 @@ requirements:
     rationale: The default export is the one people share and commit; it must be safe to share. A Wi-Fi network's name is kept, its password is not.
     satisfies: [MESH-0026]
     decided_by: [ADR-0005]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -178,7 +178,7 @@ requirements:
     rationale: A file that can move a mesh with its flashed boards holds the key every board's key derives from; sealed, a copy of the file without the passphrase opens nothing. The relay key is derived again on import, and a signing key is a file of the machine.
     satisfies: [MESH-0026]
     decided_by: [ADR-0005, ADR-0007]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -194,7 +194,7 @@ requirements:
     rationale: A passphrase kept beside the file it protects protects nothing (SYS-0033).
     satisfies: [MESH-0026]
     decided_by: [ADR-0005]
-    status: proposed
+    status: approved
     verification: inspection
     owner: maintainer
     changed: 2026-11-19
@@ -209,7 +209,7 @@ requirements:
     rationale: Wrong passphrase and tampered file cannot be told apart, and neither may yield a mesh with half its keys.
     satisfies: [MESH-0026, MESH-0027]
     decided_by: [ADR-0005]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -225,7 +225,7 @@ requirements:
     rationale: A rotation is wrapped under the current key (robohub:ADR-0010), which only the old gateway key gives; the boards must be built and flashed again, and the page must say so.
     satisfies: [MESH-0026, MESH-0027]
     decided_by: [ADR-0005, ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -244,7 +244,7 @@ requirements:
     rationale: Moving a mesh to another machine keeps what flashed boards carry (area, numbers, ids, key) and what applications ask for (`mesh:<id>`).
     satisfies: [MESH-0025]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -260,7 +260,7 @@ requirements:
     rationale: A second site starts from the first one's design without claiming its boards.
     satisfies: [MESH-0025]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -277,7 +277,7 @@ requirements:
     rationale: Re-importing an export is how an edit is undone beyond one revision; what runs and what was recorded here is still true here.
     satisfies: [MESH-0025, MESH-0027]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -293,7 +293,7 @@ requirements:
     rationale: A board flashed with the same key, area and number is current on the new machine and must not be shown out of date; with any of them changed it is not.
     satisfies: [MESH-0025, MESH-0026]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -314,7 +314,7 @@ requirements:
     rationale: Two meshes on one machine must never share a node id, a key, an area or a port (MESH-FLEET-0001); a design is still imported when a catalog entry is missing.
     satisfies: [MESH-0025, MESH-0027]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -329,7 +329,7 @@ requirements:
     rationale: A key file that exists is never replaced (MESH-ACCESS-0001); a mesh moved onto an existing one with another key is offered as a new mesh instead.
     satisfies: [MESH-0026, MESH-0027]
     decided_by: [ADR-0005, ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -348,7 +348,7 @@ requirements:
     rationale: The person sees what will happen before it happens, and a file swapped between preview and confirmation is refused.
     satisfies: [MESH-0027]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -365,7 +365,7 @@ requirements:
     rationale: A power cut during an import must leave the meshes as they were, not a mesh without its key or a fleet place without a mesh.
     satisfies: [MESH-0027]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -380,7 +380,7 @@ requirements:
     rationale: Applying stays a deliberate act (MESH-0003); a manifest change takes effect at once, as a revocation does, so the person sees it first.
     satisfies: [MESH-0027]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -394,7 +394,7 @@ requirements:
     rationale: A script that restores a mesh from git on every start must not fill the revisions with copies.
     satisfies: [MESH-0027]
     decided_by: [ADR-0006]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -411,7 +411,7 @@ requirements:
     rationale: Whoever can read a mesh's pages sees its design already; its key and the power to create or replace a mesh are Mesh-wide.
     satisfies: [MESH-0028]
     decided_by: [ADR-0008]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -427,7 +427,7 @@ requirements:
     rationale: Mesh shares the keeper's origin with every application; an import is the most damaging form Mesh has (MESH-0016).
     satisfies: [MESH-0028]
     decided_by: [ADR-0008]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -444,7 +444,7 @@ requirements:
     rationale: A file from elsewhere is untrusted; a mesh id becomes a folder name and a header value (SYS-0063).
     satisfies: [MESH-0027, MESH-0028]
     decided_by: [ADR-0006, ADR-0008]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -462,7 +462,7 @@ requirements:
     rationale: Export and import belong where a mesh is copied and deleted today; Mesh reads form bodies, not multipart uploads.
     satisfies: [MESH-0025, MESH-0027]
     decided_by: [ADR-0008]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -483,8 +483,32 @@ requirements:
     rationale: A backup or a move is scripted with curl and a service token, on the same API applications already use.
     satisfies: [MESH-0025, MESH-0027]
     decided_by: [ADR-0008]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
     tags: [transfer, api]
+
+  # Decisions made in review (2026-11-19)
+  - id: MESH-XFER-0029
+    title: A Wi-Fi board imported without its password is not built until it has one
+    statement: A board on a Wi-Fi link whose password a file left out (it was not sealed, or the sealed block was not opened) shall be imported with its network name and no password; the preview shall name it, and a build of that board shall be refused, saying which network needs its password, until the person enters one.
+    rationale: "The maintainer chose refusing the build over only listing it: a board built without its network password cannot join and would look like a fault in the field."
+    satisfies: [MESH-0026, MESH-0027]
+    status: approved
+    owner: maintainer
+    verification: test
+    decided_by: [ADR-0005, ADR-0006]
+    changed: 2026-11-19
+    tags: [transfer, security, wifi]
+  - id: MESH-XFER-0030
+    title: Machine-specific values are imported and named as warnings
+    statement: The gateway's serial device and its TLS certificate and key paths, which name files on the machine that exported them, shall be imported as written, and the preview shall name each one as a warning to check on this machine.
+    rationale: "The maintainer chose keeping them with a warning: on the same machine they are right, and on another one the person sees exactly what to change."
+    satisfies: [MESH-0025]
+    status: approved
+    owner: maintainer
+    verification: test
+    decided_by: [ADR-0004, ADR-0006]
+    changed: 2026-11-19
+    tags: [transfer, portability]

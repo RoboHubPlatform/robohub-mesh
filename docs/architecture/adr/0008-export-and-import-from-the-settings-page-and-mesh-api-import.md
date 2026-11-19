@@ -1,7 +1,7 @@
 ---
 id: ADR-0008
 title: Export and import from the settings page and /mesh/api, importing with Mesh-wide grants
-status: proposed
+status: accepted
 date: 2026-11-19
 requirements: [MESH-0028, MESH-XFER-0024, MESH-XFER-0025, MESH-XFER-0026, MESH-XFER-0027, MESH-XFER-0028]
 supersedes: []
