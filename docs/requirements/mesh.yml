@@ -359,3 +359,53 @@ requirements:
     owner: maintainer
     changed: 2026-11-19
     tags: [storage, robustness]
+
+  # Export and import: a mesh as a project file (proposed; MESH-XFER-* in
+  # project-file.yml)
+  - id: MESH-0025
+    title: A mesh is exported and imported as a project file
+    statement: Mesh shall export any mesh as a project file that holds everything needed to plan that mesh again — its gateway, boards, sensor modules, network devices, links, inter-mesh links, settings, names and node ids — and shall create from such a file, on this or another Mesh, a mesh with exactly those gateways, boards, modules, devices and links, or replace an existing mesh's plan with it.
+    rationale: A design that lives only in one Mesh's folder cannot be backed up, moved to a new machine, or taken back after a bad edit beyond the last 20 revisions.
+    satisfies: [SYS-0042, SYS-0058]
+    status: proposed
+    verification: test
+    decided_by: [ADR-0004, ADR-0006]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, plan]
+
+  - id: MESH-0026
+    title: A project file never carries a secret in clear
+    statement: A project file shall carry no gateway key, relay key, Wi-Fi password, token or signing-key reference in clear; a mesh's gateway key and Wi-Fi passwords shall leave Mesh only when the person asks for them, sealed under a passphrase they type, which Mesh neither keeps nor logs.
+    rationale: An exported file ends up in downloads folders, mail and git; the gateway key speaks for every board of the mesh (MESH-0008).
+    satisfies: [SYS-0033]
+    status: proposed
+    verification: test
+    decided_by: [ADR-0005, ADR-0007]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, secrets]
+
+  - id: MESH-0027
+    title: An import is checked whole, previewed, and applied whole or not at all
+    statement: Mesh shall check a project file completely before writing anything, name every field that is wrong, show what an import will create, change and leave out before the person confirms it, and either complete the import or leave every mesh as it was; an import shall start, stop, build or flash nothing.
+    rationale: A half-imported mesh, or one that silently dropped a board, is worse than none; and applying stays a deliberate act (SYS-0042).
+    satisfies: [SYS-0062, SYS-0042]
+    status: proposed
+    verification: test
+    decided_by: [ADR-0006]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, validation]
+
+  - id: MESH-0028
+    title: Exporting and importing are held to grants and to forms from Mesh's own pages
+    statement: Mesh shall export a mesh only for a request that may read it, export its sealed secrets and import a project file only for a request holding Mesh as a whole, and refuse an export or import posted from another origin, before acting.
+    rationale: An export reveals a mesh's whole topology and, sealed, its key; an import can create or replace a mesh.
+    satisfies: [SYS-0008, SYS-0034]
+    status: proposed
+    verification: test
+    decided_by: [ADR-0005, ADR-0008]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, access]

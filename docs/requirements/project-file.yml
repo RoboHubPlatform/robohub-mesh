@@ -1,0 +1,490 @@
+# The project file: a mesh exported as a file and imported again — on this Mesh,
+# as a new mesh, a copy or over an existing one, or on another Mesh — what the
+# file carries and what it leaves out, its format, schema and versions, how the
+# secrets travel, the import's modes, conflicts, preview and atomicity, who may
+# do it and where. Nothing implements these yet: they are proposed, with
+# ADR-0004 to ADR-0008, for the maintainer to decide before any code is written.
+level: SUB
+prefix: MESH-XFER
+title: Mesh project file
+requirements:
+  # What the file is
+  - id: MESH-XFER-0001
+    title: A project file says what it is and which schema it follows
+    statement: >
+      A project file shall carry `format: robohub-mesh-project`, `schema` as a
+      whole number (1 for the first), `exported.by` naming the Mesh version that
+      wrote it and `exported.at` as a UTC time, and Mesh shall refuse to import a
+      file whose `format` is missing or different, naming the field.
+    rationale: A file is recognised by what it says, not by its name, and a later Mesh must know which rules it was written to.
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, format, schema]
+
+  - id: MESH-XFER-0002
+    title: A project file carries the mesh's whole definition
+    statement: >
+      An export shall carry the mesh's id, name and description, its gateway (role,
+      board, driver, sensors, host, serial device, REST and uplink ports, area, URL
+      of a gateway elsewhere, TLS file paths), its telemetry retention, every node
+      with its number, id, kind, role, name, description, board, driver, parent,
+      link and link settings except passwords, every sensor module with its board
+      and bus placement, every network device with its integration, transport,
+      address and device id, each board's key epoch, revocation and production
+      setting, the mesh's relay id and the meshes it reports through or that report
+      through it, by mesh id — every key of the plan that the schema's list of
+      definition keys names, and no other.
+    rationale: Importing the file must give back exactly those gateways, boards, modules, devices and links, with the ids already flashed boards report as and history is kept under.
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, contents]
+
+  - id: MESH-XFER-0003
+    title: A project file carries no runtime state or history
+    statement: >
+      An export shall carry none of the plan's revision, update time, steps,
+      status and message keys, node edit revisions, device states, last values
+      and poll times, nor any telemetry, fault, inbox, job, log, revision copy,
+      built image or board folder, gateway process or health record, token
+      record or revoked subject, registered client, or Mesh-wide setting.
+    rationale: History belongs to the Mesh that recorded it and stays there on an overwrite (MESH-XFER-0016); a file with it would be large, stale at once and leak more than a design.
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, contents]
+
+  - id: MESH-XFER-0004
+    title: YAML is the file's form, and JSON the same tree
+    statement: >
+      Mesh shall export a project file as YAML unless JSON is asked for, both with
+      the same keys and values, and shall import either, telling them apart by
+      the first character that is not white space (`{` for JSON); a YAML file
+      shall use only nested maps of scalars, and a line that is not a key, a key
+      and a value, a comment or blank shall be refused with its line number.
+    rationale: YAML is what plan.yml is and what a person diffs and corrects; JSON is what scripts produce; the reader Mesh has for YAML skips what it does not understand, so the file is checked before it is read.
+    satisfies: [MESH-0025, MESH-0027]
+    decided_by: [ADR-0004, ADR-0007]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, format]
+
+  - id: MESH-XFER-0005
+    title: Exports of an unchanged mesh are identical
+    statement: >
+      An export shall write its keys in a fixed order — sorted, a numeric key by
+      its number — and every value quoted, so that two exports of a mesh that has
+      not changed differ only in `exported.at`, and an export that is imported as
+      a new mesh and exported again differs only in `exported.at` and in what the
+      import changed and listed (MESH-XFER-0020).
+    rationale: A project file kept in git must show a renamed board as one changed line, not a reshuffled file.
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, format]
+
+  - id: MESH-XFER-0006
+    title: The schema is published as a JSON Schema
+    statement: >
+      Mesh's repository shall publish each schema version of the project file as
+      `schemas/mesh-project.v<schema>.json` (JSON Schema 2020-12), and a test shall
+      hold the keys the exporter writes and the import checks to the keys and
+      patterns that schema declares.
+    rationale: An editor or another tool checks a file against the same contract without running Mesh, as the ecosystem's own schemas/ do (robohub HUB-0007).
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, schema]
+
+  - id: MESH-XFER-0007
+    title: An older file is carried forward, a newer one refused
+    statement: >
+      Mesh shall import a file of any schema version it has ever written,
+      carrying it forward to its own version as it carries an older plan forward,
+      and shall refuse a file of a higher schema version than its own with a
+      message naming the file's schema, its own and the Mesh version that wrote
+      the file.
+    rationale: A file exported years ago must still restore; a file from a newer Mesh must not be half-understood.
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, schema, compatibility]
+
+  - id: MESH-XFER-0008
+    title: Every problem in a file is named, and nothing is written
+    statement: >
+      An import shall report every problem it finds, each with the key's path (and
+      the line, for YAML) — an unknown key, a value outside its pattern, a node
+      whose parent, module board or link names no node, two nodes with one number
+      or one id, a cycle of parents, more than one gateway, more than 64 nodes, a
+      file over 1 MiB — and shall write nothing while there is one.
+    rationale: A person correcting a file by hand needs every mistake at once, and a file that is wrong must not leave a part of a mesh behind (SYS-0062).
+    satisfies: [MESH-0027]
+    decided_by: [ADR-0004, ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, validation]
+
+  # Secrets
+  - id: MESH-XFER-0009
+    title: An export leaves the secrets out unless they are asked for
+    statement: >
+      An export shall leave out the mesh's gateway key, its relay key, every Wi-Fi
+      password, any legacy gateway token and the production signing-key path, and
+      shall list in the file, by name and without value, each secret it left out
+      (`omitted:`), so the import can say what must be set again.
+    rationale: The default export is the one people share and commit; it must be safe to share. A Wi-Fi network's name is kept, its password is not.
+    satisfies: [MESH-0026]
+    decided_by: [ADR-0005]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, secrets]
+
+  - id: MESH-XFER-0010
+    title: Secrets asked for are sealed under a passphrase
+    statement: >
+      When the person asks for the secrets, the export shall carry the gateway key
+      and the Wi-Fi passwords only in `sealed:`, encrypted with AES-256-GCM under a
+      key derived from a passphrase of at least 12 characters, typed twice, by
+      PBKDF2-HMAC-SHA256 with 600000 iterations and a random 16-byte salt, with a
+      random 12-byte nonce and the file's format, schema, mesh id and export time
+      as associated data; the relay key and the signing-key path shall never be
+      exported.
+    rationale: A file that can move a mesh with its flashed boards holds the key every board's key derives from; sealed, a copy of the file without the passphrase opens nothing. The relay key is derived again on import, and a signing key is a file of the machine.
+    satisfies: [MESH-0026]
+    decided_by: [ADR-0005, ADR-0007]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, secrets, crypto]
+
+  - id: MESH-XFER-0011
+    title: A passphrase is never kept, logged or put on a command line
+    statement: >
+      Mesh shall take a passphrase only from a form field or a request body, never
+      from a URL, shall not write it to any file or log, and shall not pass it, or
+      any secret it seals or opens, to another program on its command line or in
+      its environment.
+    rationale: A passphrase kept beside the file it protects protects nothing (SYS-0033).
+    satisfies: [MESH-0026]
+    decided_by: [ADR-0005]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, secrets]
+
+  - id: MESH-XFER-0012
+    title: Sealed secrets that cannot be opened are not imported
+    statement: >
+      An import of a file with `sealed:` shall open it only with the passphrase
+      given, and when it cannot be opened — wrong passphrase, altered file — shall
+      write nothing and say so, offering to import the file without its secrets.
+    rationale: Wrong passphrase and tampered file cannot be told apart, and neither may yield a mesh with half its keys.
+    satisfies: [MESH-0026, MESH-0027]
+    decided_by: [ADR-0005]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, secrets]
+
+  - id: MESH-XFER-0013
+    title: A mesh imported without its key gets a new one, and every board is unprogrammed
+    statement: >
+      A mesh created by an import that does not keep the file's sealed gateway key
+      shall get a new gateway key as any new mesh does (MESH-ACCESS-0001), and
+      every board and the gateway shall be shown as never programmed, with no key
+      rotation attempted.
+    rationale: A rotation is wrapped under the current key (robohub:ADR-0010), which only the old gateway key gives; the boards must be built and flashed again, and the page must say so.
+    satisfies: [MESH-0026, MESH-0027]
+    decided_by: [ADR-0005, ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, keys]
+
+  # Import modes
+  - id: MESH-XFER-0014
+    title: A file is imported as a new mesh with its identity
+    statement: >
+      Importing as a new mesh shall create it under the file's name or one the
+      person gives, under the file's mesh id when no mesh on this Mesh has it and
+      otherwise an id made from the name, keeping every node's number and id,
+      the file's area, REST and uplink ports when no other mesh here has them and
+      new ones from the fleet otherwise, and the sealed gateway key when it is
+      opened.
+    rationale: Moving a mesh to another machine keeps what flashed boards carry (area, numbers, ids, key) and what applications ask for (`mesh:<id>`).
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import]
+
+  - id: MESH-XFER-0015
+    title: A file is imported as a copy with none of its identity
+    statement: >
+      Importing as a copy shall create a new mesh as copying a mesh as a template
+      does (MESH-FLEET-0004): with the file's gateway, boards, modules, devices and
+      links, and with new node ids, a new gateway key, no sealed secret, no record
+      of what was deployed and no link to another mesh.
+    rationale: A second site starts from the first one's design without claiming its boards.
+    satisfies: [MESH-0025]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import]
+
+  - id: MESH-XFER-0016
+    title: Overwriting replaces a mesh's plan and keeps what is this Mesh's
+    statement: >
+      Importing over an existing mesh shall replace its plan's definition with the
+      file's in one plan write, after the person types the mesh's name, and shall
+      keep the mesh's id, folder, area, ports, gateway key, deployed records, token
+      records, jobs and telemetry history; the plan it replaces shall be kept as a
+      revision even when the last revision was kept moments before.
+    rationale: Re-importing an export is how an edit is undone beyond one revision; what runs and what was recorded here is still true here.
+    satisfies: [MESH-0025, MESH-0027]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, overwrite]
+
+  - id: MESH-XFER-0017
+    title: What was deployed travels only with the mesh's identity
+    statement: >
+      A sealed export shall carry the mesh's deployed signatures, and an import as
+      a new mesh shall keep them only when it keeps the sealed gateway key, the
+      file's area and uplink port and every node's number and id; otherwise no
+      board and not the gateway shall be recorded as deployed.
+    rationale: A board flashed with the same key, area and number is current on the new machine and must not be shown out of date; with any of them changed it is not.
+    satisfies: [MESH-0025, MESH-0026]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, deploy]
+
+  # Conflicts
+  - id: MESH-XFER-0018
+    title: Conflicts are settled before anything is written
+    statement: >
+      An import shall settle each conflict before writing: a mesh id already here
+      shall be offered a new id or an overwrite; a node id another mesh here has,
+      or a sealed gateway key another mesh here uses, shall refuse an import with
+      identity and offer one as a copy; an area or port another mesh has shall be
+      replaced from the fleet and listed; a link to a mesh not here shall be left
+      out and listed; and a board, driver, module or device integration this
+      Mesh's catalog does not have shall be listed, its node kept and its build
+      refused until the catalog has it.
+    rationale: Two meshes on one machine must never share a node id, a key, an area or a port (MESH-FLEET-0001); a design is still imported when a catalog entry is missing.
+    satisfies: [MESH-0025, MESH-0027]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, conflicts]
+
+  - id: MESH-XFER-0019
+    title: An overwrite never replaces a gateway key
+    statement: >
+      An import over an existing mesh shall keep that mesh's gateway key whatever
+      the file carries, and when the file's sealed key differs the preview shall
+      say that boards flashed with the file's key must be built and flashed again.
+    rationale: A key file that exists is never replaced (MESH-ACCESS-0001); a mesh moved onto an existing one with another key is offered as a new mesh instead.
+    satisfies: [MESH-0026, MESH-0027]
+    decided_by: [ADR-0005, ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, keys]
+
+  # Preview, atomicity, what runs
+  - id: MESH-XFER-0020
+    title: An import is previewed before it is confirmed
+    statement: >
+      Every import shall first be answered with a preview that writes nothing:
+      the mesh id and name it will have, the mode, each node to be added, changed
+      or removed by id and name, each area or port changed, the secrets kept and
+      omitted, the boards that will show out of date, every conflict and how it is
+      settled, and every warning; the confirmation shall apply only the file the
+      preview was made from, named by its SHA-256 digest.
+    rationale: The person sees what will happen before it happens, and a file swapped between preview and confirmation is refused.
+    satisfies: [MESH-0027]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, preview]
+
+  - id: MESH-XFER-0021
+    title: An import completes or leaves nothing
+    statement: >
+      A new mesh shall be written in a hidden folder under the projects directory
+      and renamed into place only when complete, with its fleet place taken under
+      the fleet's lock and given back if the rename fails; an overwrite shall be
+      one plan write; and Mesh shall remove at start any folder an interrupted
+      import left.
+    rationale: A power cut during an import must leave the meshes as they were, not a mesh without its key or a fleet place without a mesh.
+    satisfies: [MESH-0027]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, atomicity]
+
+  - id: MESH-XFER-0022
+    title: Nothing runs because of an import
+    statement: >
+      An import shall queue no job and start, stop or restart no gateway; an
+      overwrite shall rewrite the node manifest as any plan write does, and its
+      preview shall list each board the new manifest admits, refuses or revokes.
+    rationale: Applying stays a deliberate act (MESH-0003); a manifest change takes effect at once, as a revocation does, so the person sees it first.
+    satisfies: [MESH-0027]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, deploy]
+
+  - id: MESH-XFER-0023
+    title: Importing the same file over its mesh again changes nothing
+    statement: >
+      An overwrite whose definition is the mesh's current definition shall write
+      nothing, raise no revision and say that the mesh already matches the file.
+    rationale: A script that restores a mesh from git on every start must not fill the revisions with copies.
+    satisfies: [MESH-0027]
+    decided_by: [ADR-0006]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, import, idempotence]
+
+  # Access and safety
+  - id: MESH-XFER-0024
+    title: Export needs a read grant; secrets and imports need Mesh as a whole
+    statement: >
+      An export without secrets shall need a grant that reads the mesh
+      (MESH-API-0001), an export with sealed secrets and every import — new, copy
+      or overwrite — shall need `*` or `mesh:*`, and any other request shall be
+      answered 403 before the file is read or written.
+    rationale: Whoever can read a mesh's pages sees its design already; its key and the power to create or replace a mesh are Mesh-wide.
+    satisfies: [MESH-0028]
+    decided_by: [ADR-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, access]
+
+  - id: MESH-XFER-0025
+    title: An export or import is posted from Mesh's own form or with a bearer token
+    statement: >
+      A browser's export with secrets, import preview and import confirmation
+      shall carry the form token (`forms_csrf_ok`), and the API's shall carry a
+      bearer token (`forms_machine_ok`); any other post shall be refused with 403
+      before it acts.
+    rationale: Mesh shares the keeper's origin with every application; an import is the most damaging form Mesh has (MESH-0016).
+    satisfies: [MESH-0028]
+    decided_by: [ADR-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, web]
+
+  - id: MESH-XFER-0026
+    title: A project file is data and nothing in it is run or followed
+    statement: >
+      Mesh shall run nothing a project file says, put no value of it into a
+      command line, read no path it names, take a mesh id from it only when it is
+      made of letters, digits, `-`, `_` and `.` and neither starts with `.` nor
+      holds `..`, name a download only from the mesh's checked id, and answer 413
+      to a file over 1 MiB without reading the rest.
+    rationale: A file from elsewhere is untrusted; a mesh id becomes a folder name and a header value (SYS-0063).
+    satisfies: [MESH-0027, MESH-0028]
+    decided_by: [ADR-0006, ADR-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, security, validation]
+
+  # Where
+  - id: MESH-XFER-0027
+    title: The pages export a mesh and import a file
+    statement: >
+      A mesh's settings page shall offer to export it as YAML or JSON, with or
+      without its sealed secrets, and to import a file over it; the fleet page shall
+      offer to import a file as a new mesh or a copy; a chosen file shall be read by
+      the page into the form, and every import shall show its preview page before
+      its confirmation.
+    rationale: Export and import belong where a mesh is copied and deleted today; Mesh reads form bodies, not multipart uploads.
+    satisfies: [MESH-0025, MESH-0027]
+    decided_by: [ADR-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, ui]
+
+  - id: MESH-XFER-0028
+    title: The API exports a mesh and imports a file
+    statement: >
+      `/mesh/api` shall answer `GET /mesh/api/projects/{project}/export` with the
+      file without secrets (`?format=json` for JSON), `POST
+      /mesh/api/projects/{project}/export` with the sealed file for a passphrase in
+      the body, and `POST /mesh/api/projects/import` with a form body of `file`,
+      `passphrase` for a sealed file, `mode` (`new`, `copy`, `overwrite`),
+      `target`, `name` and `confirm` (the preview's digest), answering the preview
+      as JSON when `confirm` is absent; an invalid file shall be answered 422, an
+      unsettled conflict 409 and a confirmation for another file 412, each with
+      every problem listed.
+    rationale: A backup or a move is scripted with curl and a service token, on the same API applications already use.
+    satisfies: [MESH-0025, MESH-0027]
+    decided_by: [ADR-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [transfer, api]
