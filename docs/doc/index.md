@@ -147,12 +147,21 @@ Every edit is made in the inspector and saved at once:
   and stops it.
 
 An edit builds nothing and resets nothing. What a board's image is built from — its
-board, role, parent, link and the link's settings, its modules, the links it serves,
-and the gateway's address when it dials it — is its signature, recorded when the
-board is programmed. A board whose plan differs shows as out of date, with what
+board, role, parent, number, link and the link's settings (with the mesh's Wi-Fi when
+it has none of its own), its modules, the links it serves, the address it dials when
+it dials the gateway, and what the mesh gives every board: its area and the gateway
+key its own key is derived from — is its signature, recorded when the board is
+programmed. A board whose signature now differs shows as out of date, with what
 changed: a new name changes nothing, a new module puts that board alone out of date,
 a new link puts the board out of date and asks the gateway or relay serving it to
-restart.
+restart, and another area or another gateway key puts every board and the gateway
+out of date. The key is recorded by its scope, never by itself. Rotating a board's
+key is not a rebuild: the gateway hands the board its new key.
+
+A record written by Mesh 0.21.0 or earlier names neither the area nor the key, so
+what the board was built with cannot be told from it: the board shows out of date,
+"recorded by an earlier Mesh without the area and gateway key it was built with",
+until it is flashed again, and the gateway until it is restarted.
 
 Each save raises the node's own revision. A form opened before the node's last save
 is refused — "changed elsewhere" — rather than written over it.

@@ -1214,6 +1214,7 @@ fn editor_refusal(loc: string, index: u32, parent: string) string {
 // signatures before and after, as Apply changes would see them.
 fn editor_impact(loc: string, index: u32, lines: string) string {
     let before: string = plan_text(wizard_file())
+    let mesh: string = deployed_mesh(current_project())
     var after: string = before
     var rest: string = lines
     while rest != "" {
@@ -1235,7 +1236,7 @@ fn editor_impact(loc: string, index: u32, lines: string) string {
     var board: u32 = 1
     while board <= count {
         if editor_is_board(board) {
-            let reason: string = deploy_reason(deploy_node_signature(before, board), deploy_node_signature(after, board))
+            let reason: string = deploy_reason(deploy_node_signature(before, board, mesh), deploy_node_signature(after, board, mesh))
             if reason != "" {
                 out = out + mesh_fill(mesh_fill(mesh_t(loc, "editor.impact.rebuild"), "name", editor_name(loc, board)),
                     "reason", deployed_reason_text(loc, reason)) + " "
@@ -1243,7 +1244,7 @@ fn editor_impact(loc: string, index: u32, lines: string) string {
         }
         board = board + 1
     }
-    let gateway: string = deploy_reason(deploy_gateway_signature(before), deploy_gateway_signature(after))
+    let gateway: string = deploy_reason(deploy_gateway_signature(before, mesh), deploy_gateway_signature(after, mesh))
     if gateway != "" {
         out = out + mesh_fill(mesh_t(loc, "editor.impact.restart_gateway"), "reason", deployed_reason_text(loc, gateway)) + " "
     }

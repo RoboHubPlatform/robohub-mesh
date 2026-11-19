@@ -279,7 +279,7 @@ def write_garden(projects: Path, port_base: int) -> None:
         "node.2.id=fedcba9876543210", "node.2.transport=http", "node.2.address=http://127.0.0.1:9/`id`",
         "node.2.state=on", "node.2.last_value=12.5",
         "node.3.name=Shed board", "node.3.parent=gateway", "node.3.role=node", "node.3.id=1111222233334444",
-        "node.3.link=uart", "node.3.baud=115200",
+        "node.3.link=uart", "node.3.baud=115200", "status.node.3=programmed",
     ]) + "\n")
     (garden / "gateway.key").write_text(GATEWAY_KEY + "\n")
     os.chmod(garden / "gateway.key", 0o600)
@@ -337,6 +337,12 @@ def main() -> int:
             f"gateway\truns=native;host=127.0.0.1\nnode.0123456789abcdef\tboard=;link=wifi,ssid:GardenNet,password:{WIFI_NODE}\n")
         meshes.append(alpha.start())
         a = alpha.base
+        # The shed board was programmed and has no record yet: the first look at
+        # the mesh records what it runs, in this Mesh's shape, beside the two
+        # records an older Mesh wrote.
+        send(a, "GET", "/mesh/p/garden", cookie=admin)
+        check("node.1111222233334444\tsig=2;area=5;key=" in (alpha.projects / "garden" / "deployed.txt").read_text(),
+              "a programmed board is recorded with the area and the key's scope")
 
         # ---------------------------------------------------------- export
         # @verifies MESH-XFER-0001, MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009, MESH-0026, MESH-XFER-0024
@@ -533,6 +539,13 @@ def main() -> int:
               f"a sealed block moved into another file does not open ({status})")
         check(gamma.mesh_ids() == set(), "neither wrote anything")
 
+        # @verifies MESH-XFER-0017, MESH-BUILD-0001, MESH-BUILD-0012
+        status, preview, body = imported(gamma, admin, {"file": sealed_text, "passphrase": PASSPHRASE})
+        outdated = {o.get("name"): o.get("reason") for o in preview.get("out_of_date", [])}
+        check(status == 200 and "Shed board" not in outdated,
+              f"a board recorded with the same area and key is current after the import ({status} {outdated})")
+        check(outdated.get("Pump board") == "recorded without its area and key",
+              f"one recorded by an older Mesh is out of date and says why ({outdated})")
         # @verifies MESH-XFER-0010, MESH-XFER-0014, MESH-XFER-0017, MESH-0025
         status, answer, body = import_confirmed(gamma, admin, {"file": sealed_text, "passphrase": PASSPHRASE})
         ggarden = gamma.projects / "garden"
@@ -624,7 +637,6 @@ def main() -> int:
         # @verifies MESH-XFER-0016, MESH-XFER-0019, MESH-XFER-0022, MESH-XFER-0020, MESH-0027
         garden = alpha.projects / "garden"
         before_key = (garden / "gateway.key").read_text()
-        before_deployed = (garden / "deployed.txt").read_text()
         before_tokens = (garden / "tokens.jsonl").read_text()
         send(a, "POST", "/mesh/p/garden/node/1111222233334444/delete", {}, bearer=admin, hx=True)
         send(a, "POST", "/mesh/project/garden/settings", {"name": "Garden renamed", "description": "changed",
@@ -632,6 +644,9 @@ def main() -> int:
         aplan = plan_flat(garden / "plan.yml")
         revision = aplan.get("revision", "")
         check(aplan.get("node.count") == "2" and aplan.get("project.name") == "Garden renamed", "the mesh is edited after its export")
+        # Deleting the shed board took its record of what runs with it; what the
+        # overwrite must keep is the record as it is now.
+        before_deployed = (garden / "deployed.txt").read_text()
         status, preview, body = imported(alpha, admin, {"file": yaml_text, "mode": "overwrite", "target": "garden"})
         check(status == 200 and {n.get("id") for n in preview.get("nodes", []) if n.get("change") == "added"} == {"1111222233334444"},
               f"an overwrite's preview names the node it brings back ({status} {body[:300]})")

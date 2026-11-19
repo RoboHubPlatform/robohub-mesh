@@ -322,7 +322,7 @@ fn jobs_queue_board(loc: string, index: u32) string {
     if prepared != 0 {
         return mesh_fill(mesh_t(loc, "jobs.prepare_failed"), "name", editor_name(loc, index))
     }
-    let signature: string = deploy_node_signature(plan_text(wizard_file()), index)
+    let signature: string = deploy_node_signature(plan_text(wizard_file()), index, deployed_mesh(id))
     let name: string = editor_name(loc, index)
     let program: string = path_base(dir)
     let otp: bool = production && production_needs_otp(plan_text_of_board)
@@ -369,6 +369,9 @@ fn jobs_queue_gateway(loc: string) string {
     if jobs_open_for(id, "gateway", "") != "" {
         return mesh_t(loc, "jobs.gateway_busy")
     }
+    // The gateway is started with the mesh's key, made here if it has none yet,
+    // so the signature recorded for it names the key it will run with.
+    ignore_string(mesh_gateway_key(id))
     ignore_u32(rho_exec_args("mkdir", "-p\n" + jobs_dir(id) + "\n", jobs_report("mkdir")))
     let script: string = jobs_dir(id) + "/recording.sh"
     ignore_bool(rho_write_text(script, ""))
@@ -386,7 +389,7 @@ fn jobs_queue_gateway(loc: string) string {
         label = mesh_t(loc, "jobs.label.program_gateway")
     }
     ignore_string(jobs_add(id, "gateway", "gateway", label, rho_read_text(script),
-        deploy_gateway_signature(plan_text(wizard_file())), "", ""))
+        deploy_gateway_signature(plan_text(wizard_file()), deployed_mesh(id)), "", ""))
     return ""
 }
 
@@ -823,7 +826,7 @@ fn jobs_apply_plan(loc: string, project: string) string {
         items = items + "<div class=\"ins-row\"><b>" + escape_html(mesh_fill(mesh_t(loc, "jobs.build_and_flash"), "name", editor_name(loc, index))) + "</b><span>" +
             escape_html(deployed_reason_text(loc, deployed_node_reason(project, index))) + "</span></div>" +
             jobs_diff_rows(loc, deployed_get(project, deployed_node_key(project, index)),
-                deploy_node_signature(deployed_plan(project), index))
+                deploy_node_signature(deployed_plan(project), index, deployed_mesh(project)))
     }
     let gateway: string = deployed_gateway_reason(project)
     if gateway != "" {
@@ -832,7 +835,7 @@ fn jobs_apply_plan(loc: string, project: string) string {
             what = mesh_t(loc, "jobs.build_program_gateway")
         }
         items = items + "<div class=\"ins-row\"><b>" + what + "</b><span>" + escape_html(deployed_reason_text(loc, gateway)) + "</span></div>" +
-            jobs_diff_rows(loc, deployed_get(project, "gateway"), deploy_gateway_signature(deployed_plan(project)))
+            jobs_diff_rows(loc, deployed_get(project, "gateway"), deploy_gateway_signature(deployed_plan(project), deployed_mesh(project)))
     }
     return items
 }

@@ -159,40 +159,44 @@ const DEPLOY_PLAN: string = "gateway=native\nnode.count=3\n" +
     "node.2.kind=module\nnode.2.number=2\nnode.2.module=ds18b20\nnode.2.parent=node.1\n" +
     "node.3.kind=device\nnode.3.number=3\nnode.3.device=shelly\nnode.3.address=192.0.2.5\nnode.3.parent=gateway\n"
 
+// The mesh the plan is built in: the fleet's area and uplink port, the scope of
+// its gateway key, and no mesh above it.
+const DEPLOY_MESH: string = "area=5\nuplink=28500\nkey=00112233aabbccdd\nabove=\n"
+
 fn deploy_with(text: string, key: string, value: string) string {
     return plan_without(text, key) + key + "=" + value + "\n"
 }
 
 // @verifies MESH-BUILD-0001
 test fn a_name_or_a_device_builds_nothing() void {
-    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)
     let renamed: string = deploy_with(DEPLOY_PLAN, "node.1.name", "Greenhouse relay")
-    check(str_eq(deploy_node_signature(renamed, 1), before), "a new name is not in the image")
+    check(str_eq(deploy_node_signature(renamed, 1, DEPLOY_MESH), before), "a new name is not in the image")
     let readdressed: string = deploy_with(DEPLOY_PLAN, "node.3.address", "192.0.2.9")
-    check(str_eq(deploy_node_signature(readdressed, 1), before), "a device's address is not either")
-    check(str_eq(deploy_gateway_signature(readdressed), deploy_gateway_signature(DEPLOY_PLAN)),
+    check(str_eq(deploy_node_signature(readdressed, 1, DEPLOY_MESH), before), "a device's address is not either")
+    check(str_eq(deploy_gateway_signature(readdressed, DEPLOY_MESH), deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH)),
         "nor is it in the gateway's")
     print("[PASS] a_name_or_a_device_builds_nothing\n")
 }
 
 // @verifies MESH-BUILD-0001, MESH-BUILD-0002
 test fn a_module_or_a_board_rebuilds_that_board() void {
-    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)
     let new_module: string = deploy_with(DEPLOY_PLAN, "node.2.module", "bme280")
-    check(str_eq(deploy_reason(before, deploy_node_signature(new_module, 1)), "modules changed"), "a new module")
+    check(str_eq(deploy_reason(before, deploy_node_signature(new_module, 1, DEPLOY_MESH)), "modules changed"), "a new module")
     let board: string = deploy_with(DEPLOY_PLAN, "node.1.board", "lolin32-lite")
-    check(str_eq(deploy_reason(before, deploy_node_signature(board, 1)), "board changed"), "a new board")
-    check(str_eq(deploy_gateway_signature(board), deploy_gateway_signature(DEPLOY_PLAN)),
+    check(str_eq(deploy_reason(before, deploy_node_signature(board, 1, DEPLOY_MESH)), "board changed"), "a new board")
+    check(str_eq(deploy_gateway_signature(board, DEPLOY_MESH), deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH)),
         "the gateway does not care which board is on the other end")
     print("[PASS] a_module_or_a_board_rebuilds_that_board\n")
 }
 
 // @verifies MESH-BUILD-0002
 test fn a_link_rebuilds_the_board_and_restarts_its_parent() void {
-    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)
     let baud: string = deploy_with(DEPLOY_PLAN, "node.1.baud", "57600")
-    check(str_eq(deploy_reason(before, deploy_node_signature(baud, 1)), "link changed"), "the board's own link")
-    check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN), deploy_gateway_signature(baud)),
+    check(str_eq(deploy_reason(before, deploy_node_signature(baud, 1, DEPLOY_MESH)), "link changed"), "the board's own link")
+    check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH), deploy_gateway_signature(baud, DEPLOY_MESH)),
         "a link it serves changed"), "the gateway serving it restarts")
     print("[PASS] a_link_rebuilds_the_board_and_restarts_its_parent\n")
 }
@@ -200,20 +204,20 @@ test fn a_link_rebuilds_the_board_and_restarts_its_parent() void {
 // @verifies MESH-BUILD-0001, MESH-BUILD-0002
 test fn a_board_on_wifi_follows_the_gateway_address() void {
     let wifi: string = deploy_with(DEPLOY_PLAN, "node.1.link", "wifi")
-    let before: string = deploy_node_signature(wifi, 1)
+    let before: string = deploy_node_signature(wifi, 1, DEPLOY_MESH)
     let moved: string = deploy_with(wifi, "gateway_host", "192.0.2.20")
-    check(str_eq(deploy_reason(before, deploy_node_signature(moved, 1)), "gateway address changed"),
+    check(str_eq(deploy_reason(before, deploy_node_signature(moved, 1, DEPLOY_MESH)), "gateway address changed"),
         "a board that dials the gateway is rebuilt when it moves")
     let serial_moved: string = deploy_with(DEPLOY_PLAN, "gateway_host", "192.0.2.20")
-    check(str_eq(deploy_node_signature(serial_moved, 1), deploy_node_signature(DEPLOY_PLAN, 1)),
+    check(str_eq(deploy_node_signature(serial_moved, 1, DEPLOY_MESH), deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)),
         "a board on a serial line is not")
     print("[PASS] a_board_on_wifi_follows_the_gateway_address\n")
 }
 
 // @verifies MESH-BUILD-0002
 test fn a_board_never_programmed_says_so() void {
-    check(str_eq(deploy_reason("", deploy_node_signature(DEPLOY_PLAN, 1)), "never programmed"), "nothing recorded")
-    check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1), deploy_node_signature(DEPLOY_PLAN, 1)), ""),
+    check(str_eq(deploy_reason("", deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), "never programmed"), "nothing recorded")
+    check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH), deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), ""),
         "what was programmed is what is planned")
     check(deploy_is_board(DEPLOY_PLAN, 1) && !deploy_is_board(DEPLOY_PLAN, 2) && !deploy_is_board(DEPLOY_PLAN, 3),
         "modules and devices have no image of their own")
@@ -222,12 +226,107 @@ test fn a_board_never_programmed_says_so() void {
 
 // @verifies MESH-BUILD-0002
 test fn the_diff_names_what_changed_and_how() void {
-    let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
-    let after: string = deploy_node_signature(deploy_with(DEPLOY_PLAN, "node.1.board", "lolin32-lite"), 1)
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)
+    let after: string = deploy_node_signature(deploy_with(DEPLOY_PLAN, "node.1.board", "lolin32-lite"), 1, DEPLOY_MESH)
     let diff: string = deploy_diff(before, after)
     check(str_eq(diff, "board|pico2w|lolin32-lite\n"), "one segment, from what runs to what is planned")
     check(str_eq(deploy_diff(before, before), ""), "nothing differs, nothing listed")
     print("[PASS] the_diff_names_what_changed_and_how\n")
+}
+
+// A board flashed under one area carries it (CONFIG_RH_AREA_ID) and is admitted
+// by its gateway at it: moving the mesh to another area puts every board and the
+// gateway out of date, whether the area is the plan's own or the fleet's.
+// @verifies MESH-0003, MESH-BUILD-0001, MESH-BUILD-0002
+test fn a_board_flashed_in_another_area_is_out_of_date() void {
+    let in_a: string = deploy_with(DEPLOY_PLAN, "area_id", "4")
+    let in_b: string = deploy_with(DEPLOY_PLAN, "area_id", "7")
+    check(str_eq(deploy_reason(deploy_node_signature(in_a, 1, DEPLOY_MESH), deploy_node_signature(in_b, 1, DEPLOY_MESH)),
+        "area changed"), "a board flashed in area 4 is out of date in area 7")
+    check(str_eq(deploy_reason(deploy_gateway_signature(in_a, DEPLOY_MESH), deploy_gateway_signature(in_b, DEPLOY_MESH)),
+        "area changed"), "and so is the gateway, which is started with the area")
+    let fleet_a: string = deploy_mesh("4", "28500", "00112233aabbccdd", "")
+    let fleet_b: string = deploy_mesh("7", "28500", "00112233aabbccdd", "")
+    check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, fleet_a), deploy_node_signature(DEPLOY_PLAN, 1, fleet_b)),
+        "area changed"), "a plan without its own area follows the fleet's")
+    check(str_eq(deploy_node_signature(in_a, 1, fleet_a), deploy_node_signature(in_a, 1, fleet_b)),
+        "and the plan's own area is the one a build reads")
+    print("[PASS] a_board_flashed_in_another_area_is_out_of_date\n")
+}
+
+// A board's key is derived from the gateway key, and its image carries that key
+// and the key's scope: another gateway key, whether made anew, imported or put
+// back from elsewhere, puts every board and the gateway out of date.
+// @verifies MESH-0003, MESH-BUILD-0001, MESH-BUILD-0002
+test fn a_board_keyed_to_another_gateway_key_is_out_of_date() void {
+    let old_key: string = deploy_mesh("5", "28500", "00112233aabbccdd", "")
+    let new_key: string = deploy_mesh("5", "28500", "ffeeddccbbaa9988", "")
+    check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, old_key), deploy_node_signature(DEPLOY_PLAN, 1, new_key)),
+        "gateway key changed"), "a board keyed to the old gateway key is out of date")
+    check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN, old_key), deploy_gateway_signature(DEPLOY_PLAN, new_key)),
+        "gateway key changed"), "and so is the gateway, which is started with the key")
+    let no_key: string = deploy_mesh("5", "28500", "", "")
+    check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, no_key), deploy_node_signature(DEPLOY_PLAN, 1, old_key)),
+        "gateway key changed"), "a board built with a plain link is out of date once there is a key")
+    check(str_index_of(deploy_node_signature(DEPLOY_PLAN, 1, old_key), "00112233aabbccdd") >= 0,
+        "the key is named by its scope, never by itself")
+    // A rotation is delivered to the board by REKEY, not by a build.
+    check(str_eq(deploy_node_signature(deploy_with(DEPLOY_PLAN, "node.1.epoch", "1"), 1, DEPLOY_MESH),
+        deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), "a board's key epoch is not in its signature")
+    print("[PASS] a_board_keyed_to_another_gateway_key_is_out_of_date\n")
+}
+
+// What else a build reads from outside the board's own row: its number, the
+// mesh's Wi-Fi a board without its own takes, the uplink port the fleet gave a
+// plan without one, and, for a gateway that reports through another mesh, that
+// mesh's address and key.
+// @verifies MESH-BUILD-0001, MESH-BUILD-0002
+test fn what_a_build_falls_back_to_is_in_the_signature() void {
+    let before: string = deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)
+    check(str_eq(deploy_reason(before, deploy_node_signature(deploy_with(DEPLOY_PLAN, "node.1.number", "8"), 1, DEPLOY_MESH)),
+        "node number changed"), "the board's number is in its image")
+    let wifi: string = deploy_with(deploy_with(DEPLOY_PLAN, "node.1.link", "wifi"), "ssid", "Greenhouse")
+    let wifi_before: string = deploy_node_signature(wifi, 1, DEPLOY_MESH)
+    check(str_eq(deploy_reason(wifi_before, deploy_node_signature(deploy_with(wifi, "ssid", "Orchard"), 1, DEPLOY_MESH)),
+        "link changed"), "a board without its own Wi-Fi takes the mesh's")
+    check(str_eq(deploy_reason(wifi_before, deploy_node_signature(deploy_with(wifi, "password", "another-secret"), 1, DEPLOY_MESH)),
+        "link changed"), "and its password")
+    check(str_eq(deploy_node_signature(deploy_with(wifi, "node.1.ssid", "Own"), 1, DEPLOY_MESH),
+        deploy_node_signature(deploy_with(deploy_with(wifi, "node.1.ssid", "Own"), "ssid", "Orchard"), 1, DEPLOY_MESH)),
+        "a board with its own Wi-Fi does not")
+    let other_port: string = deploy_mesh("5", "28501", "00112233aabbccdd", "")
+    check(str_eq(deploy_reason(wifi_before, deploy_node_signature(wifi, 1, other_port)), "gateway address changed"),
+        "a board that dials the gateway follows the fleet's uplink port")
+    check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH), deploy_gateway_signature(DEPLOY_PLAN, other_port)),
+        "its uplink port changed"), "and so does the gateway")
+    let own_port: string = deploy_with(wifi, "uplink_port", "29000")
+    check(str_eq(deploy_node_signature(own_port, 1, DEPLOY_MESH), deploy_node_signature(own_port, 1, other_port)),
+        "a plan's own uplink port is the one a build reads")
+    let relay_a: string = deploy_mesh("5", "28500", "00112233aabbccdd", "192.0.2.1:28400/aaaaaaaaaaaaaaaa")
+    let relay_b: string = deploy_mesh("5", "28500", "00112233aabbccdd", "192.0.2.1:28400/bbbbbbbbbbbbbbbb")
+    let relayed: string = deploy_with(DEPLOY_PLAN, "mesh_parent", "farm")
+    check(str_eq(deploy_reason(deploy_gateway_signature(relayed, relay_a), deploy_gateway_signature(relayed, relay_b)),
+        "the mesh it reports through changed"), "a relay gateway follows the key of the mesh above")
+    check(str_eq(deploy_node_signature(DEPLOY_PLAN, 1, relay_a), deploy_node_signature(DEPLOY_PLAN, 1, relay_b)),
+        "which its boards do not carry")
+    print("[PASS] what_a_build_falls_back_to_is_in_the_signature\n")
+}
+
+// A record written before the signature named the area and the key (Mesh 0.21.0
+// and earlier) cannot say what the board was built with: it is out of date, and
+// says so, rather than compared segment by segment.
+// @verifies MESH-BUILD-0002, MESH-BUILD-0012
+test fn a_record_without_the_area_and_key_is_not_trusted() void {
+    let old_board: string = "board=pico2w;role=node;parent=gateway;link=uart,baud:115200;modules=ds18b20@2,;serves="
+    let old_gateway: string = "runs=native;host=;rest=;uplink=;serves=1:uart,baud:115200/;above=;below="
+    check(str_eq(deploy_reason(old_board, deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), DEPLOY_UNKNOWN),
+        "a board recorded by 0.21.0 is out of date for that reason alone")
+    check(str_eq(deploy_reason(old_gateway, deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH)), DEPLOY_UNKNOWN),
+        "and so is a gateway")
+    check(str_eq(DEPLOY_UNKNOWN, "recorded without its area and key"), "the reason says what is missing")
+    check(str_eq(deploy_reason("", deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), "never programmed"),
+        "nothing recorded is still never programmed")
+    print("[PASS] a_record_without_the_area_and_key_is_not_trusted\n")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -383,10 +482,10 @@ test fn the_production_job_scripts() void {
     check(str_eq(production_quote("it's"), "'it'\\''s'"), "a quote in a value stays one word")
     // The toggle is part of what a board is built from.
     let plan: string = "node.count=1\nnode.1.kind=compute\nnode.1.board=pico2w\nnode.1.parent=gateway\n"
-    let plain: string = deploy_node_signature(plan, 1)
+    let plain: string = deploy_node_signature(plan, 1, DEPLOY_MESH)
     check(str_index_of(plain, "production") < 0, "a board built plainly says nothing of production")
-    check(str_eq(deploy_node_signature(plan + "node.1.production=off\n", 1), plain), "and one turned off is the same")
-    let hardened: string = deploy_node_signature(plan + "node.1.production=on\n", 1)
+    check(str_eq(deploy_node_signature(plan + "node.1.production=off\n", 1, DEPLOY_MESH), plain), "and one turned off is the same")
+    let hardened: string = deploy_node_signature(plan + "node.1.production=on\n", 1, DEPLOY_MESH)
     check(str_eq(deploy_reason(plain, hardened), "production build changed"), "turning it on makes the board out of date")
     print("[PASS] the_production_job_scripts\n")
 }
@@ -602,6 +701,10 @@ fn main() void {
     a_board_on_wifi_follows_the_gateway_address()
     a_board_never_programmed_says_so()
     the_diff_names_what_changed_and_how()
+    a_board_flashed_in_another_area_is_out_of_date()
+    a_board_keyed_to_another_gateway_key_is_out_of_date()
+    what_a_build_falls_back_to_is_in_the_signature()
+    a_record_without_the_area_and_key_is_not_trusted()
     the_manifest_lists_every_board_with_its_placement()
     a_rotated_board_is_listed_at_its_key_epoch()
     a_rotation_waits_for_the_board_to_confirm()

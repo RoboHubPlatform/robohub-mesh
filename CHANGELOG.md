@@ -544,3 +544,30 @@ A mesh is exported as a project file and imported from one (MESH-0025 to MESH-00
 - **Held back after an import**: a Wi-Fi board whose password the file left out is not built until a password is entered, and a board whose board, driver or module this Mesh's catalog lacks is not built until the catalog has it (`import.wifi_needed`, `import.catalog_missing` in the plan). The gateway's serial device and TLS paths are imported as written and named in the preview as warnings.
 - **mesh-projectfile 0.1.0** (`plugins/mesh-projectfile`, port `projectfile`): JSON read as the flat lines the YAML reader gives and written sorted, sealing and opening, and SHA-256 digests, from the Go standard library alone (`crypto/pbkdf2`). Its changes are recorded here, as mesh-telemetry's are.
 - New tests: `tests/project_file_test.rho` (the allow-list, the YAML line check, every class of value, schema versions and migration, every problem, the import's decisions), `project-schema` (the published schema held to the Rho rules), `projectfile-port` (the port's Go tests) and `project-file-smoke` (export and import across several running Meshes); the access smoke covers the new routes.
+
+## [0.21.1] - 2026-11-19
+
+A board was shown as running what is planned after its mesh moved to another
+area or its gateway key changed, while it could no longer talk to its gateway: the
+image signature Mesh compares to decide what is out of date was computed from the
+plan alone, and the area a board reports from and the key its own key is derived
+from are not in the plan's rows. The signature now covers every input the build
+reads, as the build resolves it: the mesh's area, the gateway key (by its scope,
+never the key itself), the board's number, the mesh's Wi-Fi for a board without
+its own, the fleet's uplink port for a plan without one and the address a board
+dials; the gateway's also names the area, the key and, for a mesh that reports
+through another, that mesh's address and key. Another area or key now puts every
+board and the gateway out of date, saying "area changed" or "gateway key changed".
+A board's key epoch stays out: a rotation reaches the board by REKEY, not by a
+build (MESH-BUILD-0001, MESH-BUILD-0002, ADR-0001 amendment, proposed).
+
+Upgrading: a record of what runs written by 0.21.0 or earlier does not say which
+area or key a board was built with, and that cannot be reconstructed, so it is not
+migrated. Every such board and the gateway show out of date once, "recorded by an
+earlier Mesh without the area and gateway key it was built with", until the board
+is flashed or the gateway restarted (MESH-BUILD-0012, proposed). A board that was
+programmed and has no record at all is still taken to run what is planned, as
+before. A project file's record of what runs still travels only with the gateway
+key, area, uplink port and every node's identity (MESH-XFER-0017), and a record that
+travels with them compares equal on the other machine.
+

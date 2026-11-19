@@ -14,17 +14,29 @@ module mesh.domain.deploy
 
 // What a board was built from, and what differs from it now.
 //
-// A board's image depends on part of the plan: its own board, role and parent,
-// the link it reaches its parent over and that link's settings, the modules it
+// A board's image depends on part of the plan: its own board, role, parent and
+// number, the link it reaches its parent over and that link's settings (with
+// the mesh's Wi-Fi for a board that has none of its own), the modules it
 // carries, the links of the boards it serves, and, for a board that dials the
-// gateway over a network, the gateway's address. That part, written out as one
-// line of labelled segments, is the board's signature. The signature recorded
-// when a board was last programmed is what it runs; a board whose signature
-// differs from it is out of date, and the segments that differ say why.
+// gateway over a network, the address it dials. It also depends on what the
+// mesh gives every board: its area, which the image reports from and the
+// gateway admits it at, and the gateway key, which the board's key is derived
+// from — named by its scope, never by itself. That, written out as one line of
+// labelled segments, is the board's signature. The signature recorded when a
+// board was last programmed is what it runs; a board whose signature differs
+// from it is out of date, and the segments that differ say why.
 //
-// The gateway has a signature too: where it runs, its ports, and the links of
-// the boards hanging from it directly, since it opens their serial ports and
-// accepts their uplinks.
+// The gateway has a signature too: where it runs, its ports, the area and key
+// it is started with, the links of the boards hanging from it directly, since
+// it opens their serial ports and accepts their uplinks, and the address and
+// key of the mesh it reports through.
+//
+// A board's key epoch is in no signature: a rotation reaches the board by REKEY
+// and is followed on its own (domain/manifest.rho), so it builds nothing.
+//
+// A signature starts with its shape (sig=2). A record without one was written
+// before the area and the key were part of it, and what the board was built
+// with cannot be told from it: it is out of date for that reason alone.
 //
 // A name, a description or a device's settings are in no signature: they live
 // in Mesh, not in firmware, so changing them builds nothing. All of this is pure
@@ -74,12 +86,17 @@ fn deploy_is_board(text: string, index: u32) bool {
 
 // deploy_link is a row's link and its settings, as one segment's value.
 fn deploy_link(text: string, index: u32) string {
-    var out: string = plan_value(text, deploy_node_key(index, "link"))
+    let link: string = plan_value(text, deploy_node_key(index, "link"))
+    var out: string = link
     var rest: string = DEPLOY_LINK_FIELDS
     while rest != "" {
         let field: string = deploy_words_next(rest)
         rest = deploy_words_rest(rest)
-        let value: string = plan_value(text, deploy_node_key(index, field))
+        var value: string = plan_value(text, deploy_node_key(index, field))
+        // A Wi-Fi board without credentials of its own is built with the mesh's.
+        if value == "" && str_eq(link, "wifi") && (str_eq(field, "ssid") || str_eq(field, "password")) {
+            value = plan_value(text, field)
+        }
         if value != "" {
             out = out + "," + field + ":" + value
         }
@@ -93,15 +110,54 @@ fn deploy_dials_network(link: string) bool {
     return str_eq(link, "wifi") || str_eq(link, "ethernet") || str_eq(link, "socket")
 }
 
-fn deploy_gateway_address(text: string) string {
-    return plan_value(text, "gateway_host") + ":" + plan_value(text, "uplink_port")
+// DEPLOY_SHAPE is the first segment of every signature this Mesh writes.
+const DEPLOY_SHAPE: string = "sig=2"
+
+// deploy_or is a value, or what a build falls back to when it is empty.
+fn deploy_or(value: string, fallback: string) string {
+    if value == "" {
+        return fallback
+    }
+    return value
+}
+
+// deploy_area is the area a build reads: the plan's own, or the fleet's.
+fn deploy_area(text: string, mesh: string) string {
+    return deploy_or(plan_value(text, "area_id"), plan_value(mesh, "area"))
+}
+
+// deploy_uplink is the uplink port: the plan's own, or the fleet's.
+fn deploy_uplink(text: string, mesh: string) string {
+    return deploy_or(plan_value(text, "uplink_port"), plan_value(mesh, "uplink"))
+}
+
+// deploy_dial is the address a board that dials the gateway is built with, as
+// the build resolves it (build.rho, prepare_node).
+fn deploy_dial(text: string, index: u32, mesh: string) string {
+    let host: string = deploy_or(plan_value(text, deploy_node_key(index, "parent_host")),
+        deploy_or(plan_value(text, deploy_node_key(index, "gateway_host")),
+        deploy_or(plan_value(text, "gateway_host"), "127.0.0.1")))
+    return host + ":" + deploy_or(plan_value(text, deploy_node_key(index, "port")), deploy_uplink(text, mesh))
+}
+
+// deploy_mesh is what a mesh gives every image built in it that its plan's own
+// lines may not say, as flat lines: the area and the uplink port a plan without
+// its own falls back to (the fleet's), the scope of the gateway key every
+// board's key is derived from (never the key), and, for a mesh that reports
+// through another, where and with what its gateway reports there. The caller
+// reads them from the fleet and the key files.
+// @req MESH-BUILD-0001
+fn deploy_mesh(area: string, uplink: string, key_scope: string, above: string) string {
+    return "area=" + area + "\nuplink=" + uplink + "\nkey=" + key_scope + "\nabove=" + above + "\n"
 }
 
 // deploy_node_signature is what a board's image is built from.
 // @req MESH-0003, MESH-BUILD-0001
-fn deploy_node_signature(text: string, index: u32) string {
+fn deploy_node_signature(text: string, index: u32, mesh: string) string {
     let row: string = "node." + int_to_str(index)
-    var out: string = "board=" + plan_value(text, deploy_node_key(index, "board")) +
+    var out: string = DEPLOY_SHAPE + ";area=" + deploy_area(text, mesh) + ";key=" + plan_value(mesh, "key") +
+        ";number=" + plan_value(text, deploy_node_key(index, "number")) +
+        ";board=" + plan_value(text, deploy_node_key(index, "board")) +
         ";role=" + plan_value(text, deploy_node_key(index, "role")) +
         ";parent=" + plan_value(text, deploy_node_key(index, "parent")) +
         ";link=" + deploy_link(text, index)
@@ -129,18 +185,19 @@ fn deploy_node_signature(text: string, index: u32) string {
     }
     if deploy_dials_network(plan_value(text, deploy_node_key(index, "link"))) &&
         str_eq(plan_value(text, deploy_node_key(index, "parent")), "gateway") {
-        out = out + ";gateway=" + deploy_gateway_address(text)
+        out = out + ";gateway=" + deploy_dial(text, index, mesh)
     }
     return out
 }
 
 // deploy_gateway_signature is what the gateway is started with.
 // @req MESH-BUILD-0001
-fn deploy_gateway_signature(text: string) string {
-    var out: string = "runs=" + plan_value(text, "gateway") +
+fn deploy_gateway_signature(text: string, mesh: string) string {
+    var out: string = DEPLOY_SHAPE + ";area=" + deploy_area(text, mesh) + ";key=" + plan_value(mesh, "key") +
+        ";runs=" + plan_value(text, "gateway") +
         ";host=" + plan_value(text, "gateway_host") +
         ";rest=" + plan_value(text, "rest_port") +
-        ";uplink=" + plan_value(text, "uplink_port")
+        ";uplink=" + deploy_uplink(text, mesh)
     var serves: string = ""
     let count: u32 = deploy_count(text)
     var child: u32 = 1
@@ -151,8 +208,11 @@ fn deploy_gateway_signature(text: string) string {
         }
         child = child + 1
     }
-    return out + ";serves=" + serves + ";above=" + plan_value(text, "mesh_parent") +
-        ";below=" + plan_value(text, "mesh_children")
+    var above: string = plan_value(text, "mesh_parent")
+    if above != "" && plan_value(mesh, "above") != "" {
+        above = above + "@" + plan_value(mesh, "above")
+    }
+    return out + ";serves=" + serves + ";above=" + above + ";below=" + plan_value(text, "mesh_children")
 }
 
 fn deploy_segment(signature: string, label: string) string {
@@ -176,9 +236,12 @@ fn deploy_segment(signature: string, label: string) string {
 
 // DEPLOY_SEGMENTS are a signature's parts, each with the words that say it
 // changed.
-const DEPLOY_SEGMENTS: string = "runs host rest uplink board role parent link modules serves gateway above below production"
+const DEPLOY_SEGMENTS: string = "area key runs host rest uplink number board role parent link modules serves gateway above below production"
 
 fn deploy_segment_words(label: string) string {
+    if str_eq(label, "area") { return "area" }
+    if str_eq(label, "key") { return "gateway key" }
+    if str_eq(label, "number") { return "node number" }
     if str_eq(label, "runs") { return "where it runs" }
     if str_eq(label, "host") { return "its host" }
     if str_eq(label, "rest") { return "its REST port" }
@@ -196,15 +259,22 @@ fn deploy_segment_words(label: string) string {
     return label
 }
 
+// DEPLOY_UNKNOWN is the reason a record written before a signature named the
+// mesh's area and gateway key gives.
+const DEPLOY_UNKNOWN: string = "recorded without its area and key"
+
 // deploy_reason says what differs between what was deployed and what is
 // planned: "" when nothing does, "never programmed" when nothing was.
-// @req MESH-BUILD-0002
+// @req MESH-BUILD-0002, MESH-BUILD-0012
 fn deploy_reason(deployed: string, planned: string) string {
     if deployed == "" {
         return "never programmed"
     }
     if str_eq(deployed, planned) {
         return ""
+    }
+    if !str_eq(deploy_segment(deployed, "sig"), deploy_segment(planned, "sig")) {
+        return DEPLOY_UNKNOWN
     }
     var out: string = ""
     var rest: string = DEPLOY_SEGMENTS

@@ -768,21 +768,21 @@ fn projectfile_machine_warnings(plan: string) string {
 
 // projectfile_out_of_date are the boards, and the gateway, that will show out of
 // date after an import, with why, as `outdated|<name>|<reason>` lines.
-fn projectfile_out_of_date(view: string, deployed: string) string {
+fn projectfile_out_of_date(view: string, deployed: string, mesh: string) string {
     var out: string = ""
     let count: u32 = u32(int_from_str(plan_value(view, "node.count")))
     var row: u32 = 1
     while row <= count && row <= PROJECT_MAX_NODES {
         if deploy_is_board(view, row) {
             let recorded: string = projectfile_deployed_get(deployed, "node." + plan_value(view, "node." + int_to_str(row) + ".id"))
-            let reason: string = deploy_reason(recorded, deploy_node_signature(view, row))
+            let reason: string = deploy_reason(recorded, deploy_node_signature(view, row, mesh))
             if reason != "" {
                 out = out + "outdated|" + projectfile_node_label(view, row) + "|" + reason + "\n"
             }
         }
         row = row + 1
     }
-    let gateway: string = deploy_reason(projectfile_deployed_get(deployed, "gateway"), deploy_gateway_signature(view))
+    let gateway: string = deploy_reason(projectfile_deployed_get(deployed, "gateway"), deploy_gateway_signature(view, mesh))
     if gateway != "" {
         out = out + "outdated|the gateway|" + gateway + "\n"
     }
@@ -981,7 +981,10 @@ fn projectfile_evaluate(file: string, passphrase: string, mode_in: string, targe
     if deployed == "" {
         preview = preview + "warning|every board and the gateway are shown as never programmed: build and flash them for this mesh\n"
     }
-    preview = preview + projectfile_out_of_date(view, deployed)
+    // What the boards of the new mesh will be compared with: its area and
+    // uplink port are in the plan; the key is the file's, when it brought one.
+    preview = preview + projectfile_out_of_date(view, deployed,
+        deploy_mesh("", "", deployed_key_scope_of(key), deployed_above(plan_value(view, "mesh_parent"))))
     return ProjectImport{ 200, "", digest, mode, id, sanitize(name), text, key, deployed,
         str_field(assigned, " ", 0), str_field(assigned, " ", 1), str_field(assigned, " ", 2), preview, false }
 }
@@ -1120,7 +1123,7 @@ fn projectfile_evaluate_overwrite(flat: string, plan: string, secrets: string, a
     let before_manifest: string = mesh_manifest_text(target)
     let after_manifest: string = manifest_document(manifest_nodes(view, int_to_str(u32(int_from_str(area)))), mesh_manifest_relays(target))
     preview = preview + projectfile_manifest_lines(before_manifest, after_manifest, view)
-    preview = preview + projectfile_out_of_date(view, rho_read_text(deployed_file(target)))
+    preview = preview + projectfile_out_of_date(view, rho_read_text(deployed_file(target)), deployed_mesh(target))
     if !str_eq(name_in, project_name(target)) {
         preview = preview + "confirm|type the mesh's name, " + project_name(target) + ", to import the file over it\n"
     }

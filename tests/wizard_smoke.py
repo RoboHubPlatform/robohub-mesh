@@ -227,6 +227,39 @@ def check_editor(base: str, project: Path) -> None:
     page = get(base, f"/mesh/p/default?select=node:{relay}")
     if "runs what is planned" not in page:
         raise AssertionError("a programmed board does not show as running what is planned")
+    # A board carries its mesh's area and a key derived from the gateway key:
+    # another area or another gateway key puts it out of date, and putting them
+    # back makes it current again. A record written by Mesh 0.21.0, which named
+    # neither, is not trusted.
+    # @verifies MESH-0003, MESH-BUILD-0001, MESH-BUILD-0002, MESH-BUILD-0012
+    planned_text = plan_file.read_text()
+    if re.search(r'(?m)^area_id: ', planned_text):
+        moved_text = re.sub(r'(?m)^area_id: .*$', 'area_id: "93"', planned_text, count=1)
+    else:
+        moved_text = planned_text.rstrip("\n") + '\narea_id: "93"\n'
+    plan_file.write_text(moved_text)
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["area changed"], "the mesh moved to another area")
+    plan_file.write_text(planned_text)
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["runs what is planned"], "the area put back")
+    key_file = project / "gateway.key"
+    deployed_file = project / "deployed.txt"
+    held_key = key_file.read_text() if key_file.exists() else None
+    key_file.write_text("ab" * 32 + "\n")
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["gateway key changed"], "another gateway key")
+    if held_key is None:
+        key_file.unlink()
+    else:
+        key_file.write_text(held_key)
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["runs what is planned"], "the key put back")
+    held_deployed = deployed_file.read_text()
+    deployed_file.write_text("".join(
+        line.split("\t")[0] + "\tboard=pico2w;role=relay;parent=gateway;link=uart;modules=;serves=\n"
+        if line.startswith("node.") else line + "\n" for line in held_deployed.splitlines()))
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"),
+                    ["recorded by an earlier Mesh without the area and gateway key it was built with"],
+                    "a record from before the area and the key")
+    deployed_file.write_text(held_deployed)
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["runs what is planned"], "the record put back")
     rev = re.search(r'name="rev" value="(\d+)"', page).group(1)
     # A new name builds nothing.
     renamed = hx(base, f"/mesh/p/default/node/{relay}", {
