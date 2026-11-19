@@ -242,8 +242,8 @@ test fn a_file_says_what_it_is() void {
 
 // @verifies MESH-XFER-0007
 test fn a_newer_schema_is_refused_and_an_older_one_carried_forward() void {
-    let newer: string = project_schema_problem("format=robohub-mesh-project\nschema=2\nexported.by=robohub-mesh 0.30.0\n", 1)
-    check(has(newer, "schema 2") && has(newer, "schema 1") && has(newer, "robohub-mesh 0.30.0"),
+    let newer: string = project_schema_problem("format=robohub-mesh-project\nschema=3\nexported.by=robohub-mesh 0.30.0\n", PROJECT_SCHEMA)
+    check(has(newer, "schema 3") && has(newer, "schema 2") && has(newer, "robohub-mesh 0.30.0"),
         "a newer schema is refused naming the file's schema, Mesh's own and the Mesh that wrote it: " + newer)
     check(has(project_schema_problem("schema=0\n", 1), "never written"), "schema 0 was never written")
     check(has(project_schema_problem("format=x\n", 1), "schema|missing"), "a file without a schema is refused")
@@ -255,8 +255,12 @@ test fn a_newer_schema_is_refused_and_an_older_one_carried_forward() void {
     check(plan_value(carried, "schema") == "3", "the file is carried to Mesh's schema")
     check(plan_value(carried, "plan.gateway") == "native" && !has(carried, "gateway_kind"), "a renamed key is renamed")
     check(!has(carried, "colour") && plan_value(carried, "plan.node.1.name") == "A", "a dropped key is dropped and the rest kept")
-    let same: string = project_migrate("schema=1\nplan.gateway=native\n", 1)
-    check(plan_value(same, "plan.gateway") == "native" && plan_value(same, "schema") == "1", "a file of Mesh's own schema is unchanged")
+    let same: string = project_migrate("schema=2\nplan.gateway=native\n", 2)
+    check(plan_value(same, "plan.gateway") == "native" && plan_value(same, "schema") == "2", "a file of Mesh's own schema is unchanged")
+    // @verifies MESH-ZB-0016
+    let older: string = project_migrate("schema=1\nplan.gateway=native\nplan.node.1.name=A\n", 1)
+    check(plan_value(older, "schema") == "2" && plan_value(older, "plan.gateway") == "native" && plan_value(older, "plan.node.1.name") == "A",
+        "a schema 1 file is carried forward to schema 2 as it is")
     print("[PASS] a_newer_schema_is_refused_and_an_older_one_carried_forward\n")
 }
 
@@ -277,7 +281,7 @@ test fn every_problem_of_a_file_is_named_at_once() void {
     let bad: string = "format=robohub-mesh-project\nschema=1\nmesh.id=../garden\nmesh.colour=red\nmesh.area=0\nplan.node.count=4\nplan.node.1.number=1\nplan.node.1.id=0123456789abcdef\nplan.node.1.parent_node=3\nplan.node.2.number=1\nplan.node.2.id=0123456789abcdef\nplan.node.2.role=gateway\nplan.node.3.number=3\nplan.node.3.parent_node=1\nplan.node.3.role=gateway\nplan.node.4.number=4\nplan.node.4.kind=module\nplan.node.4.parent_node=9\nplan.node.4.link=uart\nplan.node.7.name=Ghost\nplan.node.1.kind=robot\nplan.gateway=native\nplan.gateway=docker\nsealed.salt=00112233445566778899aabbccddeeff\n"
     let problems: string = project_problems(bad)
     check(has(problems, "mesh.id|must be a mesh id"), "an unsafe mesh id")
-    check(has(problems, "mesh.colour|not a key of schema 1"), "an unknown key")
+    check(has(problems, "mesh.colour|not a key of schema 2"), "an unknown key")
     check(has(problems, "mesh.area|must be an area"), "a value outside its pattern")
     check(has(problems, "plan.node.1.kind|must be compute"), "a kind that is none")
     check(has(problems, "plan.gateway|the key is given twice"), "a key given twice")
@@ -384,6 +388,27 @@ test fn a_preview_names_what_the_new_manifest_admits_refuses_and_revokes() void 
     print("[PASS] a_preview_names_what_the_new_manifest_admits_refuses_and_revokes\n")
 }
 
+// @verifies MESH-ZB-0016
+test fn coordinators_and_zigbee_devices_travel_and_their_network_is_sealed() void {
+    let file: string = "format=robohub-mesh-project\nschema=2\nmesh.id=home\nplan.node.count=2\nplan.node.1.kind=device\nplan.node.1.device=robohub-device-sonoff-zbdongle-e\nplan.node.1.parent=gateway\nplan.node.1.address=zb1\nplan.node.1.name=zb1\nplan.node.1.serial_port=/dev/ttyUSB0\nplan.node.1.channel=15\nplan.node.2.kind=device\nplan.node.2.transport=zigbee\nplan.node.2.address=heater\nplan.node.2.ieee=0xa4c1380000000002\nplan.node.2.parent=node.1\nomitted.node.1.zigbee_network=the Zigbee network of coordinator zb1\n"
+    check(project_problems(file) == "", "a coordinator and a Zigbee device are schema 2: " + project_problems(file))
+    check(has(project_problems(str_replace(file, "channel=15", "channel=27")), "plan.node.1.channel|must be a Zigbee channel"), "a channel past 26 is refused")
+    check(has(project_problems(str_replace(file, "0xa4c1380000000002", "0xNOPE")), "plan.node.2.ieee|must be an IEEE address"), "an IEEE address that is none is refused")
+    check(project_key_kind("node.2.zigbee_rename") == "runtime", "a pending rename is runtime, not exported")
+    let omitted: string = project_zigbee_omitted_lines("1|zb1\n")
+    check(has(omitted, "omitted.node.1.zigbee_network=the Zigbee network of coordinator zb1") && !has(omitted, "["),
+        "an unsealed export names the network, never its values")
+    check(project_zigbee_secret_problem("zigbee.1.network_key", "[1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 13]", 2) == "", "a network key")
+    check(project_zigbee_secret_problem("zigbee.1.pan_id", "6754", 2) == "", "a PAN id")
+    check(project_zigbee_secret_problem("zigbee.1.ext_pan_id", "[221, 221, 221, 221, 221, 221, 221, 221]", 2) == "", "an extended PAN id")
+    check(project_zigbee_secret_problem("zigbee.1.channel", "15", 2) == "", "a channel")
+    check(project_zigbee_secret_problem("zigbee.1.backup", "7b7d0a", 2) == "", "a backup as hex")
+    check(project_zigbee_secret_problem("zigbee.3.pan_id", "1", 2) != "", "a row that is no node is refused")
+    check(project_zigbee_secret_problem("zigbee.1.network_key", "GENERATE", 2) != "", "a key that is not a list is refused")
+    check(project_zigbee_secret_problem("zigbee.1.colour", "red", 2) != "", "anything else is refused")
+    print("[PASS] coordinators_and_zigbee_devices_travel_and_their_network_is_sealed\n")
+}
+
 fn main() void {
     an_export_carries_the_definition_and_nothing_else()
     every_key_of_a_plan_has_a_kind()
@@ -399,6 +424,7 @@ fn main() void {
     a_mesh_id_from_a_file_is_a_safe_folder_name()
     a_file_says_what_it_is()
     a_newer_schema_is_refused_and_an_older_one_carried_forward()
+    coordinators_and_zigbee_devices_travel_and_their_network_is_sealed()
     a_good_file_has_no_problem()
     every_problem_of_a_file_is_named_at_once()
     a_file_of_many_problems_lists_a_hundred_and_counts_the_rest()

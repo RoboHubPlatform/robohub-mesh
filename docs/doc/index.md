@@ -231,6 +231,7 @@ telemetry_mqtt:
     - "{prefix}/tele/STATE"
     - "{prefix}/tele/SENSOR"
   online_topic: "{prefix}/tele/LWT"
+  online_path: state                          # optional: read the word inside a JSON payload
   online_up: "Online"                         # optional; "true" when not given
 telemetry_mqtt_fields:
   # signal | field | unit | type | path | scale
@@ -240,7 +241,7 @@ telemetry_mqtt_fields:
 actions:
   switch:
     mqtt_topic: "{prefix}/cmnd/POWER"
-    mqtt_payload: "{on}"                      # true or false
+    mqtt_payload: "{on}"                      # true or false; {ONOFF} is ON or OFF
 ```
 
 - **One topic or several.** A manifest names `status_topic` or `status_topics`,
@@ -266,10 +267,18 @@ actions:
   does not say, the Shelly's word) is online, anything else is unreachable, and a
   topic that has said nothing is unknown. The Data tab says "Unreachable" and
   `GET /mesh/api/devices` answers `"reachability":"unreachable"`; the values shown
-  are then the last the device sent (MESH-0032).
+  are then the last the device sent (MESH-0032). With `online_path`, the payload
+  is read as JSON and the value at that path is compared instead — Zigbee2MQTT's
+  `{"state":"online"}` with `online_path: state` — and a payload that is not JSON
+  or does not carry the path is unreachable (MESH-0034).
+- **Actions.** An action's `mqtt_topic` and `mqtt_payload` are filled with
+  `{prefix}`, `{client}` (`robohub-mesh`), `{on}` (`true` or `false`, as Tasmota and
+  a Shelly take it) and `{ONOFF}` (`ON` or `OFF`, as Zigbee2MQTT takes it; it
+  refuses a boolean) (MESH-0035). A payload may be single-quoted in the manifest.
 
 The prefix is one topic level. Mesh's broker user may publish only `+/rpc` and
-`+/cmnd/POWER` and read only `+/status/#`, `+/online`, `+/stat/#` and `+/tele/#`
+`+/cmnd/POWER` (and the Zigbee topics below) and read only `+/status/#`, `+/online`,
+`+/stat/#` and `+/tele/#` (and `zigbee/#`)
 (the `bus:` block of its manifest, which the keeper turns into the broker's ACL),
 so a device whose prefix has a `/` in it is not reached. A Tasmota device's
 FullTopic is set to `%topic%/%prefix%/` and its Topic to one word, such as
@@ -288,6 +297,167 @@ device whose integration names no `state` field for its transport cannot report
 its state, so its switch is always shown as requested and unconfirmed rather than
 as done. A **Poll device** reading, or the next request, ends an unconfirmed one.
 A device that does not take the command changes nothing.
+
+### Zigbee coordinators
+
+A Zigbee device — a Sonoff S60ZBTPF plug, say — is reached through a
+**coordinator**: a USB Zigbee radio, such as the Sonoff ZBDongle-E or -P, plugged
+into a board of the mesh. Mesh plans the coordinator as a device node, runs
+Zigbee2MQTT for it on that board, pairs the devices that join it and reads and
+switches them as MQTT devices (ADR-0010).
+
+#### Which boards can host one
+
+A coordinator's manifest says what its board needs (`needs: {host: true,
+usb_host: true}`): a machine that runs Zigbee2MQTT and a USB host port. The native
+gateway — this machine — has both; a board has them when its manifest declares
+`capabilities.host` and `capabilities.usb_host` (the Arduino UNO Q's Linux side
+does). A Pico, an ESP32, an STM32 or an AVR board has neither. **Add device**
+under the gateway or such a board offers **Add a Zigbee coordinator here**; under
+any other parent no coordinator is offered, and moving one there is refused saying
+which capability the board lacks. A board holds at most one coordinator.
+
+The coordinator's form asks:
+
+- **Which coordinator** — the coordinators robohub-devices declares.
+- **Name** — unique in the mesh and also its address and a topic level (letters,
+  digits, `-` and `_`); its base topic is `zigbee/<mesh>/<name>`, so the mesh's id
+  must be a topic level too. It cannot be renamed once it started.
+- **Serial port** — the entries of `/dev/serial/by-id/` on the board (on this
+  machine listed directly, on another board over its ssh login), those that match
+  the manifest's `usb.by_id` patterns marked ★ and listed first; or a path typed by
+  hand, which must be under `/dev/` with no space, `..` or shell character. Behind
+  usbipd or a VM the by-id name can differ from the vendor's, which is why the
+  person picks. The coordinator's **Zigbee** tab says when the port does not exist
+  or this user cannot read and write it, naming the group that owns it (usually
+  `dialout`: `sudo usermod -aG dialout $USER`, then log in again).
+- **Channel** — 11 to 26, 15 by default; fixed once Zigbee2MQTT first started,
+  since changing it means pairing every device again.
+
+#### Attaching the dongle to WSL
+
+On Windows, the dongle is attached to the WSL machine with
+[usbipd-win](https://github.com/dorssel/usbipd-win), from an administrator
+PowerShell:
+
+```powershell
+usbipd list                      # find the dongle's BUSID (CP210x or CH9102F)
+usbipd bind --busid 2-3          # once
+usbipd attach --wsl --busid 2-3  # after every replug or reboot
+```
+
+It then appears in WSL as `/dev/ttyUSB0` or `/dev/ttyACM0` and under
+`/dev/serial/by-id/`. A native coordinator stops when WSL stops; Mesh starts it again
+when it starts, once the dongle is attached again.
+
+#### Starting it
+
+The **Zigbee** tab starts, restarts and stops the coordinator. A start:
+
+1. asks the keeper for a **broker user** of the coordinator's own, confined to its
+   base topic (`POST /api/v1/bus/users`, with Mesh's own broker credential in an
+   `Authorization: Bus mesh:<password>` header read from an owner-only file; the
+   keeper is asked on this machine or over https only). The issued password is
+   kept owner-only in the mesh's folder (`zigbee/<name>.broker`) and handed to
+   Zigbee2MQTT only through its `secret.yaml` — never on a command line, in the
+   plan, a log or an unsealed export. Zigbee2MQTT can reach nothing but its own
+   coordinator's topics, and never carries Mesh's credential.
+2. writes Zigbee2MQTT's **configuration** into the coordinator's data folder,
+   `zigbee/<name>/` in the mesh's folder, owner-only: from the robohub-zigbee2mqtt
+   plugin's template before the first start — the broker and user, the password and
+   network key as `!secret` references to `secret.yaml`, the base topic, the port,
+   the adapter the manifest names (`ember`, `zstack`), the channel, network key and
+   PAN ids of `GENERATE`, availability on, the web frontend and Home Assistant
+   discovery off — and afterwards only the keys Mesh owns (the broker, the user, the
+   base topic and client id, the port and adapter), so the network key, the PAN ids
+   and everything Zigbee2MQTT writes stay as it wrote them. Lose that folder and
+   every device must be paired again; keep it in the backup.
+3. **on this machine**, starts `node index.js` from
+   `~/.rho/toolchains/zigbee2mqtt/<version>` (the version the plugin pins) with
+   `ZIGBEE2MQTT_DATA` set to the data folder and `Z2M_ONBOARD_NO_SERVER=1`, so its
+   onboarding page is never served; its pid (`mesh-z2m.pid`) and log
+   (`mesh-z2m.log`) are in the data folder, it is stopped by that pid only while
+   the process is that Zigbee2MQTT, and the gateway's start and stop leave it
+   alone. Node.js must be of a major the plugin names (22 or 24): one `rho keeper
+   sync` fetched into `~/.rho/toolchains`, or the one on PATH. When it or the
+   pinned Zigbee2MQTT is missing the tab says so; **Install Zigbee2MQTT** runs a
+   job that downloads the release source, unpacks it and runs `corepack pnpm
+   install --frozen-lockfile` and its build with that Node.js.
+4. **on another host board** whose manifest deploys with `docker`, runs the pinned
+   image (`ghcr.io/koenkk/zigbee2mqtt:<version>`) in a job over the board's own
+   deployment login: a folder `~/robohub-zigbee/<mesh>/<name>` made owner-only on
+   the board, the configuration and secret file copied there, and `docker run -d
+   --name rh-z2m-<mesh>-<name> --restart unless-stopped --device <port>:<port>`
+   with the folder mounted. Zigbee2MQTT there must reach the broker over the
+   network, so Mesh refuses, saying why, while the keeper reports that its broker
+   listens on this machine only: **an admin opens the broker to the network**
+   in the keeper's MQTT settings first (SYS-0032), and the next start writes the
+   network address into the configuration.
+
+The tab shows the bridge as online or offline from `<base>/bridge/state`, and the
+Zigbee2MQTT version, the coordinator's firmware and the channel from
+`<base>/bridge/info`. Removing the coordinator stops its Zigbee2MQTT and removes its
+broker user, and keeps its data folder, so a coordinator put back keeps its network;
+it is refused while Zigbee devices hang under it. Removing the mesh removes its
+coordinators' users too.
+
+#### Pairing a device
+
+1. **Allow joining** opens the coordinator's network for up to 254 seconds (never
+   without a bound: a device that joins is handed the network key), with the time
+   left shown; **Stop joining** closes it early.
+2. Put the device in pairing mode (an S60ZBTPF: hold its button for 5 seconds until
+   the LED blinks).
+3. The tab lists every device in the retained `<base>/bridge/devices` that is not the
+   coordinator and not yet in the plan, with its IEEE address, vendor and model,
+   whether Zigbee2MQTT supports it, its interview state and the device manifest whose
+   `zigbee.model` (and `zigbee.vendor`) matches it.
+4. **Adopt**, with a name, adds a device node under the coordinator — transport
+   `zigbee`, that manifest, its IEEE address, the name as its address — and asks
+   Zigbee2MQTT to rename the device to that address. The node says **Not renamed yet**
+   until Zigbee2MQTT answers that rename's transaction with `ok`, and offers **Rename
+   again** when it answered an error. A device whose interview is not `SUCCESSFUL`, or
+   that no manifest reads, is listed but not adoptable, saying which.
+
+A Zigbee device is then an MQTT device with the prefix `zigbee/<mesh>/<coordinator>/
+<address>`: read by the background worker, polled and switched from its Data tab,
+listed in `GET /mesh/api/devices` and the sources, its history and widgets, all as
+any MQTT device (MESH-ZB-0014). Its reachability comes from Zigbee2MQTT's
+availability (`{"state":"online"}`; a mains device is offline after 10 minutes
+unheard). Removing its node asks Zigbee2MQTT to remove it from the network
+(`bridge/request/device/remove`), and says so when the coordinator is offline or the
+request failed: then reset the device by hand.
+
+#### Carrying a coordinator
+
+The project file (schema 2) carries coordinators with their port and channel and
+Zigbee devices with their IEEE addresses. A sealed export also carries each
+coordinator's network — the network key, PAN id, extended PAN id, channel and
+Zigbee2MQTT's `coordinator_backup.json` — from its data folder; an unsealed one names
+it under `omitted:`. An import that brings it writes it beside the new coordinator's
+folder, and the first start writes it into Zigbee2MQTT's files instead of `GENERATE`,
+so every paired device stays paired; without it every device must be paired again.
+For a coordinator on another board, the data folder on this machine holds what Mesh
+wrote, not what Zigbee2MQTT wrote there, so its network is not in an export.
+
+#### When it does not work
+
+- **The bridge stays "not heard"**: Zigbee2MQTT did not start or cannot reach the
+  broker. Read `zigbee/<name>/mesh-z2m.log` in the mesh's folder; a broker user the
+  keeper refused is said on the tab (install MQTT in the keeper; a name clash).
+- **"does not exist"**: the dongle is unplugged, or on WSL not attached (`usbipd
+  attach --wsl`); with a by-id path, the name may differ behind usbipd: pick it again.
+- **"cannot read and write"**: add the user to the group named (`dialout`) and log
+  in again; Mesh is restarted by the keeper after that.
+- **The ZBDongle-E does not start**: its firmware must be EmberZNet 7.4.4 or newer
+  for the `ember` adapter; flash it as the robohub-devices guide says.
+- **A device does not join**: open joining again, bring the device close to the
+  coordinator, reset it (hold its button), and keep the dongle on a USB extension
+  cable away from USB 3 ports and Wi-Fi routers. A channel that clashes with Wi-Fi is
+  changed only by pairing everything again.
+- **A device joined but cannot be adopted**: wait for the interview to finish; a
+  model no manifest reads needs a manifest in robohub-devices first.
+
 
 ### Links
 
@@ -429,7 +599,7 @@ plan:
   node:
     1: { id: "0123456789abcdef", number: "1", name: "Pump board", link: "wifi", ssid: "GardenNet", parent: "gateway" }
     count: "1"
-schema: "1"
+schema: "2"
 ```
 
 (Mesh writes it as nested maps, one key per line, every value quoted, keys sorted — a
@@ -443,7 +613,7 @@ relay id and the meshes it reports through or that report through it. Never in i
 the plan's revision, steps, status and messages, device states and last values,
 telemetry, faults, jobs, logs, revisions, built images, token records, registered
 clients or Mesh's own settings. The schema is published as
-`schemas/mesh-project.v1.json` (JSON Schema 2020-12) in Mesh's repository; an editor
+`schemas/mesh-project.v2.json` (JSON Schema 2020-12; schema 1 stays as `v1`) in Mesh's repository; an editor
 can check a file against it without Mesh.
 
 **Secrets.** An ordinary export leaves out the gateway key, the relay key, every
@@ -546,7 +716,7 @@ A few keys are written in the mesh's `plan.yml` by hand, while Mesh is stopped:
 | --- | --- |
 | The keeper | Signs people in; installs and runs Mesh; registers it as a client for the services it calls (`deploy.calls: [gateway, energy]`). |
 | Gateways | Each mesh's gateway ({ref}`robohub-gateway/index`), started, deployed or programmed by Mesh. |
-| `robohub.bus` | Bound to `robohub-provider-mqtt`: Mesh is a user of the keeper's MQTT broker, publishing `+/rpc`, `+/cmnd/POWER` and `mesh/+/telemetry`, subscribed to `+/status/#`, `+/online`, `+/stat/#` and `+/tele/#`. |
+| `robohub.bus` | Bound to `robohub-provider-mqtt`: Mesh is a user of the keeper's MQTT broker, publishing `+/rpc`, `+/cmnd/POWER`, `mesh/+/telemetry`, `zigbee/+/+/+/set` and `zigbee/+/+/bridge/request/#`, subscribed to `+/status/#`, `+/online`, `+/stat/#`, `+/tele/#` and `zigbee/#`, and issued broker users under the `zigbee` root (`bus.issue`), one per coordinator. |
 | `robohub.alert` | Bound to the log, e-mail and Telegram providers. |
 | Shared modules | `ui`, `i18n`, `settings`, `forms`, `notifications`, `htmx`, `logging`. |
 | Applications | The aquarium and energy read a mesh through {ref}`robohub-provider-mesh/index`, which implements the gateway contract against Mesh's API. |

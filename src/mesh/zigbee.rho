@@ -1,0 +1,1735 @@
+//
+// @file zigbee.rho
+// @brief Zigbee coordinators: placing one under a board, its broker user, the Zigbee2MQTT Mesh runs for it, pairing, and the coordinator's page.
+//
+// @module mesh.zigbee
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.zigbee
+
+// A coordinator is a device node whose device is of kind `coordinator`: a USB
+// radio under the gateway or a board that can host it (ADR-0010). Mesh asks the
+// keeper for a broker user confined to the coordinator's base topic, writes
+// Zigbee2MQTT's configuration from the robohub-zigbee2mqtt plugin's template
+// into a data folder of the coordinator's own, and runs Zigbee2MQTT — as a
+// process on this machine, as a container on another host board. Every Zigbee
+// device that joins is an MQTT device under the base topic (devices.rho); this
+// module pairs them: joining opened for a bounded time, the devices that joined
+// listed, one adopted into the plan and renamed to its address, one removed
+// from the network when it leaves the plan. The rules are in
+// src/mesh/domain/zigbee.rho.
+//
+// What a coordinator keeps, under the mesh's folder (owner-only):
+//   zigbee/<coordinator>/            Zigbee2MQTT's data folder: configuration.yaml,
+//                                    secret.yaml, its database and backup, and
+//                                    Mesh's mesh-z2m.pid, mesh-z2m.log, mesh-started
+//   zigbee/<coordinator>.broker      the broker user the keeper issued
+//   zigbee/<coordinator>.restore     a network an import brought, until first start
+
+/* -------------------------------------------------------------------------- */
+/*  The plan                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_is_coordinator is whether a planned node is a coordinator.
+// @req MESH-ZB-0001
+fn zigbee_is_coordinator(file: string, index: u32) bool {
+    if index == 0 || project_node_value(file, index, "kind", "") != "device" {
+        return false
+    }
+    return device_kind(project_node_value(file, index, "device", "")) == "coordinator"
+}
+
+// zigbee_row is the row a `node.<row>` parent names, or 0.
+fn zigbee_row(parent: string) u32 {
+    if !rho_str_starts_with(parent, "node.") {
+        return 0
+    }
+    return u32(rho_int_from_str(rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5)))
+}
+
+// zigbee_parent_coordinator is the coordinator a Zigbee device hangs under, or 0.
+// @req MESH-ZB-0014
+fn zigbee_parent_coordinator(file: string, index: u32) u32 {
+    let at: u32 = zigbee_row(project_node_value(file, index, "parent", ""))
+    if at == 0 || at > project_node_count_at(file) || !zigbee_is_coordinator(file, at) {
+        return 0
+    }
+    return at
+}
+
+// zigbee_parent_kind is what a parent is, for placing a coordinator: the
+// gateway, a board (compute), or anything else.
+fn zigbee_parent_kind(file: string, parent: string) string {
+    if parent == "gateway" {
+        return "gateway"
+    }
+    let at: u32 = zigbee_row(parent)
+    if at == 0 || at > project_node_count_at(file) {
+        return ""
+    }
+    let kind: string = project_node_value(file, at, "kind", "compute")
+    if kind == "module" || kind == "device" {
+        return kind
+    }
+    return "compute"
+}
+
+// zigbee_parent_board is the board a parent runs on: the gateway's board (or
+// native), or a board node's.
+fn zigbee_parent_board(file: string, parent: string) string {
+    if parent == "gateway" {
+        let gateway: string = state_value_in(file, "gateway")
+        if gateway == "" {
+            return "native"
+        }
+        return gateway
+    }
+    return project_node_value(file, zigbee_row(parent), "board", "")
+}
+
+// zigbee_board_caps are the capabilities a board declares true, as words: the
+// native gateway is this machine, a host with USB ports (MESH-ZB-0002).
+// @req MESH-ZB-0002
+fn zigbee_board_caps(board: string) string {
+    if board == "native" || board == "" {
+        return "host usb_host"
+    }
+    var out: string = ""
+    if board_cap(board, "host") == "true" {
+        out = "host"
+    }
+    if board_cap(board, "usb_host") == "true" {
+        out = out + " usb_host"
+    }
+    return str_trim(out)
+}
+
+// zigbee_needs is what a coordinator's manifest needs of its board.
+fn zigbee_needs(device: string) string {
+    return zigbee_true_keys(rho_read_text(device_manifest(device)), "needs")
+}
+
+// zigbee_coordinators_under counts the coordinators under a parent other than
+// `except`.
+fn zigbee_coordinators_under(file: string, parent: string, except: u32) u32 {
+    var found: u32 = 0
+    var index: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while index <= count {
+        if index != except && zigbee_is_coordinator(file, index) &&
+            rho_str_eq(project_node_value(file, index, "parent", ""), parent) {
+            found = found + 1
+        }
+        index = index + 1
+    }
+    return found
+}
+
+// zigbee_placement is why a coordinator of a device may not hang under a
+// parent, or "" (src/mesh/domain/zigbee.rho says the codes).
+// @req MESH-ZB-0002
+fn zigbee_placement(file: string, parent: string, device: string, except: u32) string {
+    let kind: string = zigbee_parent_kind(file, parent)
+    var missing: string = ""
+    if kind == "gateway" || kind == "compute" {
+        missing = zigbee_needs_missing(zigbee_needs(device), zigbee_board_caps(zigbee_parent_board(file, parent)))
+    }
+    return zigbee_placement_problem(kind, missing, zigbee_coordinators_under(file, parent, except))
+}
+
+// zigbee_placement_text says a placement problem in words.
+fn zigbee_placement_text(loc: string, problem: string) string {
+    if problem == "taken" {
+        return mesh_t(loc, "zigbee.place.taken")
+    }
+    if rho_str_starts_with(problem, "missing:") {
+        return mesh_fill(mesh_t(loc, "zigbee.place.missing"), "capability",
+            rho_str_slice(problem, 8, u32(rho_strlen(problem)) - 8))
+    }
+    return mesh_t(loc, "zigbee.place.notboard")
+}
+
+// zigbee_parents are the parents a coordinator may hang under, as words.
+fn zigbee_parents(file: string, device: string, except: u32) string {
+    var out: string = ""
+    if zigbee_placement(file, "gateway", device, except) == "" {
+        out = "gateway"
+    }
+    var index: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while index <= count {
+        let row: string = "node." + rho_int_to_str(index)
+        if index != except && zigbee_placement(file, row, device, except) == "" {
+            out = out + " " + row
+        }
+        index = index + 1
+    }
+    return str_trim(out)
+}
+
+// zigbee_coordinator_rows are the coordinators robohub-devices declares, as
+// device rows.
+fn zigbee_coordinator_rows() string {
+    var out: string = ""
+    var rest: string = device_rows()
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if line != "" && field(line, 2) == "coordinator" {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+fn zigbee_after_line(text: string) string {
+    let at: i32 = rho_str_index_of(text, "\n")
+    if at < 0 {
+        return ""
+    }
+    return rho_str_slice(text, u32(at) + 1, u32(rho_strlen(text)) - u32(at) - 1)
+}
+
+// zigbee_manifest_rows are the manifests that read a Zigbee device, as
+// `name|zigbee.model|zigbee.vendor` lines.
+fn zigbee_manifest_rows() string {
+    var out: string = ""
+    var rest: string = device_rows()
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if line != "" && field(line, 2) != "coordinator" && field(line, 6) != "" {
+            out = out + field(line, 0) + "|" + field(line, 6) + "|" + field(line, 7) + "\n"
+        }
+    }
+    return out
+}
+
+// zigbee_hosts_any is whether a mesh has a parent a coordinator could hang
+// under; with none, no coordinator is offered at all (MESH-ZB-0002).
+// @req MESH-ZB-0002
+fn zigbee_hosts_any(file: string, device: string) bool {
+    return zigbee_parents(file, device, 0) != ""
+}
+
+// zigbee_name_problem is why a name cannot be a coordinator's or a Zigbee
+// device's, which is also its address and a topic level, or "": not a topic
+// level (`level`), or another node's name or address already (`taken`).
+// @req MESH-ZB-0001, MESH-ZB-0015
+fn zigbee_name_problem(file: string, name: string, except: u32) string {
+    if !zigbee_level_ok(name) {
+        return "level"
+    }
+    var index: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while index <= count {
+        if index != except && (rho_str_eq(project_node_value(file, index, "name", ""), name) ||
+            rho_str_eq(project_node_value(file, index, "address", ""), name)) {
+            return "taken"
+        }
+        index = index + 1
+    }
+    return ""
+}
+
+fn zigbee_name_text(loc: string, problem: string) string {
+    if problem == "taken" {
+        return mesh_t(loc, "zigbee.name.taken")
+    }
+    return mesh_t(loc, "zigbee.name.level")
+}
+
+// zigbee_planned_ieees are the IEEE addresses of the plan's Zigbee devices, as
+// `|0x…|0x…|`.
+fn zigbee_planned_ieees(file: string) string {
+    var out: string = "|"
+    var index: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while index <= count {
+        let ieee: string = project_node_value(file, index, "ieee", "")
+        if ieee != "" {
+            out = out + ieee + "|"
+        }
+        index = index + 1
+    }
+    return out
+}
+
+// zigbee_base is a coordinator's base topic in its mesh, or "".
+fn zigbee_base(project: string, index: u32) string {
+    return zigbee_base_topic(project, project_node_value(project_file(project), index, "address", ""))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Folders                                                                   */
+/* -------------------------------------------------------------------------- */
+
+fn zigbee_root(project: string) string {
+    return project_location(project) + "/zigbee"
+}
+
+// zigbee_dir is a coordinator's data folder; "" for a name that is not a topic
+// level, which is never a path.
+fn zigbee_dir(project: string, coordinator: string) string {
+    if !zigbee_level_ok(coordinator) {
+        return ""
+    }
+    return zigbee_root(project) + "/" + coordinator
+}
+
+fn zigbee_broker_file(project: string, coordinator: string) string {
+    return zigbee_root(project) + "/" + coordinator + ".broker"
+}
+
+fn zigbee_restore_file(project: string, coordinator: string) string {
+    return zigbee_root(project) + "/" + coordinator + ".restore"
+}
+
+fn zigbee_report(name: string) string {
+    return wizard_report("zigbee-" + name)
+}
+
+// zigbee_make_dir makes a coordinator's data folder, its owner's alone.
+// @req MESH-ZB-0005
+fn zigbee_make_dir(project: string, coordinator: string) bool {
+    let dir: string = zigbee_dir(project, coordinator)
+    if dir == "" {
+        return false
+    }
+    ignore_u32(rho_exec_args("mkdir", "-p\n--\n" + dir + "\n", zigbee_report("mkdir")))
+    ignore_u32(rho_exec_args("chmod", "700\n--\n" + zigbee_root(project) + "\n" + dir + "\n", zigbee_report("chmod")))
+    return rho_path_exists(dir)
+}
+
+// zigbee_started is whether Zigbee2MQTT has started in a coordinator's folder
+// once: from then on the channel is the network's and is not changed.
+fn zigbee_started(project: string, coordinator: string) bool {
+    let dir: string = zigbee_dir(project, coordinator)
+    return dir != "" && rho_path_exists(dir + "/mesh-started")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The plugin and the programs                                               */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_plugin_dir is where robohub-zigbee2mqtt is on this machine, by its
+// registry entry, as robohub-devices is found; "" without one.
+fn zigbee_plugin_dir() string {
+    let entry: string = registry_entry("robohub-zigbee2mqtt")
+    if !rho_path_exists(entry) {
+        return ""
+    }
+    return resolve_path(yaml.value(entry, "path"))
+}
+
+fn zigbee_plugin_value(key: string) string {
+    let dir: string = zigbee_plugin_dir()
+    if dir == "" {
+        return ""
+    }
+    return device_unquote(yaml.value(dir + "/module.yml", "zigbee2mqtt." + key))
+}
+
+// zigbee_version is the Zigbee2MQTT version the plugin pins, when it is a plain
+// version a folder can be named after.
+fn zigbee_version() string {
+    let version: string = zigbee_plugin_value("version")
+    if !deploy_word_ok(version) || rho_str_index_of(version, "..") >= 0 {
+        return ""
+    }
+    return version
+}
+
+fn zigbee_toolchains() string {
+    return getenv("HOME") + "/.rho/toolchains"
+}
+
+// zigbee_install_dir is where the pinned Zigbee2MQTT is installed.
+// @req MESH-ZB-0006
+fn zigbee_install_dir() string {
+    let version: string = zigbee_version()
+    if version == "" {
+        return ""
+    }
+    return zigbee_toolchains() + "/zigbee2mqtt/" + version
+}
+
+fn zigbee_installed() bool {
+    let dir: string = zigbee_install_dir()
+    return dir != "" && rho_path_exists(dir + "/index.js") && rho_path_exists(dir + "/node_modules")
+}
+
+// zigbee_node is a Node.js of a major version the plugin names: one `rho keeper
+// sync` fetched into ~/.rho/toolchains, else the one on PATH; "" when neither is.
+// @req MESH-ZB-0006, MESH-ZB-0008
+fn zigbee_node() string {
+    let majors: string = zigbee_plugin_value("node_major")
+    let report: string = zigbee_report("node")
+    let home: string = zigbee_toolchains()
+    ignore_u32(rho_exec_args("sh", "-c\nfor n in \"$1\"/node-*/bin/node \"$1\"/node-*/*/bin/node \"$(command -v node 2>/dev/null)\"; do " +
+        "[ -n \"$n\" ] && [ -x \"$n\" ] && printf '%s\\t%s\\n' \"$n\" \"$(\"$n\" --version 2>/dev/null)\"; done; true\nnode-lookup\n" + home + "\n", report))
+    var rest: string = rho_read_text(report)
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        let tab: i32 = rho_str_index_of(line, "\t")
+        if tab > 0 {
+            let path: string = rho_str_slice(line, 0, u32(tab))
+            let answer: string = rho_str_slice(line, u32(tab) + 1, u32(rho_strlen(line)) - u32(tab) - 1)
+            if zigbee_major_wanted(majors, zigbee_node_major(answer)) {
+                return path
+            }
+        }
+    }
+    return ""
+}
+
+// zigbee_dirname is the folder a path is in.
+fn zigbee_dirname(path: string) string {
+    var last: i32 = -1
+    var i: u32 = 0
+    while i < u32(rho_strlen(path)) {
+        if rho_str_eq(rho_str_slice(path, i, 1), "/") {
+            last = i32(i)
+        }
+        i = i + 1
+    }
+    if last <= 0 {
+        return "/"
+    }
+    return rho_str_slice(path, 0, u32(last))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The broker user                                                           */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_keeper_call asks the keeper's bus users API as Mesh, with Mesh's own
+// broker credential in an `Authorization: Bus mesh:<password>` header read by
+// curl from an owner-only file — never on a command line — and answers the
+// status; the answer's body is left in `out`. The keeper is asked directly, on
+// this machine or over HTTPS (nodekey_keeper), without a proxy's headers.
+// @req MESH-ZB-0004
+fn zigbee_keeper_call(method: string, path: string, body: string, out: string) u32 {
+    let keeper: string = nodekey_keeper()
+    var user: string = getenv("ROBOHUB_BUS_USER")
+    if user == "" {
+        user = "mesh"
+    }
+    let password_file: string = getenv("ROBOHUB_BUS_PASSWORD_FILE")
+    let password: string = str_trim(rho_read_text(password_file))
+    if keeper == "" || password_file == "" || password == "" || rho_str_index_of(password, "\n") >= 0 {
+        return 0
+    }
+    let header: string = wizard_dir() + "/zigbee-keeper-" + rho_random_hex(8) + ".hdr"
+    if !rho_write_secret(header, "Authorization: Bus " + user + ":" + password + "\n") {
+        return 0
+    }
+    ignore_bool(rho_write_text(out, ""))
+    var args: string = "-sS\n-m\n10\n--noproxy\n*\n-X\n" + method + "\n-H\n@" + header + "\n-o\n" + out + "\n-w\n%{http_code}\n"
+    if body != "" {
+        args = args + "-H\nContent-Type: application/json\n--data-binary\n" + body + "\n"
+    }
+    let report: string = zigbee_report("keeper-status")
+    ignore_u32(mesh_curl(args + keeper + path + "\n", report))
+    ignore_u32(rho_exec_args("rm", "-f\n--\n" + header + "\n", zigbee_report("rm")))
+    return u32(rho_int_from_str(first_line(rho_read_text(report))))
+}
+
+// zigbee_user_name is the short name a coordinator's broker user is issued
+// under: its node id, which is unique and never moves.
+fn zigbee_user_name(project: string, index: u32) string {
+    return "z2m-" + project_node_id(project_file(project), index)
+}
+
+// zigbee_keeper_problem says a keeper's refusal in words.
+fn zigbee_keeper_problem(loc: string, status: u32, answer: string) string {
+    if status == 0 {
+        return mesh_t(loc, "zigbee.keeper.unreachable")
+    }
+    if status == 409 {
+        return mesh_t(loc, "zigbee.keeper.clash")
+    }
+    if status == 503 {
+        return mesh_t(loc, "zigbee.keeper.no_mqtt")
+    }
+    return mesh_fill(mesh_fill(mesh_t(loc, "zigbee.keeper.refused"), "status", rho_int_to_str(status)), "error",
+        json_str_field(answer, "error"))
+}
+
+// zigbee_broker_issue asks the keeper for a coordinator's broker user, confined
+// to its base topic, and keeps the answer owner-only in the mesh's folder;
+// asking again answers the same user and password. "" when it is kept, or what
+// went wrong in words.
+// @req MESH-ZB-0004
+fn zigbee_broker_issue(loc: string, project: string, index: u32) string {
+    let coordinator: string = project_node_value(project_file(project), index, "address", "")
+    let base: string = zigbee_base_topic(project, coordinator)
+    if base == "" {
+        return mesh_t(loc, "zigbee.name.level")
+    }
+    let out: string = zigbee_report("keeper-answer")
+    let status: u32 = zigbee_keeper_call("POST", "/api/v1/bus/users",
+        "{\"name\":" + json_string(zigbee_user_name(project, index)) + ",\"prefix\":" + json_string(base) + "}", out)
+    let answer: string = rho_read_text(out)
+    ignore_bool(rho_write_text(out, ""))
+    let user: string = json_str_field(answer, "user")
+    let password: string = json_str_field(answer, "password")
+    if status != 200 || user == "" || password == "" {
+        return zigbee_keeper_problem(loc, status, answer)
+    }
+    if !zigbee_make_dir(project, coordinator) {
+        return mesh_t(loc, "zigbee.folder_failed")
+    }
+    var port: string = json_str_field(answer, "port")
+    if port == "" {
+        port = json_number(answer, "port")
+    }
+    if port == "" {
+        port = "1884"
+    }
+    var loopback: string = json_str_field(answer, "loopback")
+    if loopback == "" {
+        loopback = "127.0.0.1"
+    }
+    if !rho_write_secret(zigbee_broker_file(project, coordinator), "user=" + sanitize(user) + "\npassword=" + sanitize(password) +
+        "\nport=" + sanitize(port) + "\nloopback=" + sanitize(loopback) + "\nnetwork=" + sanitize(json_str_field(answer, "network")) + "\n") {
+        return mesh_t(loc, "zigbee.folder_failed")
+    }
+    info("mesh", "broker user " + user + " issued for coordinator " + coordinator + " of " + project + " (" + base + ")")
+    return ""
+}
+
+fn zigbee_broker_value(project: string, coordinator: string, key: string) string {
+    return plan_value(rho_read_text(zigbee_broker_file(project, coordinator)), key)
+}
+
+// zigbee_broker_remove asks the keeper to remove a coordinator's broker user
+// and forgets the answer; true when the keeper removed it or never had it.
+// @req MESH-ZB-0004
+fn zigbee_broker_remove(project: string, index: u32) bool {
+    let coordinator: string = project_node_value(project_file(project), index, "address", "")
+    let out: string = zigbee_report("keeper-answer")
+    let status: u32 = zigbee_keeper_call("DELETE", "/api/v1/bus/users/" + zigbee_user_name(project, index), "", out)
+    if status == 200 || status == 404 {
+        if zigbee_level_ok(coordinator) {
+            ignore_u32(rho_exec_args("rm", "-f\n--\n" + zigbee_broker_file(project, coordinator) + "\n", zigbee_report("rm")))
+        }
+        info("mesh", "broker user of coordinator " + coordinator + " of " + project + " removed")
+        return true
+    }
+    warn("mesh", "the keeper did not remove the broker user of coordinator " + coordinator + " of " + project +
+        " (status " + rho_int_to_str(status) + ")")
+    return false
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The configuration                                                         */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_channel is the channel a coordinator node records, 15 by default.
+fn zigbee_channel(file: string, index: u32) string {
+    let channel: string = project_node_value(file, index, "channel", "")
+    if zigbee_channel_ok(channel) {
+        return channel
+    }
+    return rho_int_to_str(ZIGBEE_DEFAULT_CHANNEL)
+}
+
+// zigbee_config_write writes a coordinator's configuration and secret file,
+// owner-only, before Zigbee2MQTT first starts — from the plugin's template, with
+// a network an import brought in place of GENERATE — and afterwards sets again
+// only the keys Mesh owns. `server` is the broker's address as Zigbee2MQTT
+// reaches it. "" when it is written, or why not in words.
+// @req MESH-ZB-0004, MESH-ZB-0005, MESH-ZB-0016
+fn zigbee_config_write(loc: string, project: string, index: u32, server: string) string {
+    let file: string = project_file(project)
+    let coordinator: string = project_node_value(file, index, "address", "")
+    let dir: string = zigbee_dir(project, coordinator)
+    let port: string = project_node_value(file, index, "serial_port", "")
+    let adapter: string = device_unquote(yaml.value(device_manifest(project_node_value(file, index, "device", "")), "zigbee.adapter"))
+    let user: string = zigbee_broker_value(project, coordinator, "user")
+    let password: string = zigbee_broker_value(project, coordinator, "password")
+    if dir == "" || !zigbee_make_dir(project, coordinator) {
+        return mesh_t(loc, "zigbee.folder_failed")
+    }
+    if !zigbee_port_ok(port) {
+        return mesh_t(loc, "zigbee.port.invalid")
+    }
+    if !zigbee_level_ok(adapter) {
+        return mesh_t(loc, "zigbee.no_adapter")
+    }
+    if user == "" || password == "" {
+        return mesh_t(loc, "zigbee.keeper.unreachable")
+    }
+    let config: string = dir + "/configuration.yaml"
+    let secret: string = dir + "/secret.yaml"
+    let restore: string = rho_read_text(zigbee_restore_file(project, coordinator))
+    var text: string = ""
+    if rho_path_exists(config) {
+        text = zigbee_config_rewrite(rho_read_text(config), project, coordinator, server, user, port, adapter)
+    } else {
+        let template_path: string = zigbee_plugin_dir() + "/" + zigbee_plugin_value("config")
+        let template: string = rho_read_text(template_path)
+        if zigbee_plugin_dir() == "" || zigbee_plugin_value("config") == "" || template == "" {
+            return mesh_t(loc, "zigbee.no_plugin")
+        }
+        text = zigbee_config_fill(template, project, coordinator, server, user, port, adapter, zigbee_channel(file, index))
+        // A network an import brought replaces GENERATE before the first start.
+        if plan_value(restore, "pan_id") != "" {
+            text = zigbee_yaml_set(text, "advanced", "pan_id", plan_value(restore, "pan_id"))
+        }
+        if plan_value(restore, "ext_pan_id") != "" {
+            text = zigbee_yaml_set(text, "advanced", "ext_pan_id", plan_value(restore, "ext_pan_id"))
+        }
+        if plan_value(restore, "channel") != "" {
+            text = zigbee_yaml_set(text, "advanced", "channel", plan_value(restore, "channel"))
+        }
+    }
+    var secrets: string = ""
+    if rho_path_exists(secret) {
+        secrets = zigbee_yaml_set(rho_read_text(secret), "", "password", zigbee_yaml_quote(password))
+    } else {
+        var key: string = "GENERATE"
+        if plan_value(restore, "network_key") != "" {
+            key = plan_value(restore, "network_key")
+        }
+        secrets = "password: " + zigbee_yaml_quote(password) + "\nnetwork_key: " + key + "\n"
+    }
+    if !rho_write_secret(secret, secrets) || !rho_write_secret(config, text) {
+        return mesh_t(loc, "zigbee.folder_failed")
+    }
+    let backup: string = plan_value(restore, "backup")
+    if backup != "" && !rho_path_exists(dir + "/coordinator_backup.json") {
+        ignore_bool(rho_write_secret(dir + "/coordinator_backup.json", zigbee_unhex(backup)))
+    }
+    if restore != "" {
+        ignore_u32(rho_exec_args("rm", "-f\n--\n" + zigbee_restore_file(project, coordinator) + "\n", zigbee_report("rm")))
+    }
+    return ""
+}
+
+// zigbee_network_lines are what a sealed export carries of a coordinator's
+// network, under `zigbee.<row>.`: the network key, PAN id, extended PAN id and
+// channel as Zigbee2MQTT wrote them, and its coordinator backup as hex; "" when
+// Zigbee2MQTT has made no network in its folder yet.
+// @req MESH-ZB-0016
+fn zigbee_network_lines(project: string, row: u32) string {
+    let coordinator: string = project_node_value(project_file(project), row, "address", "")
+    let dir: string = zigbee_dir(project, coordinator)
+    if dir == "" {
+        return ""
+    }
+    let config: string = rho_read_text(dir + "/configuration.yaml")
+    let secret: string = rho_read_text(dir + "/secret.yaml")
+    if !zigbee_network_kept(config, secret) {
+        return ""
+    }
+    let prefix: string = "zigbee." + rho_int_to_str(row) + "."
+    var out: string = prefix + "network_key=" + zigbee_yaml_get(secret, "", "network_key") + "\n" +
+        prefix + "pan_id=" + zigbee_yaml_get(config, "advanced", "pan_id") + "\n" +
+        prefix + "ext_pan_id=" + zigbee_yaml_get(config, "advanced", "ext_pan_id") + "\n" +
+        prefix + "channel=" + zigbee_yaml_get(config, "advanced", "channel") + "\n"
+    let backup: string = rho_read_text(dir + "/coordinator_backup.json")
+    if backup != "" {
+        out = out + prefix + "backup=" + zigbee_hex(backup) + "\n"
+    }
+    return out
+}
+
+// zigbee_has_network is whether a coordinator's folder holds a network
+// Zigbee2MQTT made.
+fn zigbee_has_network(project: string, row: u32) bool {
+    return zigbee_network_lines(project, row) != ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  On this machine: a process                                                */
+/* -------------------------------------------------------------------------- */
+
+fn zigbee_pid_file(project: string, coordinator: string) string {
+    return zigbee_dir(project, coordinator) + "/mesh-z2m.pid"
+}
+
+fn zigbee_log_file(project: string, coordinator: string) string {
+    return zigbee_dir(project, coordinator) + "/mesh-z2m.log"
+}
+
+// zigbee_is_ours_command is the shell test that the process $p is a Zigbee2MQTT
+// from Mesh's toolchains: its command line names the install folder. A pid the
+// system has since given another program is left alone.
+// @req MESH-ZB-0006
+fn zigbee_is_ours_command() string {
+    return "[ -n \"$p\" ] && [ -r /proc/$p/cmdline ] && tr '\\000' ' ' < /proc/$p/cmdline | grep -qF -- " +
+        shell_quote(zigbee_toolchains() + "/zigbee2mqtt/")
+}
+
+// zigbee_running is whether a native coordinator's Zigbee2MQTT runs.
+// @req MESH-ZB-0006
+fn zigbee_running(project: string, coordinator: string) bool {
+    let pid: string = zigbee_pid_file(project, coordinator)
+    if zigbee_dir(project, coordinator) == "" || !rho_path_exists(pid) {
+        return false
+    }
+    return rho_exec_args("sh", "-c\np=$(cat " + shell_quote(pid) + " 2>/dev/null); " + zigbee_is_ours_command() + "\n",
+        zigbee_report("running")) == 0
+}
+
+// zigbee_stop_command stops a native coordinator's Zigbee2MQTT by its process
+// id, only when that process is that Zigbee2MQTT, and waits up to 15 s for it to
+// end: it says it is offline as it stops, which must not come after a new one
+// said it is online. One still running after that is hung (seen when its broker
+// went away mid-shutdown); left running it would keep the serial port and the
+// next start would find it busy, so it is killed and waited for.
+// @req MESH-ZB-0006
+fn zigbee_stop_command(project: string, coordinator: string) string {
+    let pid: string = zigbee_pid_file(project, coordinator)
+    return "if [ -f " + shell_quote(pid) + " ]; then p=$(cat " + shell_quote(pid) + "); if " + zigbee_is_ours_command() +
+        "; then kill \"$p\" 2>/dev/null; i=0; while [ $i -lt 60 ] && kill -0 \"$p\" 2>/dev/null; do " +
+        "sleep 0.25; i=$((i+1)); done; " +
+        "if kill -0 \"$p\" 2>/dev/null; then kill -9 \"$p\" 2>/dev/null; i=0; while [ $i -lt 20 ] && kill -0 \"$p\" 2>/dev/null; do " +
+        "sleep 0.25; i=$((i+1)); done; fi; fi; rm -f " + shell_quote(pid) + "; fi"
+}
+
+// zigbee_port_problem is what is wrong with a serial port on this machine: ""
+// when this user can read and write it, `absent`, or `denied:<group>` naming
+// the group that owns it.
+// @req MESH-ZB-0003
+fn zigbee_port_problem(port: string) string {
+    if !zigbee_port_ok(port) {
+        return "invalid"
+    }
+    let report: string = zigbee_report("port")
+    ignore_u32(rho_exec_args("sh", "-c\nif [ ! -e \"$1\" ]; then echo absent; elif [ -r \"$1\" ] && [ -w \"$1\" ]; then echo ok; " +
+        "else echo \"denied:$(stat -L -c %G \"$1\" 2>/dev/null)\"; fi\nport-check\n" + port + "\n", report))
+    let said: string = first_line(rho_read_text(report))
+    if said == "ok" {
+        return ""
+    }
+    if said == "" {
+        return "absent"
+    }
+    return said
+}
+
+fn zigbee_port_text(loc: string, port: string, problem: string) string {
+    if problem == "absent" {
+        return mesh_fill(mesh_t(loc, "zigbee.port.absent"), "port", port)
+    }
+    if rho_str_starts_with(problem, "denied:") {
+        return mesh_fill(mesh_fill(mesh_t(loc, "zigbee.port.denied"), "port", port), "group",
+            rho_str_slice(problem, 7, u32(rho_strlen(problem)) - 7))
+    }
+    return mesh_t(loc, "zigbee.port.invalid")
+}
+
+// zigbee_native is whether a coordinator hangs under the native gateway, so
+// Zigbee2MQTT runs on this machine.
+fn zigbee_native(file: string, index: u32) bool {
+    let parent: string = project_node_value(file, index, "parent", "")
+    return parent == "gateway" && zigbee_parent_board(file, parent) == "native"
+}
+
+// zigbee_missing is what this machine lacks to start a coordinator, in words,
+// or "": Node.js of a version the plugin names, the pinned Zigbee2MQTT, the
+// plugin itself.
+// @req MESH-ZB-0008
+fn zigbee_missing(loc: string) string {
+    if zigbee_plugin_dir() == "" || zigbee_version() == "" {
+        return mesh_t(loc, "zigbee.no_plugin")
+    }
+    var out: string = ""
+    if zigbee_node() == "" {
+        out = mesh_fill(mesh_t(loc, "zigbee.no_node"), "majors", zigbee_plugin_value("node_major"))
+    }
+    if !zigbee_installed() {
+        if out != "" {
+            out = out + " "
+        }
+        out = out + mesh_fill(mesh_fill(mesh_t(loc, "zigbee.no_z2m"), "version", zigbee_version()), "dir", zigbee_install_dir())
+    }
+    return out
+}
+
+// zigbee_start_native starts a coordinator's Zigbee2MQTT on this machine: the
+// broker user, the configuration, the port checked, then `node index.js` from
+// the pinned install with its data folder, Z2M_ONBOARD_NO_SERVER set and its
+// pid and log beside its data. It is a process of its own, which the gateway's
+// start and stop leave alone. "" when it started, or why not in words.
+// @req MESH-ZB-0004, MESH-ZB-0005, MESH-ZB-0006, MESH-ZB-0008, MESH-ZB-0003
+fn zigbee_start_native(loc: string, project: string, index: u32) string {
+    let file: string = project_file(project)
+    let coordinator: string = project_node_value(file, index, "address", "")
+    if zigbee_base_topic(project, coordinator) == "" {
+        return mesh_t(loc, "zigbee.name.level")
+    }
+    let missing: string = zigbee_missing(loc)
+    if missing != "" {
+        return missing
+    }
+    let port: string = project_node_value(file, index, "serial_port", "")
+    let problem: string = zigbee_port_problem(port)
+    if problem != "" {
+        return zigbee_port_text(loc, port, problem)
+    }
+    let issued: string = zigbee_broker_issue(loc, project, index)
+    if issued != "" {
+        return issued
+    }
+    let written: string = zigbee_config_write(loc, project, index,
+        "mqtt://" + zigbee_broker_value(project, coordinator, "loopback") + ":" + zigbee_broker_value(project, coordinator, "port"))
+    if written != "" {
+        return written
+    }
+    let node: string = zigbee_node()
+    let install: string = zigbee_install_dir()
+    let dir: string = zigbee_dir(project, coordinator)
+    let command: string = zigbee_stop_command(project, coordinator) + "; cd " + shell_quote(install) + " || exit 1; umask 077; " +
+        "nohup env ZIGBEE2MQTT_DATA=" + shell_quote(dir) + " Z2M_ONBOARD_NO_SERVER=1 PATH=" + shell_quote(zigbee_dirname(node)) +
+        ":\"$PATH\" " + shell_quote(node) + " " + shell_quote(install + "/index.js") + " >> " + shell_quote(zigbee_log_file(project, coordinator)) +
+        " 2>&1 < /dev/null & echo $! > " + shell_quote(zigbee_pid_file(project, coordinator))
+    if rho_exec_args("sh", "-c\n" + command + "\n", zigbee_report("start")) != 0 {
+        return mesh_t(loc, "zigbee.start_failed")
+    }
+    ignore_bool(rho_write_text(dir + "/mesh-started", rho_int_to_str(mesh_now_seconds()) + "\n"))
+    ignore_bool(rho_write_text(dir + "/mesh-wanted", "1\n"))
+    info("mesh", "Zigbee2MQTT started for coordinator " + coordinator + " of " + project)
+    return ""
+}
+
+// zigbee_stop_native stops a native coordinator, and Mesh no longer starts it
+// when it starts.
+// @req MESH-ZB-0006
+fn zigbee_stop_native(project: string, coordinator: string) void {
+    let dir: string = zigbee_dir(project, coordinator)
+    if dir == "" {
+        return
+    }
+    ignore_u32(rho_exec_args("sh", "-c\n" + zigbee_stop_command(project, coordinator) + "\n", zigbee_report("stop")))
+    ignore_u32(rho_exec_args("rm", "-f\n--\n" + dir + "/mesh-wanted\n", zigbee_report("rm")))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  On another host board: a container                                        */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_remote_login is the `user@host` a coordinator's board is reached at
+// over ssh, from its manifest's deployment and the host the plan names for it,
+// or "" when it is not reached over ssh or says no login Mesh can use.
+fn zigbee_remote_login(file: string, index: u32) string {
+    let parent: string = project_node_value(file, index, "parent", "")
+    let manifest: string = board_manifest(zigbee_parent_board(file, parent))
+    if yaml.value(manifest, "deployment.method") != "ssh" {
+        return ""
+    }
+    let user: string = yaml.value(manifest, "deployment.user")
+    var host: string = state_value_in(file, "gateway_host")
+    if parent != "gateway" {
+        host = project_node_value(file, zigbee_row(parent), "child_host", "")
+    }
+    if !deploy_word_ok(user) || !deploy_word_ok(host) {
+        return ""
+    }
+    return user + "@" + host
+}
+
+// zigbee_remote_prefix is how a command reaches a coordinator's board over its
+// own deployment login — ssh or adb — or "" when there is none Mesh can use.
+fn zigbee_remote_prefix(file: string, index: u32) string {
+    let login: string = zigbee_remote_login(file, index)
+    if login != "" {
+        return "ssh -o BatchMode=yes -o ConnectTimeout=5 " + shell_quote(login)
+    }
+    let manifest: string = board_manifest(zigbee_parent_board(file, project_node_value(file, index, "parent", "")))
+    if yaml.value(manifest, "deployment.method") == "adb" {
+        return "adb -t $(adb devices -l | awk 'NR==2 {sub(\"transport_id:\", \"\", $4); print $4}')"
+    }
+    return ""
+}
+
+// zigbee_remote_docker is whether a coordinator's board deploys with docker.
+fn zigbee_remote_docker(file: string, index: u32) bool {
+    let board: string = zigbee_parent_board(file, project_node_value(file, index, "parent", ""))
+    return board != "native" && caps_words_has(yaml.value(board_manifest(board), "capabilities.deploy"), "docker")
+}
+
+// zigbee_start_remote runs a coordinator's Zigbee2MQTT on another host board,
+// as the pinned image over the board's deployment login, in a job: its folder
+// made owner-only on the board, the configuration and secret file copied there,
+// and the container run with the port mapped and a restart policy. It is refused
+// while the keeper says the broker listens on loopback only. "" when the job is
+// queued, or why not in words.
+// @req MESH-ZB-0007, MESH-ZB-0004, MESH-ZB-0005
+fn zigbee_start_remote(loc: string, project: string, index: u32) string {
+    let file: string = project_file(project)
+    let coordinator: string = project_node_value(file, index, "address", "")
+    if !zigbee_remote_docker(file, index) {
+        return mesh_t(loc, "zigbee.remote.no_docker")
+    }
+    let remote: string = zigbee_remote_prefix(file, index)
+    if remote == "" {
+        return mesh_t(loc, "zigbee.remote.no_login")
+    }
+    let image: string = zigbee_plugin_value("image")
+    let folder: string = "$HOME/robohub-zigbee/" + project + "/" + coordinator
+    let run: string = zigbee_docker_run(project, coordinator, project_node_value(file, index, "serial_port", ""), folder, image)
+    if run == "" {
+        return mesh_t(loc, "zigbee.port.invalid")
+    }
+    let issued: string = zigbee_broker_issue(loc, project, index)
+    if issued != "" {
+        return issued
+    }
+    let network: string = zigbee_broker_value(project, coordinator, "network")
+    if network == "" {
+        return mesh_t(loc, "zigbee.remote.loopback")
+    }
+    let written: string = zigbee_config_write(loc, project, index,
+        "mqtt://" + network + ":" + zigbee_broker_value(project, coordinator, "port"))
+    if written != "" {
+        return written
+    }
+    let dir: string = zigbee_dir(project, coordinator)
+    let target: string = "robohub-zigbee/" + project + "/" + coordinator
+    var copy: string = ""
+    let login: string = zigbee_remote_login(file, index)
+    if login != "" {
+        copy = "scp -q -p -o BatchMode=yes " + shell_quote(dir + "/configuration.yaml") + " " + shell_quote(dir + "/secret.yaml") + " " +
+            shell_quote(login + ":" + target + "/")
+    } else {
+        copy = remote + " push " + shell_quote(dir + "/configuration.yaml") + " " + shell_quote("/home/arduino/" + target + "/configuration.yaml") +
+            " && " + remote + " push " + shell_quote(dir + "/secret.yaml") + " " + shell_quote("/home/arduino/" + target + "/secret.yaml")
+    }
+    let script: string = jobs_script_header("start Zigbee2MQTT for " + coordinator) +
+        remote + " " + shell_quote("umask 077; mkdir -p \"$HOME/" + target + "\" && chmod 700 \"$HOME/robohub-zigbee\" \"$HOME/" + target + "\"") + "\n" +
+        copy + "\n" + remote + " " + shell_quote("chmod 600 \"$HOME/" + target + "\"/*.yaml; " + run) + "\n"
+    ignore_string(jobs_add(project, "zigbee", "node." + project_node_id(file, index),
+        mesh_fill(mesh_t(loc, "zigbee.job.start"), "name", coordinator), script, "", "", ""))
+    jobs_start(project)
+    ignore_bool(rho_write_text(dir + "/mesh-started", rho_int_to_str(mesh_now_seconds()) + "\n"))
+    return ""
+}
+
+// zigbee_stop_remote stops a coordinator's container on its board, in a job.
+fn zigbee_stop_remote(loc: string, project: string, index: u32) void {
+    let file: string = project_file(project)
+    let coordinator: string = project_node_value(file, index, "address", "")
+    let remote: string = zigbee_remote_prefix(file, index)
+    if remote == "" || !zigbee_level_ok(coordinator) {
+        return
+    }
+    ignore_string(jobs_add(project, "zigbee", "node." + project_node_id(file, index),
+        mesh_fill(mesh_t(loc, "zigbee.job.stop"), "name", coordinator),
+        jobs_script_header("stop Zigbee2MQTT for " + coordinator) + remote + " " +
+        shell_quote("docker rm -f " + zigbee_container_name(project, coordinator) + " >/dev/null 2>&1 || true") + "\n", "", "", ""))
+    jobs_start(project)
+}
+
+// zigbee_start starts a coordinator where it runs; zigbee_stop stops it.
+fn zigbee_start(loc: string, project: string, index: u32) string {
+    if zigbee_native(project_file(project), index) {
+        return zigbee_start_native(loc, project, index)
+    }
+    return zigbee_start_remote(loc, project, index)
+}
+
+fn zigbee_stop(loc: string, project: string, index: u32) void {
+    let file: string = project_file(project)
+    if zigbee_native(file, index) {
+        zigbee_stop_native(project, project_node_value(file, index, "address", ""))
+    } else {
+        zigbee_stop_remote(loc, project, index)
+    }
+}
+
+// zigbee_install_script is the job that installs the pinned Zigbee2MQTT into
+// ~/.rho/toolchains/zigbee2mqtt/<version>: its release source unpacked, then
+// its dependencies by pnpm through Node.js's corepack, with the plugin's Node.js
+// first on PATH, and its build; the folder is renamed into place only when all
+// of it worked.
+// @req MESH-ZB-0008
+fn zigbee_install_script(node: string) string {
+    let dir: string = zigbee_install_dir()
+    let source: string = zigbee_plugin_value("source")
+    let part: string = dir + ".part"
+    return jobs_script_header("install Zigbee2MQTT " + zigbee_version()) +
+        "export PATH=" + shell_quote(zigbee_dirname(node)) + ":\"$PATH\"\n" +
+        "export COREPACK_ENABLE_DOWNLOAD_PROMPT=0\n" +
+        "rm -rf " + shell_quote(part) + "\nmkdir -p " + shell_quote(part) + "\n" +
+        "curl -fsSL --proto '=https' " + shell_quote(source) + " | tar -xz --strip-components=1 -C " + shell_quote(part) + "\n" +
+        "cd " + shell_quote(part) + "\ncorepack pnpm install --frozen-lockfile\ncorepack pnpm run build\n" +
+        "cd /\nrm -rf " + shell_quote(dir) + "\nmv " + shell_quote(part) + " " + shell_quote(dir) + "\n" +
+        "echo 'Zigbee2MQTT installed in " + dir + "'\n"
+}
+
+// zigbee_install queues the install job, once.
+// @req MESH-ZB-0008
+fn zigbee_install(loc: string, project: string, index: u32) string {
+    let node: string = zigbee_node()
+    let source: string = zigbee_plugin_value("source")
+    if zigbee_install_dir() == "" || !rho_str_starts_with(source, "https://") || rho_str_index_of(source, "'") >= 0 {
+        return mesh_t(loc, "zigbee.no_plugin")
+    }
+    if node == "" {
+        return mesh_fill(mesh_t(loc, "zigbee.no_node"), "majors", zigbee_plugin_value("node_major"))
+    }
+    let target: string = "node." + project_node_id(project_file(project), index)
+    if jobs_open_for(project, target, "zigbee-install") != "" {
+        return ""
+    }
+    ignore_string(jobs_add(project, "zigbee-install", target, mesh_fill(mesh_t(loc, "zigbee.job.install"), "version", zigbee_version()),
+        zigbee_install_script(node), "", "", ""))
+    jobs_start(project)
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The bridge and pairing                                                    */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_bridge is the newest message of one of a coordinator's bridge topics,
+// following the coordinator's topics from the first ask.
+fn zigbee_bridge(project: string, index: u32, what: string) string {
+    let base: string = zigbee_base(project, index)
+    if base == "" {
+        return ""
+    }
+    ignore_bool(bus.follow(base + "/#", ""))
+    return bus.latest(base + "/bridge/" + what)
+}
+
+fn zigbee_transaction() string {
+    return "rh" + rho_random_hex(4)
+}
+
+fn zigbee_permit_file(project: string, coordinator: string) string {
+    return zigbee_root(project) + "/" + coordinator + ".permit"
+}
+
+// zigbee_permit opens a coordinator's network to joining for at most 254 s, or
+// closes it with 0, and keeps when it asked. "" when the request was published.
+// @req MESH-ZB-0010
+fn zigbee_permit(loc: string, project: string, index: u32, time_text: string) string {
+    if !zigbee_permit_time_ok(time_text) {
+        return mesh_t(loc, "zigbee.permit.bounded")
+    }
+    let base: string = zigbee_base(project, index)
+    let coordinator: string = project_node_value(project_file(project), index, "address", "")
+    let time: u32 = u32(rho_int_from_str(time_text))
+    if base == "" || !bus.publish(base + "/bridge/request/permit_join", zigbee_permit_payload(time), false) {
+        return mesh_t(loc, "zigbee.bus_failed")
+    }
+    ignore_bool(zigbee_make_dir(project, coordinator))
+    ignore_bool(rho_write_text(zigbee_permit_file(project, coordinator), rho_int_to_str(mesh_now_seconds()) + "|" + rho_int_to_str(time) + "\n"))
+    info("mesh", "joining on coordinator " + coordinator + " of " + project + " asked for " + rho_int_to_str(time) + " s")
+    return ""
+}
+
+// zigbee_permit_left is how long a coordinator's network stays open to joining.
+// @req MESH-ZB-0010
+fn zigbee_permit_remaining(project: string, index: u32) u32 {
+    let info_line: string = zigbee_bridge_info(zigbee_bridge(project, index, "info"))
+    let coordinator: string = project_node_value(project_file(project), index, "address", "")
+    let asked: string = first_line(rho_read_text(zigbee_permit_file(project, coordinator)))
+    var open: string = str_field(info_line, "|", 3)
+    var end: string = str_field(info_line, "|", 4)
+    let asked_at: u32 = u32(rho_int_from_str(str_field(asked, "|", 0)))
+    // A request newer than the bridge's word decides until the bridge answers it.
+    if asked_at > 0 && (end == "" || u32(rho_int_from_str(end)) < asked_at) && open != "true" {
+        open = ""
+        end = ""
+    }
+    return zigbee_permit_left(open, end, asked_at, u32(rho_int_from_str(str_field(asked, "|", 1))), mesh_now_seconds())
+}
+
+// zigbee_adopt adds a joined device to the plan under its coordinator — the
+// manifest that matches it, transport zigbee, its IEEE address and a name that
+// is its address — and asks Zigbee2MQTT to rename it to that address, the node
+// marked as not yet renamed until the answer to that transaction says ok.
+// "" when it was added, or why not in words.
+// @req MESH-ZB-0012, MESH-ZB-0011
+fn zigbee_adopt(loc: string, project: string, index: u32, ieee: string, name: string) string {
+    let file: string = project_file(project)
+    let base: string = zigbee_base(project, index)
+    var found: string = ""
+    var rest: string = zigbee_discovered(zigbee_bridge(project, index, "devices"), zigbee_planned_ieees(file))
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if rho_str_eq(field(line, 0), ieee) {
+            found = line
+        }
+    }
+    if found == "" || !zigbee_ieee_ok(ieee) {
+        return mesh_t(loc, "zigbee.adopt.gone")
+    }
+    let manifest: string = zigbee_manifest_match(field(found, 3), field(found, 2), zigbee_manifest_rows())
+    let problem: string = zigbee_adopt_problem(field(found, 5), manifest)
+    if problem == "interview" {
+        return mesh_t(loc, "zigbee.adopt.interview")
+    }
+    if problem == "manifest" {
+        return mesh_t(loc, "zigbee.adopt.no_manifest")
+    }
+    let named: string = zigbee_name_problem(file, name, 0)
+    if named != "" {
+        return zigbee_name_text(loc, named)
+    }
+    let added: u32 = project_node_count_at(file) + 1
+    if added > 64 {
+        return mesh_t(loc, "editor.msg.max_nodes")
+    }
+    let transaction: string = zigbee_transaction()
+    let row: string = "node." + rho_int_to_str(added) + "."
+    ignore_bool(plan_set_many(file, editor_line("node.count", rho_int_to_str(added)) +
+        editor_line(row + "kind", "device") + editor_line(row + "role", "device") + editor_line(row + "device", manifest) +
+        editor_line(row + "transport", "zigbee") + editor_line(row + "address", name) + editor_line(row + "name", name) +
+        editor_line(row + "ieee", ieee) + editor_line(row + "parent", "node." + rho_int_to_str(index)) +
+        editor_line(row + "zigbee_rename", transaction)))
+    if base == "" || !bus.publish(base + "/bridge/request/device/rename", zigbee_rename_payload(ieee, name, transaction), false) {
+        return mesh_t(loc, "zigbee.adopt.rename_unsent")
+    }
+    info("mesh", "Zigbee device " + ieee + " adopted as " + name + " under coordinator " + rho_int_to_str(index) + " of " + project)
+    return ""
+}
+
+// zigbee_rename_state is where a Zigbee device's rename stands: "" when it is
+// done (or was never asked), "pending", or "error: <why>". An ok answer to its
+// transaction clears the mark.
+// @req MESH-ZB-0012
+fn zigbee_rename_state(project: string, index: u32) string {
+    let file: string = project_file(project)
+    let transaction: string = project_node_value(file, index, "zigbee_rename", "")
+    if transaction == "" {
+        return ""
+    }
+    let coordinator: u32 = zigbee_parent_coordinator(file, index)
+    if coordinator == 0 {
+        return "pending"
+    }
+    let answer: string = zigbee_bridge(project, coordinator, "response/device/rename")
+    let outcome: string = zigbee_response_outcome(answer, transaction)
+    if outcome == "ok" {
+        save_setting_at(file, "node." + rho_int_to_str(index) + ".zigbee_rename", "")
+        return ""
+    }
+    if outcome == "error" {
+        return "error: " + zigbee_response_error(answer)
+    }
+    return "pending"
+}
+
+// zigbee_rename_again asks the rename once more, under a new transaction.
+// @req MESH-ZB-0012
+fn zigbee_rename_again(loc: string, project: string, index: u32) string {
+    let file: string = project_file(project)
+    let coordinator: u32 = zigbee_parent_coordinator(file, index)
+    let base: string = zigbee_base(project, coordinator)
+    let ieee: string = project_node_value(file, index, "ieee", "")
+    let name: string = project_node_value(file, index, "address", "")
+    if coordinator == 0 || base == "" || !zigbee_ieee_ok(ieee) || !zigbee_level_ok(name) {
+        return mesh_t(loc, "zigbee.adopt.rename_unsent")
+    }
+    let transaction: string = zigbee_transaction()
+    save_setting_at(file, "node." + rho_int_to_str(index) + ".zigbee_rename", transaction)
+    if !bus.publish(base + "/bridge/request/device/rename", zigbee_rename_payload(ieee, name, transaction), false) {
+        return mesh_t(loc, "zigbee.adopt.rename_unsent")
+    }
+    return ""
+}
+
+// zigbee_remove_device asks Zigbee2MQTT to take a Zigbee device off the network
+// as its node leaves the plan, and says, so the person can reset the device by
+// hand, when the coordinator is offline or the request failed or went
+// unanswered. Answers what to say, "" when it was removed.
+// @req MESH-ZB-0013
+fn zigbee_remove_device(loc: string, project: string, index: u32) string {
+    let file: string = project_file(project)
+    let coordinator: u32 = zigbee_parent_coordinator(file, index)
+    let ieee: string = project_node_value(file, index, "ieee", "")
+    let base: string = zigbee_base(project, coordinator)
+    if coordinator == 0 || base == "" || !zigbee_ieee_ok(ieee) {
+        return mesh_t(loc, "zigbee.remove.offline")
+    }
+    if zigbee_bridge_state(zigbee_bridge(project, coordinator, "state")) != "online" {
+        return mesh_t(loc, "zigbee.remove.offline")
+    }
+    let transaction: string = zigbee_transaction()
+    if !bus.publish(base + "/bridge/request/device/remove", zigbee_remove_payload(ieee, transaction), false) {
+        return mesh_t(loc, "zigbee.remove.failed")
+    }
+    // Zigbee2MQTT answers once the device left, which takes a few seconds for a
+    // device that is there; it is waited for up to 12 s.
+    var waited: u32 = 0
+    while waited < 48 {
+        let answer: string = bus.latest(base + "/bridge/response/device/remove")
+        let outcome: string = zigbee_response_outcome(answer, transaction)
+        if outcome == "ok" {
+            info("mesh", "Zigbee device " + ieee + " removed from the network of " + project)
+            return ""
+        }
+        if outcome == "error" {
+            return mesh_fill(mesh_t(loc, "zigbee.remove.error"), "error", zigbee_response_error(answer))
+        }
+        telemetry_sleep(250)
+        waited = waited + 1
+    }
+    return mesh_t(loc, "zigbee.remove.failed")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Removing                                                                  */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_forget_coordinator is what removing a coordinator does: its
+// Zigbee2MQTT stopped, its broker user removed; its data folder is kept, so a
+// coordinator put back keeps its network.
+// @req MESH-ZB-0004, MESH-ZB-0006
+fn zigbee_forget_coordinator(loc: string, project: string, index: u32) void {
+    zigbee_stop(loc, project, index)
+    ignore_bool(zigbee_broker_remove(project, index))
+}
+
+// zigbee_forget_mesh is what removing a mesh does to its coordinators, before
+// its folder goes: each stopped and its broker user removed.
+// @req MESH-ZB-0004
+fn zigbee_forget_mesh(project: string) void {
+    let file: string = project_file(project)
+    var index: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while index <= count {
+        if zigbee_is_coordinator(file, index) {
+            let coordinator: string = project_node_value(file, index, "address", "")
+            if zigbee_native(file, index) {
+                zigbee_stop_native(project, coordinator)
+            } else if zigbee_level_ok(coordinator) && zigbee_remote_prefix(file, index) != "" {
+                // The mesh's folder, where its jobs run, goes next: the container
+                // is stopped now rather than in a job.
+                ignore_u32(rho_exec_args("sh", "-c\n" + zigbee_remote_prefix(file, index) + " " +
+                    shell_quote("docker rm -f " + zigbee_container_name(project, coordinator) + " >/dev/null 2>&1 || true") + "\n",
+                    zigbee_report("stop-remote")))
+            }
+            ignore_bool(zigbee_broker_remove(project, index))
+        }
+        index = index + 1
+    }
+}
+
+// zigbee_start_wanted starts again, when Mesh starts, the native coordinators
+// it had started and not been told to stop, as it does a native gateway.
+// @req MESH-ZB-0006
+fn zigbee_start_wanted() void {
+    var rest: string = project_ids()
+    while rest != "" {
+        let project: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if project == "" {
+            continue
+        }
+        let file: string = project_file(project)
+        var index: u32 = 1
+        let count: u32 = project_node_count_at(file)
+        while index <= count {
+            let coordinator: string = project_node_value(file, index, "address", "")
+            if zigbee_is_coordinator(file, index) && zigbee_native(file, index) && zigbee_level_ok(coordinator) &&
+                rho_path_exists(zigbee_dir(project, coordinator) + "/mesh-wanted") && !zigbee_running(project, coordinator) {
+                let said: string = zigbee_start_native("en", project, index)
+                if said != "" {
+                    warn("mesh", "coordinator " + coordinator + " of " + project + " was not started again: " + said)
+                }
+            }
+            index = index + 1
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Forms                                                                     */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_port_entries are the names in /dev/serial/by-id/ on a coordinator's
+// board, one per line: on this machine listed here, on another board over its
+// ssh login; "" when they cannot be listed (a port is typed instead).
+// @req MESH-ZB-0003
+fn zigbee_port_entries(file: string, parent: string, index: u32) string {
+    let report: string = zigbee_report("ports")
+    ignore_bool(rho_write_text(report, ""))
+    if parent == "gateway" && zigbee_parent_board(file, parent) == "native" {
+        ignore_u32(rho_exec_args("sh", "-c\nls -1 /dev/serial/by-id/ 2>/dev/null; true\n", report))
+    } else if index > 0 && zigbee_remote_login(file, index) != "" {
+        ignore_u32(rho_exec_args("sh", "-c\nssh -o BatchMode=yes -o ConnectTimeout=3 \"$1\" 'ls -1 /dev/serial/by-id/ 2>/dev/null' 2>/dev/null; true\nports\n" +
+            zigbee_remote_login(file, index) + "\n", report))
+    }
+    var out: string = ""
+    var rest: string = rho_read_text(report)
+    while rest != "" {
+        let line: string = str_trim(first_line(rest))
+        rest = zigbee_after_line(rest)
+        if line != "" && zigbee_port_ok("/dev/serial/by-id/" + line) {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+// zigbee_port_field is the serial port of a coordinator: a choice of the board's
+// /dev/serial/by-id/ entries, those its manifest's `usb.by_id` patterns match
+// marked and listed first, and a path typed by hand.
+// @req MESH-ZB-0003
+fn zigbee_port_field(loc: string, file: string, parent: string, index: u32, device: string, selected: string) string {
+    let patterns: string = device_block_list(rho_read_text(device_manifest(device)), "usb", "by_id")
+    let entries: string = zigbee_port_entries(file, parent, index)
+    var matched: string = ""
+    var others: string = ""
+    var rest: string = entries
+    while rest != "" {
+        let name: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        let path: string = "/dev/serial/by-id/" + name
+        if zigbee_port_matches(patterns, name) {
+            matched = matched + option(path, "★ " + name, mesh_t(loc, "zigbee.port.matches"), selected)
+        } else {
+            others = others + option(path, name, "", selected)
+        }
+    }
+    var typed: string = ""
+    if selected != "" && rho_str_index_of(matched + others, "value=\"" + escape_html(selected) + "\"") < 0 {
+        typed = selected
+    }
+    var choice: string = ""
+    if matched != "" || others != "" {
+        choice = mesh_select("serial_port", mesh_t(loc, "zigbee.port.label"),
+            option("", mesh_t(loc, "zigbee.port.choose"), "", selected) + matched + others, "")
+    } else {
+        choice = "<p class=\"ins-help\">" + mesh_t(loc, "zigbee.port.none_listed") + "</p>"
+    }
+    return choice + mesh_input("serial_port_typed", mesh_t(loc, "zigbee.port.typed"), typed, mesh_t(loc, "zigbee.port.typed_help"))
+}
+
+// zigbee_port_from is the port a form chose: the typed path when one was
+// typed, else the one picked.
+fn zigbee_port_from(body: string) string {
+    let typed: string = str_trim(form_field(body, "serial_port_typed"))
+    if typed != "" {
+        return typed
+    }
+    return str_trim(form_field(body, "serial_port"))
+}
+
+// zigbee_parent_choices are the parents a coordinator may be placed under.
+// @req MESH-ZB-0002
+fn zigbee_parent_choices(loc: string, file: string, device: string, except: u32, selected: string) string {
+    var out: string = ""
+    var rest: string = zigbee_parents(file, device, except)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, " ")
+        var parent: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            parent = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        out = out + option(parent, editor_parent_name(loc, parent), "", selected)
+    }
+    return out
+}
+
+// zigbee_coordinator_choices are the coordinators of a mesh, as the parents a
+// Zigbee device may hang under.
+fn zigbee_coordinator_choices(loc: string, file: string, selected: string) string {
+    var out: string = ""
+    var index: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while index <= count {
+        if zigbee_is_coordinator(file, index) {
+            out = out + option("node." + rho_int_to_str(index), editor_name(loc, index), "", selected)
+        }
+        index = index + 1
+    }
+    return out
+}
+
+// zigbee_device_picker are the devices a Zigbee device node may be: those whose
+// manifest says it is read over Zigbee.
+fn zigbee_device_picker(loc: string, selected: string) string {
+    var out: string = "<option value=\"\">" + escape_html(mesh_t(loc, "device.choose")) + "</option>"
+    var rest: string = device_rows()
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if line != "" && field(line, 2) != "coordinator" && (field(line, 6) != "" || rho_str_index_of(field(line, 3), "zigbee") >= 0) {
+            out = out + option(field(line, 0), field(line, 1), "", selected)
+        }
+    }
+    return out
+}
+
+// zigbee_channel_field is a coordinator's channel: editable until Zigbee2MQTT
+// first started with it, the network's afterwards.
+// @req MESH-ZB-0005
+fn zigbee_channel_field(loc: string, value: string, started: bool) string {
+    if started {
+        return "<label>" + mesh_t(loc, "zigbee.channel") + "<input type=\"text\" value=\"" + escape_html(value) +
+            "\" disabled><small>" + mesh_t(loc, "zigbee.channel_fixed") + "</small></label>"
+    }
+    return mesh_input("channel", mesh_t(loc, "zigbee.channel"), value, mesh_t(loc, "zigbee.channel_help"))
+}
+
+// zigbee_coordinator_form is a coordinator's own tab: its name (its address),
+// its serial port, its channel and its parent.
+// @req MESH-ZB-0001, MESH-ZB-0002, MESH-ZB-0003
+fn zigbee_coordinator_form(loc: string, id: string, index: u32) string {
+    let file: string = project_file(id)
+    let device: string = project_node_value(file, index, "device", "")
+    let parent: string = project_node_value(file, index, "parent", "gateway")
+    return look_form(loc, editor_node_action(id, index), "node", index,
+        mesh_input("name", mesh_t(loc, "zigbee.name"), editor_name(loc, index), mesh_t(loc, "zigbee.name_help")) +
+        mesh_textarea("description", mesh_t(loc, "editor.node.description"), node_value(index, "description", "")) +
+        editor_hidden("device", device) +
+        zigbee_port_field(loc, file, parent, index, device, project_node_value(file, index, "serial_port", "")) +
+        zigbee_channel_field(loc, zigbee_channel(file, index), zigbee_started(id, project_node_value(file, index, "address", ""))) +
+        mesh_select("parent", mesh_t(loc, "editor.node.under"), zigbee_parent_choices(loc, file, device, index, parent), ""),
+        mesh_t(loc, "zigbee.save_impact"), mesh_t(loc, "settings.save"))
+}
+
+// zigbee_device_form is a Zigbee device's own tab.
+// @req MESH-ZB-0012, MESH-ZB-0014
+fn zigbee_device_form(loc: string, id: string, index: u32) string {
+    let file: string = project_file(id)
+    var rename: string = ""
+    let state: string = zigbee_rename_state(id, index)
+    if state == "pending" {
+        rename = "<p class=\"notice\">" + mesh_t(loc, "zigbee.rename.pending") + "</p>"
+    } else if state != "" {
+        rename = "<p class=\"notice bad\">" + escape_html(mesh_fill(mesh_t(loc, "zigbee.rename.failed"), "error",
+            rho_str_slice(state, 7, u32(rho_strlen(state)) - 7))) + "</p>"
+    }
+    if state != "" {
+        rename = rename + "<form class=\"inline\" method=\"post\" action=\"" + editor_node_action(id, index) + "/zigbee\" hx-post=\"" +
+            editor_node_action(id, index) + "/zigbee\" hx-target=\"#agora-inspector\">" + forms_csrf_field() +
+            editor_hidden("action", "rename") + "<button type=\"submit\" class=\"ag-btn small\">" + mesh_t(loc, "zigbee.rename.again") + "</button></form>"
+    }
+    return rename + look_form(loc, editor_node_action(id, index), "node", index,
+        mesh_input("name", mesh_t(loc, "zigbee.name"), editor_name(loc, index), mesh_t(loc, "zigbee.name_help")) +
+        mesh_textarea("description", mesh_t(loc, "editor.node.description"), node_value(index, "description", "")) +
+        mesh_select("device", mesh_t(loc, "editor.node.integration"), zigbee_device_picker(loc, project_node_value(file, index, "device", "")), "") +
+        mesh_input("ieee", mesh_t(loc, "zigbee.ieee"), project_node_value(file, index, "ieee", ""), mesh_t(loc, "zigbee.ieee_help")) +
+        mesh_select("parent", mesh_t(loc, "zigbee.coordinator"), zigbee_coordinator_choices(loc, file, project_node_value(file, index, "parent", "")), ""),
+        mesh_t(loc, "editor.node.device_impact"), mesh_t(loc, "settings.save"))
+}
+
+// zigbee_new_coordinator_form adds a coordinator under a board that can host
+// one: which coordinator, its name, its serial port and its channel.
+// @req MESH-ZB-0001, MESH-ZB-0002, MESH-ZB-0003
+fn zigbee_new_coordinator_form(loc: string, id: string, parent: string, device: string, notice: string, cancel: string) string {
+    let file: string = project_file(id)
+    var picker: string = ""
+    var rest: string = zigbee_coordinator_rows()
+    var chosen: string = device
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if line != "" {
+            if chosen == "" {
+                chosen = field(line, 0)
+            }
+            picker = picker + option(field(line, 0), field(line, 1), "", chosen)
+        }
+    }
+    let action: string = editor_base(id) + "/node"
+    return look_head(loc, mesh_fill(mesh_t(loc, "editor.new.add_under"), "parent", editor_parent_name(loc, parent)), mesh_t(loc, "zigbee.new_title"), "") +
+        look_body(notice + "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
+        "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "new") + editor_hidden("kind", "coordinator") + editor_hidden("parent", parent) +
+        mesh_select("device", mesh_t(loc, "zigbee.which"), picker, "") +
+        mesh_input("name", mesh_t(loc, "zigbee.name"), "", mesh_t(loc, "zigbee.name_help")) +
+        zigbee_port_field(loc, file, parent, 0, chosen, "") +
+        zigbee_channel_field(loc, rho_int_to_str(ZIGBEE_DEFAULT_CHANNEL), false) +
+        "<p class=\"ins-help\">" + mesh_t(loc, "zigbee.new_help") + "</p>" +
+        "<div class=\"ins-foot\">" + cancel + "<button type=\"submit\" class=\"ag-btn primary\">" + mesh_t(loc, "editor.new.add_to_mesh") +
+        "</button></div></form>")
+}
+
+// zigbee_new_device_form adds a Zigbee device under a coordinator by hand; most
+// are adopted from the coordinator's tab once they joined.
+fn zigbee_new_device_form(loc: string, id: string, parent: string, notice: string, cancel: string) string {
+    let action: string = editor_base(id) + "/node"
+    return look_head(loc, mesh_fill(mesh_t(loc, "editor.new.add_under"), "parent", editor_parent_name(loc, parent)), mesh_t(loc, "editor.new.new_device"), "") +
+        look_body(notice + "<p class=\"ins-help\">" + mesh_t(loc, "zigbee.new_device_help") + "</p>" +
+        "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action + "\" hx-target=\"#agora-inspector\">" +
+        editor_hidden("tab", "new") + editor_hidden("kind", "device") + editor_hidden("parent", parent) + editor_hidden("transport", "zigbee") +
+        mesh_select("device", mesh_t(loc, "editor.node.integration"), zigbee_device_picker(loc, ""), "") +
+        mesh_input("ieee", mesh_t(loc, "zigbee.ieee"), "", mesh_t(loc, "zigbee.ieee_help")) +
+        mesh_input("name", mesh_t(loc, "zigbee.name"), "", mesh_t(loc, "zigbee.name_help")) +
+        "<div class=\"ins-foot\">" + cancel + "<button type=\"submit\" class=\"ag-btn primary\">" + mesh_t(loc, "editor.new.add_to_mesh") +
+        "</button></div></form>")
+}
+
+// zigbee_coordinator_lines are the plan lines a coordinator's form saves, or
+// "!" and why not: its name is a topic level no other node has, its parent can
+// host it, its port is a device path, its channel 11 to 26 and unchanged once
+// Zigbee2MQTT started.
+// @req MESH-ZB-0001, MESH-ZB-0002, MESH-ZB-0003, MESH-ZB-0015
+fn zigbee_coordinator_lines(loc: string, file: string, index: u32, body: string, parent: string, except: u32) string {
+    let device: string = form_field(body, "device")
+    let name: string = str_trim(form_field(body, "name"))
+    if device == "" || device_kind(device) != "coordinator" {
+        return "!" + mesh_t(loc, "editor.msg.device_needs")
+    }
+    let mesh: string = plan_project_id(file)
+    if !zigbee_level_ok(mesh) {
+        return "!" + mesh_t(loc, "zigbee.mesh_level")
+    }
+    let named: string = zigbee_name_problem(file, name, except)
+    if named != "" {
+        return "!" + zigbee_name_text(loc, named)
+    }
+    let placed: string = zigbee_placement(file, parent, device, except)
+    if placed != "" {
+        return "!" + mesh_fill(mesh_t(loc, "zigbee.place.refused"), "reason", zigbee_placement_text(loc, placed))
+    }
+    let port: string = zigbee_port_from(body)
+    if !zigbee_port_ok(port) {
+        return "!" + mesh_t(loc, "zigbee.port.invalid")
+    }
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    var lines: string = editor_line(prefix + "name", name) + editor_line(prefix + "address", name) +
+        editor_line(prefix + "device", device) + editor_line(prefix + "transport", "") +
+        editor_line(prefix + "serial_port", port) + editor_line(prefix + "parent", parent)
+    let old_name: string = project_node_value(file, index, "address", "")
+    let started: bool = except > 0 && zigbee_started(plan_project_id(file), old_name)
+    if except > 0 && started && !rho_str_eq(old_name, name) {
+        return "!" + mesh_t(loc, "zigbee.name_fixed")
+    }
+    let channel: string = str_trim(form_field(body, "channel"))
+    if !started {
+        if channel != "" && !zigbee_channel_ok(channel) {
+            return "!" + mesh_t(loc, "zigbee.channel_invalid")
+        }
+        if channel == "" {
+            lines = lines + editor_line(prefix + "channel", rho_int_to_str(ZIGBEE_DEFAULT_CHANNEL))
+        } else {
+            lines = lines + editor_line(prefix + "channel", channel)
+        }
+    }
+    return lines
+}
+
+// zigbee_device_lines are the plan lines a Zigbee device's form saves, or "!"
+// and why not: it hangs under a coordinator, its name is a topic level no other
+// node has, its IEEE address is one.
+// @req MESH-ZB-0012, MESH-ZB-0015
+fn zigbee_device_lines(loc: string, file: string, index: u32, body: string, parent: string, except: u32) string {
+    let device: string = form_field(body, "device")
+    let name: string = str_trim(form_field(body, "name"))
+    let ieee: string = str_trim(form_field(body, "ieee"))
+    let at: u32 = zigbee_row(parent)
+    if device == "" || at == 0 || !zigbee_is_coordinator(file, at) {
+        return "!" + mesh_t(loc, "zigbee.device_needs")
+    }
+    let named: string = zigbee_name_problem(file, name, except)
+    if named != "" {
+        return "!" + zigbee_name_text(loc, named)
+    }
+    if !zigbee_ieee_ok(ieee) {
+        return "!" + mesh_t(loc, "zigbee.ieee_invalid")
+    }
+    let prefix: string = "node." + rho_int_to_str(index) + "."
+    return editor_line(prefix + "name", name) + editor_line(prefix + "address", name) + editor_line(prefix + "device", device) +
+        editor_line(prefix + "transport", "zigbee") + editor_line(prefix + "ieee", ieee) + editor_line(prefix + "parent", parent)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The coordinator's tab                                                     */
+/* -------------------------------------------------------------------------- */
+
+fn zigbee_action_form(loc: string, id: string, index: u32, action: string, inner: string, label: string, css: string) string {
+    let url: string = editor_node_action(id, index) + "/zigbee"
+    return "<form class=\"inline\" method=\"post\" action=\"" + url + "\" hx-post=\"" + url + "\" hx-target=\"#agora-inspector\">" +
+        forms_csrf_field() + editor_hidden("action", action) + inner + "<button type=\"submit\" class=\"ag-btn small " + css + "\">" +
+        escape_html(label) + "</button></form>"
+}
+
+// zigbee_tab is a coordinator's Zigbee tab: whether its bridge is up and what it
+// runs, what this machine lacks, its serial port, starting and stopping it,
+// joining, and the devices that joined and are not in the plan yet.
+// @req MESH-ZB-0003, MESH-ZB-0008, MESH-ZB-0009, MESH-ZB-0010, MESH-ZB-0011
+fn zigbee_tab(loc: string, id: string, index: u32) string {
+    let file: string = project_file(id)
+    let coordinator: string = project_node_value(file, index, "address", "")
+    let native: bool = zigbee_native(file, index)
+    let state: string = zigbee_bridge_state(zigbee_bridge(id, index, "state"))
+    let info_line: string = zigbee_bridge_info(zigbee_bridge(id, index, "info"))
+    var pill: string = "<span class=\"ag-pill\">" + mesh_t(loc, "zigbee.state.unknown") + "</span>"
+    if state == "online" {
+        pill = "<span class=\"ag-pill online\">" + mesh_t(loc, "zigbee.state.online") + "</span>"
+    } else if state == "offline" {
+        pill = "<span class=\"ag-pill warn\">" + mesh_t(loc, "zigbee.state.offline") + "</span>"
+    }
+    var where: string = mesh_t(loc, "zigbee.where.native")
+    if !native {
+        where = mesh_t(loc, "zigbee.where.container")
+    }
+    let facts: string = "<dl class=\"agora-facts\">" +
+        agora_fact(loc, mesh_t(loc, "zigbee.base_topic"), zigbee_base(id, index)) +
+        agora_fact(loc, mesh_t(loc, "zigbee.port.label"), project_node_value(file, index, "serial_port", "")) +
+        agora_fact(loc, mesh_t(loc, "zigbee.runs"), where) +
+        agora_fact(loc, mesh_t(loc, "zigbee.version"), str_field(info_line, "|", 0)) +
+        agora_fact(loc, mesh_t(loc, "zigbee.firmware"), str_field(info_line, "|", 1)) +
+        agora_fact(loc, mesh_t(loc, "zigbee.channel"), str_field(info_line, "|", 2)) + "</dl>"
+    var notes: string = ""
+    var actions: string = ""
+    if native {
+        let missing: string = zigbee_missing(loc)
+        if missing != "" {
+            notes = notes + "<p class=\"notice bad\">" + escape_html(missing) + "</p>"
+            if zigbee_node() != "" && !zigbee_installed() && zigbee_version() != "" {
+                let job: string = jobs_open_for(id, "node." + project_node_id(file, index), "zigbee-install")
+                if job != "" {
+                    actions = actions + "<a class=\"ag-btn small\"" + jobs_open_attrs(id, job) + ">" + escape_html(jobs_meta(id, job, "label")) +
+                        " · " + escape_html(jobs_state_text(loc, jobs_state(id, job))) + "</a>"
+                } else {
+                    actions = actions + zigbee_action_form(loc, id, index, "install", "",
+                        mesh_fill(mesh_t(loc, "zigbee.install"), "version", zigbee_version()), "")
+                }
+            }
+        }
+        let port: string = project_node_value(file, index, "serial_port", "")
+        let problem: string = zigbee_port_problem(port)
+        if problem != "" {
+            notes = notes + "<p class=\"notice bad\">" + escape_html(zigbee_port_text(loc, port, problem)) + "</p>"
+        }
+        if zigbee_running(id, coordinator) {
+            actions = actions + "<span class=\"ag-pill online\">" + mesh_t(loc, "zigbee.running") + "</span>" +
+                zigbee_action_form(loc, id, index, "start", "", mesh_t(loc, "zigbee.restart"), "") +
+                zigbee_action_form(loc, id, index, "stop", "", mesh_t(loc, "zigbee.stop"), "quiet")
+        } else {
+            actions = actions + zigbee_action_form(loc, id, index, "start", "", mesh_t(loc, "zigbee.start"), "primary")
+        }
+    } else {
+        if zigbee_broker_value(id, coordinator, "user") != "" && zigbee_broker_value(id, coordinator, "network") == "" {
+            notes = notes + "<p class=\"notice bad\">" + mesh_t(loc, "zigbee.remote.loopback") + "</p>"
+        }
+        actions = actions + zigbee_action_form(loc, id, index, "start", "", mesh_t(loc, "zigbee.start"), "primary") +
+            zigbee_action_form(loc, id, index, "stop", "", mesh_t(loc, "zigbee.stop"), "quiet")
+    }
+    // Joining, bounded: the time left, and closing it early.
+    var joining: string = ""
+    let left: u32 = zigbee_permit_remaining(id, index)
+    if left > 0 {
+        joining = "<p class=\"notice\"><span class=\"zigbee-countdown\" data-left=\"" + rho_int_to_str(left) + "\">" +
+            escape_html(mesh_fill(mesh_t(loc, "zigbee.permit.open"), "seconds", rho_int_to_str(left))) + "</span></p>" +
+            zigbee_action_form(loc, id, index, "permit", editor_hidden("time", "0"), mesh_t(loc, "zigbee.permit.stop"), "quiet") +
+            "<script>(function(){var e=document.currentScript.parentNode.querySelector('.zigbee-countdown');if(!e)return;var n=+e.dataset.left;" +
+            "var t=setInterval(function(){n--;if(n<=0){clearInterval(t);e.textContent='" + escape_html(mesh_t(loc, "zigbee.permit.closed")) +
+            "';return}e.textContent=e.textContent.replace(/\\d+/,n)},1000)})();</script>"
+    } else {
+        joining = zigbee_action_form(loc, id, index, "permit",
+            "<label>" + mesh_t(loc, "zigbee.permit.seconds") + "<input type=\"number\" name=\"time\" min=\"1\" max=\"254\" value=\"254\"></label>",
+            mesh_t(loc, "zigbee.permit.allow"), "primary")
+    }
+    // The devices that joined and are not in the plan.
+    var rows: string = ""
+    let manifests: string = zigbee_manifest_rows()
+    var rest: string = zigbee_discovered(zigbee_bridge(id, index, "devices"), zigbee_planned_ieees(file))
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = zigbee_after_line(rest)
+        if line == "" {
+            continue
+        }
+        let matched: string = zigbee_manifest_match(field(line, 3), field(line, 2), manifests)
+        let problem: string = zigbee_adopt_problem(field(line, 5), matched)
+        var adopt: string = ""
+        if problem == "" {
+            adopt = zigbee_action_form(loc, id, index, "adopt", editor_hidden("ieee", field(line, 0)) +
+                "<input type=\"text\" name=\"name\" placeholder=\"" + escape_html(mesh_t(loc, "zigbee.name")) + "\" required pattern=\"[A-Za-z0-9_-]+\">",
+                mesh_t(loc, "zigbee.adopt"), "primary")
+        } else if problem == "interview" {
+            adopt = "<small>" + escape_html(mesh_fill(mesh_t(loc, "zigbee.adopt.interview_state"), "state", field(line, 5))) + "</small>"
+        } else {
+            adopt = "<small>" + mesh_t(loc, "zigbee.adopt.no_manifest") + "</small>"
+        }
+        var supported: string = mesh_t(loc, "zigbee.unsupported")
+        if field(line, 4) == "true" {
+            supported = mesh_t(loc, "zigbee.supported")
+        }
+        var known: string = mesh_t(loc, "zigbee.no_match")
+        if matched != "" {
+            known = device_label(matched)
+        }
+        rows = rows + "<div class=\"ins-row\"><b>" + escape_html(field(line, 0)) + "</b><span>" +
+            escape_html(field(line, 2) + " " + field(line, 3) + " · " + supported + " · " + field(line, 5) + " · " + known) +
+            "</span>" + adopt + "</div>"
+    }
+    if rows == "" {
+        rows = "<p class=\"ins-help\">" + mesh_t(loc, "zigbee.none_joined") + "</p>"
+    }
+    return "<div class=\"ins-state\">" + pill + "</div>" + facts + notes + "<div class=\"actions\">" + actions + "</div>" +
+        "<div class=\"ins-section\">" + mesh_t(loc, "zigbee.pairing") + "</div>" + joining +
+        "<div class=\"ins-section\">" + mesh_t(loc, "zigbee.joined") + "</div><div class=\"ins-rows\">" + rows + "</div>"
+}
+
+// mesh_p_node_zigbee is what a coordinator's tab and a Zigbee device's tab
+// post: start, stop, install, joining, adopting and renaming again. Each needs
+// the mesh's plan grant and a form drawn by Mesh's own pages.
+// @req MESH-ZB-0006, MESH-ZB-0007, MESH-ZB-0008, MESH-ZB-0010, MESH-ZB-0012
+fn mesh_p_node_zigbee(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let body: string = request_body(req)
+    let loc: string = i18n_locale(req)
+    let nid: string = param(req, "node")
+    let file: string = project_file(id)
+    let index: u32 = project_node_by_id(file, nid)
+    if index == 0 {
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "editor.msg.node_gone"), true))
+    }
+    if !forms_csrf_ok(body) {
+        return Response{ 403, "<p class=\"notice bad\">" + i18n_t(req, "settings.csrf_refused") + "</p>", "text/html; charset=utf-8", "" }
+    }
+    let action: string = form_field(body, "action")
+    let selection: string = "node:" + nid
+    if action == "rename" && project_node_value(file, index, "transport", "") == "zigbee" {
+        let said: string = zigbee_rename_again(loc, id, index)
+        return editor_answer(req, id, selection, "node", editor_notice(said, said != ""))
+    }
+    if !zigbee_is_coordinator(file, index) {
+        return editor_answer(req, id, selection, "", editor_notice(i18n_t(req, "editor.msg.node_gone"), true))
+    }
+    var said: string = ""
+    var done: string = ""
+    if action == "start" {
+        said = zigbee_start(loc, id, index)
+        done = i18n_t(req, "zigbee.started")
+    } else if action == "stop" {
+        zigbee_stop(loc, id, index)
+        done = i18n_t(req, "zigbee.stopped")
+    } else if action == "install" {
+        said = zigbee_install(loc, id, index)
+        done = i18n_t(req, "zigbee.install_queued")
+    } else if action == "permit" {
+        said = zigbee_permit(loc, id, index, str_trim(form_field(body, "time")))
+        done = i18n_t(req, "zigbee.permit.asked")
+    } else if action == "adopt" {
+        let name: string = str_trim(form_field(body, "name"))
+        said = zigbee_adopt(loc, id, index, str_trim(form_field(body, "ieee")), name)
+        done = mesh_fill(i18n_t(req, "zigbee.adopted"), "name", name)
+    } else {
+        said = i18n_t(req, "zigbee.unknown_action")
+    }
+    if said != "" {
+        return editor_answer(req, id, selection, "zigbee", editor_notice(said, true))
+    }
+    return editor_answer(req, id, selection, "zigbee", editor_notice(done, false))
+}

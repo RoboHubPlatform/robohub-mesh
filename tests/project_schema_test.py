@@ -2,7 +2,7 @@
 """The published schema of a Mesh project file and Mesh's own rules, held together.
 
 Mesh writes the rules for a project file out twice (ADR-0004): as JSON Schema
-2020-12, published as schemas/mesh-project.v1.json for editors and other tools,
+2020-12, published as schemas/mesh-project.v2.json (and v1 before it) for editors and other tools,
 and in Rho, in src/mesh/domain/project_file.rho, which is what the exporter writes
 by and the import checks by. This test holds the two to each other:
 
@@ -27,7 +27,8 @@ from pathlib import Path
 
 MESH = Path(__file__).resolve().parents[1]
 RULES = MESH / "src" / "mesh" / "domain" / "project_file.rho"
-SCHEMA = MESH / "schemas" / "mesh-project.v1.json"
+SCHEMA = MESH / "schemas" / "mesh-project.v2.json"
+SCHEMA_V1 = MESH / "schemas" / "mesh-project.v1.json"
 ROW = "<row>"
 
 
@@ -56,6 +57,7 @@ def rho_classes(constants: dict) -> dict:
     for key in constants["PROJECT_OMITTED_KEYS"].split():
         classes["omitted." + key] = "text"
     classes[f"omitted.node.{ROW}.password"] = "text"
+    classes[f"omitted.node.{ROW}.zigbee_network"] = "text"
     return classes
 
 
@@ -156,10 +158,10 @@ def main() -> int:
     constants = rho_constants()
     check(schema.get("$schema") == "https://json-schema.org/draft/2020-12/schema",
           "the schema is JSON Schema 2020-12", failures)
-    check(schema.get("$id", "").endswith("/mesh-project.v1.json") and
+    check(schema.get("$id", "").endswith("/mesh-project.v2.json") and
           schema["properties"]["schema"]["$ref"] == "#/$defs/schema" and
           schema["$defs"]["format"].get("const") == constants["PROJECT_FORMAT"],
-          "it is the schema of version 1 of the format Mesh writes", failures)
+          "it is the schema of version 2 of the format Mesh writes", failures)
 
     rho = rho_classes(constants)
     published = schema_classes(schema)
@@ -193,6 +195,24 @@ def main() -> int:
     check(validate(example, schema) == [], f"an export validates {validate(example, schema)}", failures)
     example["plan"]["node"]["1"]["password"] = "secret"
     check(any("password" in p for p in validate(example, schema)), "a password in clear does not", failures)
+
+    # Schema 1 stays published, and every key it has is a key of schema 2 with
+    # the same class: a schema 1 file is carried forward as it is.
+    # @verifies MESH-ZB-0016
+    v1 = schema_classes(json.loads(SCHEMA_V1.read_text()))
+    lost = sorted(k for k in v1 if published.get(k) != v1[k])
+    check(not lost, f"schema 1's keys are schema 2's with the same class {lost or ''}", failures)
+    zigbee = nest({
+        "format": "robohub-mesh-project", "schema": "2", "mesh.id": "home",
+        "plan.node.count": "2", "plan.node.1.kind": "device", "plan.node.1.device": "robohub-device-sonoff-zbdongle-e",
+        "plan.node.1.parent": "gateway", "plan.node.1.address": "zb1", "plan.node.1.serial_port": "/dev/ttyUSB0",
+        "plan.node.1.channel": "15", "plan.node.2.kind": "device", "plan.node.2.transport": "zigbee",
+        "plan.node.2.ieee": "0xa4c1380000000002", "plan.node.2.parent": "node.1",
+        "omitted.node.1.zigbee_network": "the Zigbee network of coordinator zb1",
+    })
+    check(validate(zigbee, schema) == [], f"a mesh with a coordinator and a Zigbee device validates {validate(zigbee, schema)}", failures)
+    zigbee["plan"]["node"]["2"]["ieee"] = "0xNOPE"
+    check(any("ieee" in p for p in validate(zigbee, schema)), "an IEEE address that is none does not", failures)
 
     print("mesh project schema test " + ("failed" if failures else "ok"))
     return 1 if failures else 0

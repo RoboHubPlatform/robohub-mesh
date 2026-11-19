@@ -26,7 +26,9 @@ include "mesh/domain/production.rho"
 include "mesh/domain/access.rho"
 include "mesh/domain/poll.rho"
 include "mesh/domain/switch.rho"
+include "mesh/domain/json_read.rho"
 include "mesh/domain/device_reading.rho"
+include "mesh/domain/zigbee.rho"
 include "mesh/domain/alerting.rho"
 include "mesh/domain/signals.rho"
 include "mesh/domain/project_file.rho"
@@ -52,6 +54,7 @@ include "mesh/cross.rho"
 include "mesh/look.rho"
 include "mesh/access.rho"
 include "mesh/devices.rho"
+include "mesh/zigbee.rho"
 include "mesh/manifest.rho"
 include "mesh/nodekey.rho"
 include "mesh/production.rho"
@@ -118,6 +121,7 @@ route POST "/mesh/p/{project}/node/{node}/signing-key" => mesh_p_signing_key
 route POST "/mesh/p/{project}/node/{node}/move-to" => mesh_p_node_move
 route POST "/mesh/p/{project}/node/{node}/parent" => mesh_p_node_parent
 route POST "/mesh/p/{project}/node/{node}/impact" => mesh_p_node_impact
+route POST "/mesh/p/{project}/node/{node}/zigbee" => mesh_p_node_zigbee
 route POST "/mesh/p/{project}/node/{node}" => mesh_p_node_post
 route POST "/mesh/p/{project}/node" => mesh_p_node_new
 route GET "/mesh/p/{project}/edge/{node}" => mesh_p_edge_page

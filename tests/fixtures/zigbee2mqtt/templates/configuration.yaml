@@ -1,0 +1,25 @@
+# Written by RoboHub Mesh for coordinator {coordinator} of mesh {mesh}; Mesh sets
+# the broker, the user, the base topic and the serial port again before every
+# start and leaves everything else as Zigbee2MQTT writes it.
+version: 4
+mqtt:
+  server: "{server}"
+  user: "{user}"
+  password: "!secret password"
+  base_topic: "{base_topic}"
+  client_id: "{user}"
+serial:
+  port: "{serial_port}"
+  adapter: {adapter}
+advanced:
+  network_key: "!secret network_key"
+  pan_id: GENERATE
+  ext_pan_id: GENERATE
+  channel: {channel}
+  log_output: [console]
+availability:
+  enabled: true
+frontend:
+  enabled: false
+homeassistant:
+  enabled: false

@@ -62,7 +62,7 @@ suites:
   # schema and a stand-in gateway: ingest once per gateway and sequence, series
   # keying, roll-up and retention; and a device's fields merged from the
   # messages it published (topics newest first, `$`, onoff, the Shelly topic).
-  # @verifies MESH-TEL-0001, MESH-TEL-0002, MESH-TEL-0004, MESH-TEL-0005, MESH-TEL-0006, MESH-0029, MESH-0030, MESH-0031
+  # @verifies MESH-TEL-0001, MESH-TEL-0002, MESH-TEL-0004, MESH-TEL-0005, MESH-TEL-0006, MESH-0029, MESH-0030, MESH-0031, MESH-ZB-0014
   - name: telemetry-store
     kind: command
     tags: [unit, go, telemetry]
@@ -70,7 +70,7 @@ suites:
   # The project file's published schema and Mesh's own rules, held together:
   # the same keys at the same places, the same class for each, and every sample
   # value taken or refused alike.
-  # @verifies MESH-XFER-0006
+  # @verifies MESH-XFER-0006, MESH-ZB-0016
   - name: project-schema
     kind: command
     tags: [unit, transfer, schema]
@@ -92,3 +92,13 @@ suites:
     kind: command
     tags: [smoke, transfer, security]
     command: [python3, tests/project_file_smoke.py]
+  # Zigbee coordinators over HTTP, with a broker, a keeper and a Zigbee2MQTT of
+  # the smoke's own and no serial port opened: placing a coordinator and the
+  # refusals, its broker user, the configuration and the process, the bridge's
+  # state, joining, adopting and renaming a plug, reading and switching it as an
+  # MQTT device, the network sealed, carried and restored, and removing both.
+  # @verifies MESH-ZB-0001, MESH-ZB-0002, MESH-ZB-0003, MESH-ZB-0004, MESH-ZB-0005, MESH-ZB-0006, MESH-ZB-0008, MESH-ZB-0009, MESH-ZB-0010, MESH-ZB-0011, MESH-ZB-0012, MESH-ZB-0013, MESH-ZB-0014, MESH-ZB-0015, MESH-ZB-0016, MESH-0033, MESH-0034, MESH-0035, MESH-0022
+  - name: zigbee-smoke
+    kind: command
+    tags: [smoke, devices, zigbee]
+    command: [python3, tests/zigbee_smoke.py]

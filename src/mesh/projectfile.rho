@@ -32,7 +32,7 @@ extern fn projectfile_open(passphrase: string, fields: string, aad: string) stri
 extern fn projectfile_digest(text: string) string
 extern fn rho_list_dir(path: string) string
 
-const PROJECTFILE_HEADER: string = "A RoboHub Mesh project file: one mesh's definition, to import again on this\nor another Mesh. Its secrets are left out (omitted) or sealed under a\npassphrase (sealed). Schema: schemas/mesh-project.v1.json in robohub-mesh."
+const PROJECTFILE_HEADER: string = "A RoboHub Mesh project file: one mesh's definition, to import again on this\nor another Mesh. Its secrets are left out (omitted) or sealed under a\npassphrase (sealed). Schema: schemas/mesh-project.v2.json in robohub-mesh."
 // The largest form body an import or export reads: a 1 MiB file, every byte
 // percent-encoded, and the other fields.
 const PROJECTFILE_MAX_BODY: u32 = 3211264
@@ -55,10 +55,13 @@ struct ProjectImport {
     uplink: string
     preview: string
     unchanged: bool
+    // zigbee is the coordinators' networks the sealed block brought, as its
+    // `zigbee.<row>.<what>=<value>` lines (MESH-ZB-0016).
+    zigbee: string
 }
 
 fn projectfile_refused(status: u32, problems: string, digest: string, mode: string) ProjectImport {
-    return ProjectImport{ status, problems, digest, mode, "", "", "", "", "", "", "", "", "", false }
+    return ProjectImport{ status, problems, digest, mode, "", "", "", "", "", "", "", "", "", false, "" }
 }
 
 fn projectfile_version() string {
@@ -102,7 +105,7 @@ fn projectfile_place(id: string, key: string) string {
 // the mesh, its plan's definition, the secrets it left out by name and, when the
 // person asked for them, the gateway key, the Wi-Fi passwords and the record of
 // what runs, sealed under the passphrase. "" when sealing failed.
-// @req MESH-0025, MESH-XFER-0001, MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009, MESH-XFER-0010, MESH-XFER-0017
+// @req MESH-0025, MESH-XFER-0001, MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009, MESH-XFER-0010, MESH-XFER-0017, MESH-ZB-0016
 fn projectfile_export_flat(id: string, at: string, sealed: bool, passphrase: string) string {
     let file: string = project_file(id)
     plan_import(file)
@@ -117,14 +120,30 @@ fn projectfile_export_flat(id: string, at: string, sealed: bool, passphrase: str
         project_definition_lines(stored) +
         project_omitted_lines(stored, has_key, rho_path_exists(link_relay_key_file(id)),
             rho_path_exists(production_key_file(id)), sealed)
+    // Each coordinator's network: sealed with the rest, or named as left out
+    // (MESH-ZB-0016).
+    var networks: string = ""
+    var network_rows: string = ""
+    var row: u32 = 1
+    let count: u32 = project_node_count_at(file)
+    while row <= count {
+        if zigbee_is_coordinator(file, row) {
+            let lines: string = zigbee_network_lines(id, row)
+            if lines != "" {
+                networks = networks + lines
+                network_rows = network_rows + int_to_str(row) + "|" + project_node_value(file, row, "address", "") + "\n"
+            }
+        }
+        row = row + 1
+    }
     if !sealed {
-        return out
+        return out + project_zigbee_omitted_lines(network_rows)
     }
     var plain: string = "format=" + PROJECT_SECRETS_FORMAT + "\n"
     if strlen(key_text) == 64 {
         plain = plain + "gateway_key=" + key_text + "\n"
     }
-    plain = plain + project_password_lines(stored)
+    plain = plain + project_password_lines(stored) + networks
     var rest: string = rho_read_text(deployed_file(id))
     while rest != "" {
         let line: string = project_line_at(rest, 0)
@@ -524,6 +543,13 @@ fn projectfile_secrets_problem(plain: string, count: u32) string {
             continue
         }
         if key == "plan.password" {
+            continue
+        }
+        if str_index_of(key, "zigbee.") == 0 {
+            let wrong: string = project_zigbee_secret_problem(key, value, count)
+            if wrong != "" {
+                return "the sealed block's " + key + ": " + wrong
+            }
             continue
         }
         let field: string = project_node_field(str_slice(key, 5, strlen(key) - 5))
@@ -985,8 +1011,13 @@ fn projectfile_evaluate(file: string, passphrase: string, mode_in: string, targe
     // uplink port are in the plan; the key is the file's, when it brought one.
     preview = preview + projectfile_out_of_date(view, deployed,
         deploy_mesh("", "", deployed_key_scope_of(key), deployed_wifi_key_of(key), deployed_above(plan_value(view, "mesh_parent"))))
+    var zigbee: string = ""
+    if mode == "new" {
+        zigbee = projectfile_zigbee_lines(secrets)
+        preview = preview + projectfile_zigbee_preview(stored, zigbee)
+    }
     return ProjectImport{ 200, "", digest, mode, id, sanitize(name), text, key, deployed,
-        str_field(assigned, " ", 0), str_field(assigned, " ", 1), str_field(assigned, " ", 2), preview, false }
+        str_field(assigned, " ", 0), str_field(assigned, " ", 1), str_field(assigned, " ", 2), preview, false, zigbee }
 }
 
 // projectfile_place_lines name each area or port that is not the file's.
@@ -1127,8 +1158,10 @@ fn projectfile_evaluate_overwrite(flat: string, plan: string, secrets: string, a
     if !str_eq(name_in, project_name(target)) {
         preview = preview + "confirm|type the mesh's name, " + project_name(target) + ", to import the file over it\n"
     }
+    let zigbee: string = projectfile_zigbee_lines(secrets)
+    preview = preview + projectfile_zigbee_preview(stored, zigbee)
     return ProjectImport{ 200, "", digest, "overwrite", target, project_name(target), text, "", "", area, rest, uplink,
-        preview, unchanged }
+        preview, unchanged, zigbee }
 }
 
 // projectfile_kept_passwords are the Wi-Fi passwords an overwrite keeps when
@@ -1153,6 +1186,75 @@ fn projectfile_kept_passwords(current: string, plan: string) string {
         row = row + 1
     }
     return out
+}
+
+// projectfile_zigbee_lines are the coordinators' networks of opened secrets.
+fn projectfile_zigbee_lines(secrets: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(secrets) {
+        let line: string = project_line_at(secrets, at)
+        at = project_line_next(secrets, at)
+        if str_index_of(line, "zigbee.") == 0 {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_zigbee_preview says which coordinators keep their network.
+// @req MESH-ZB-0016
+fn projectfile_zigbee_preview(stored: string, zigbee: string) string {
+    var out: string = ""
+    let view: string = plan_view(stored)
+    let count: u32 = u32(int_from_str(plan_value(view, "node.count")))
+    var row: u32 = 1
+    while row <= count {
+        if plan_value(zigbee, "zigbee." + int_to_str(row) + ".network_key") != "" {
+            out = out + "kept|the Zigbee network of coordinator " + plan_value(view, "node." + int_to_str(row) + ".address") +
+                ", from the sealed block: its devices stay paired\n"
+        }
+        row = row + 1
+    }
+    return out
+}
+
+// projectfile_zigbee_restore writes each coordinator's network an import
+// brought beside its data folder, under `root` (the mesh's folder or the
+// folder an import is staged in), to be written into Zigbee2MQTT's files
+// before it first starts there (zigbee_config_write). A coordinator that has
+// already started in `project` keeps the network it made.
+// @req MESH-ZB-0016
+fn projectfile_zigbee_restore(root: string, project: string, text: string, zigbee: string) bool {
+    if zigbee == "" {
+        return true
+    }
+    let view: string = plan_view(plan_stored(text))
+    let count: u32 = u32(int_from_str(plan_value(view, "node.count")))
+    var ok: bool = true
+    var row: u32 = 1
+    while row <= count {
+        let prefix: string = "zigbee." + int_to_str(row) + "."
+        let coordinator: string = plan_value(view, "node." + int_to_str(row) + ".address")
+        if plan_value(zigbee, prefix + "network_key") != "" && zigbee_level_ok(coordinator) &&
+            (project == "" || !zigbee_started(project, coordinator)) {
+            ignore_u32(rho_exec_args("mkdir", "-p\n--\n" + root + "/zigbee\n", projectfile_report()))
+            ignore_u32(rho_exec_args("chmod", "700\n--\n" + root + "/zigbee\n", projectfile_report()))
+            var lines: string = ""
+            let names: string = "network_key pan_id ext_pan_id channel backup"
+            var index: u32 = 0
+            while index < 5 {
+                let what: string = str_field(names, " ", index)
+                if plan_value(zigbee, prefix + what) != "" {
+                    lines = lines + what + "=" + plan_value(zigbee, prefix + what) + "\n"
+                }
+                index = index + 1
+            }
+            ok = ok && rho_write_secret(root + "/zigbee/" + coordinator + ".restore", lines)
+        }
+        row = row + 1
+    }
+    return ok
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1212,6 +1314,9 @@ fn projectfile_apply_new(plan: ProjectImport) string {
         ok = rho_write_secret(staging + "/nodes.txt", manifest_document(manifest_nodes(plan_view(stored), plan.area), ""))
     }
     if ok {
+        ok = projectfile_zigbee_restore(staging, "", plan.text, plan.zigbee)
+    }
+    if ok {
         ok = projectfile_fleet_take(plan.id, plan.area, plan.rest, plan.uplink)
     }
     // A test stops here, as a power cut would, to show that a start clears what
@@ -1254,6 +1359,7 @@ fn projectfile_apply_overwrite(plan: ProjectImport) string {
     if !written {
         return "the plan could not be written; nothing was imported"
     }
+    ignore_bool(projectfile_zigbee_restore(project_location(plan.id), plan.id, plan.text, plan.zigbee))
     return ""
 }
 

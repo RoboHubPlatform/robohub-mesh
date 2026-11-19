@@ -139,7 +139,9 @@ fn editor_notice(text: string, bad: bool) string {
 
 fn editor_tabs(loc: string, id: string, index: u32, current: string) string {
     var names: string = "node data delete"
-    if editor_is_board(index) {
+    if zigbee_is_coordinator(wizard_file(), index) {
+        names = "node zigbee delete"
+    } else if editor_is_board(index) {
         names = "node link modules data revoke delete"
     } else if is_module_node(index) {
         names = "node delete"
@@ -165,6 +167,7 @@ fn editor_tabs(loc: string, id: string, index: u32, current: string) string {
         if tab == "data" { label = mesh_t(loc, "editor.tab.data") }
         if tab == "delete" { label = mesh_t(loc, "editor.tab.delete") }
         if tab == "revoke" { label = mesh_t(loc, "editor.tab.revoke") }
+        if tab == "zigbee" { label = mesh_t(loc, "editor.tab.zigbee") }
         if tab == "node" && is_device_node(index) { label = mesh_t(loc, "editor.tab.device") }
         if tab == "node" && is_module_node(index) { label = mesh_t(loc, "editor.tab.module") }
         out = out + "<a" + css + editor_open_node(id, index, tab) + ">" + label + "</a>"
@@ -307,6 +310,8 @@ fn editor_node_inspector(loc: string, id: string, index: u32, tab: string, notic
         body = editor_data_tab(loc, id, index)
     } else if current == "revoke" && editor_is_board(index) {
         body = editor_revoke_tab(loc, id, index) + production_section(loc, id, index)
+    } else if current == "zigbee" && zigbee_is_coordinator(project_file(id), index) {
+        body = zigbee_tab(loc, id, index)
     } else if current == "delete" {
         body = editor_delete_tab(loc, id, index)
     } else {
@@ -344,6 +349,12 @@ fn editor_node_form(loc: string, id: string, index: u32) string {
     let name: string = mesh_input("name", mesh_t(loc, "editor.node.name"), editor_name(loc, index), "") +
         mesh_textarea("description", mesh_t(loc, "editor.node.description"), node_value(index, "description", ""))
     let action: string = editor_node_action(id, index)
+    if is_device_node(index) && zigbee_is_coordinator(project_file(id), index) {
+        return zigbee_coordinator_form(loc, id, index)
+    }
+    if is_device_node(index) && node_value(index, "transport", "") == "zigbee" {
+        return zigbee_device_form(loc, id, index)
+    }
     if is_device_node(index) {
         let device: string = node_device_name(index)
         return look_form(loc, action, "node", index,
@@ -658,8 +669,20 @@ fn editor_new_inspector(loc: string, id: string, kind: string, parent: string, n
         return look_head(loc, mesh_t(loc, "editor.new.add_module"), mesh_t(loc, "editor.new.choose_board"), "") +
             look_body(notice + "<p class=\"ins-help\">" + mesh_t(loc, "editor.new.module_help") + "</p>")
     }
+    if kind == "coordinator" {
+        return zigbee_new_coordinator_form(loc, id, under, "", notice, cancel)
+    }
+    if kind == "device" && at > 0 && zigbee_is_coordinator(project_file(id), at) {
+        return zigbee_new_device_form(loc, id, under, notice, cancel)
+    }
     if kind == "device" {
-        return look_head(loc, mesh_fill(mesh_t(loc, "editor.new.add_under"), "parent", editor_parent_name(loc, under)), mesh_t(loc, "editor.new.new_device"), "") + look_body(notice +
+        // A coordinator is offered where the parent can host one (MESH-ZB-0002).
+        var coordinator: string = ""
+        if zigbee_coordinator_rows() != "" && zigbee_placement(project_file(id), under, field(first_line(zigbee_coordinator_rows()), 0), 0) == "" {
+            coordinator = "<p class=\"ins-help\"><a class=\"ag-btn small\"" + editor_open_new(id, "coordinator", under) + ">" +
+                mesh_t(loc, "zigbee.offer") + "</a></p>"
+        }
+        return look_head(loc, mesh_fill(mesh_t(loc, "editor.new.add_under"), "parent", editor_parent_name(loc, under)), mesh_t(loc, "editor.new.new_device"), "") + look_body(notice + coordinator +
             "<form class=\"ins-form\" method=\"post\" action=\"" + action + "\" hx-post=\"" + action +
             "\" hx-target=\"#agora-inspector\">" + editor_hidden("tab", "new") + editor_hidden("kind", "device") +
             editor_hidden("parent", under) + mesh_select("device", mesh_t(loc, "editor.node.integration"), device_picker(loc, ""), "") +
@@ -887,8 +910,20 @@ fn mesh_p_node_post(req: Request) Response {
     lines = lines + editor_line(prefix + "name", name) +
         editor_line(prefix + "description", form_field(body, "description"))
     let parent: string = form_field(body, "parent")
-    if is_device_node(index) {
-        if form_field(body, "device") == "" || !device_parent_valid(parent) {
+    if is_device_node(index) && (zigbee_is_coordinator(wizard_file(), index) || node_value(index, "transport", "") == "zigbee") {
+        var zigbee_lines: string = ""
+        if zigbee_is_coordinator(wizard_file(), index) {
+            zigbee_lines = zigbee_coordinator_lines(i18n_locale(req), wizard_file(), index, body, parent, index)
+        } else {
+            zigbee_lines = zigbee_device_lines(i18n_locale(req), wizard_file(), index, body, parent, index)
+        }
+        if rho_str_starts_with(zigbee_lines, "!") {
+            return editor_answer(req, id, selection, "node", editor_notice(rho_str_slice(zigbee_lines, 1, u32(rho_strlen(zigbee_lines)) - 1), true))
+        }
+        lines = lines + zigbee_lines
+    } else if is_device_node(index) {
+        if form_field(body, "device") == "" || !device_parent_valid(parent) || device_kind(form_field(body, "device")) == "coordinator" ||
+            form_field(body, "transport") == "zigbee" {
             return editor_answer(req, id, selection, "node", editor_notice(i18n_t(req, "editor.msg.device_needs"), true))
         }
         lines = lines + editor_line(prefix + "device", form_field(body, "device")) +
@@ -938,8 +973,27 @@ fn mesh_p_node_new(req: Request) Response {
     var name: string = form_field(body, "name")
     var lines: string = editor_line("node.count", rho_int_to_str(index)) +
         editor_line(prefix + "description", form_field(body, "description")) + editor_line(prefix + "parent", parent)
-    if kind == "device" {
-        if form_field(body, "device") == "" || !device_parent_valid(parent) {
+    let under_coordinator: bool = zigbee_is_coordinator(wizard_file(), editor_index_of_parent(parent))
+    if kind == "device" && device_kind(form_field(body, "device")) == "coordinator" {
+        // A coordinator chosen as a device is added from its own form, which
+        // asks for its serial port (MESH-ZB-0001).
+        return html(status_ok(), editor_new_inspector(i18n_locale(req), id, "coordinator", parent, ""))
+    }
+    if kind == "coordinator" || (kind == "device" && under_coordinator) {
+        var zigbee_lines: string = ""
+        if kind == "coordinator" {
+            zigbee_lines = zigbee_coordinator_lines(i18n_locale(req), wizard_file(), index, body, parent, 0)
+        } else {
+            zigbee_lines = zigbee_device_lines(i18n_locale(req), wizard_file(), index, body, parent, 0)
+        }
+        if rho_str_starts_with(zigbee_lines, "!") {
+            return html(status_ok(), editor_new_inspector(i18n_locale(req), id, kind, parent,
+                editor_notice(rho_str_slice(zigbee_lines, 1, u32(rho_strlen(zigbee_lines)) - 1), true)))
+        }
+        name = str_trim(form_field(body, "name"))
+        lines = lines + editor_line(prefix + "kind", "device") + editor_line(prefix + "role", "device") + zigbee_lines
+    } else if kind == "device" {
+        if form_field(body, "device") == "" || !device_parent_valid(parent) || form_field(body, "transport") == "zigbee" {
             return html(status_ok(), editor_new_inspector(i18n_locale(req), id, kind, parent,
                 editor_notice(i18n_t(req, "editor.msg.device_needs"), true)))
         }
@@ -984,6 +1038,9 @@ fn mesh_p_node_new(req: Request) Response {
     let nid: string = editor_node_id(id, index)
     var tab: string = ""
     var said: string = mesh_fill(i18n_t(req, "editor.msg.added"), "name", name)
+    if kind == "coordinator" {
+        tab = "zigbee"
+    }
     if kind == "compute" {
         tab = "link"
         said = mesh_fill(i18n_t(req, "editor.msg.added_link"), "name", name)
@@ -1012,6 +1069,26 @@ fn mesh_p_node_delete(req: Request) Response {
     }
     let name: string = editor_name(i18n_locale(req), index)
     let row: string = "node." + rho_int_to_str(index)
+    // A coordinator goes with its broker user and its Zigbee2MQTT stopped, once
+    // its Zigbee devices are gone; a Zigbee device leaves the network as it
+    // leaves the plan (MESH-ZB-0004, MESH-ZB-0013).
+    var zigbee_said: string = ""
+    if zigbee_is_coordinator(wizard_file(), index) {
+        var child_at: u32 = 1
+        while child_at <= node_count() {
+            if node_value(child_at, "parent", "") == row {
+                return editor_answer(req, id, "node:" + nid, "delete",
+                    editor_notice(i18n_t(req, "zigbee.delete.children"), true))
+            }
+            child_at = child_at + 1
+        }
+        zigbee_forget_coordinator(i18n_locale(req), id, index)
+    } else if node_value(index, "transport", "") == "zigbee" {
+        zigbee_said = zigbee_remove_device(i18n_locale(req), id, index)
+        if zigbee_said != "" {
+            zigbee_said = " " + zigbee_said
+        }
+    }
     var target: string = form_field(body, "children_to")
     if target == "" {
         target = node_value(index, "parent", "gateway")
@@ -1052,7 +1129,7 @@ fn mesh_p_node_delete(req: Request) Response {
     }
     deployed_set(id, "node." + nid, "")
     info("mesh", "node " + rho_int_to_str(index) + " deleted")
-    return editor_answer(req, id, "", "", editor_notice(mesh_fill(i18n_t(req, "editor.msg.deleted"), "name", name), false))
+    return editor_answer(req, id, "", "", editor_notice(mesh_fill(i18n_t(req, "editor.msg.deleted"), "name", name) + zigbee_said, zigbee_said != ""))
 }
 
 fn mesh_p_edge_post(req: Request) Response {
@@ -1195,6 +1272,12 @@ fn editor_refusal(loc: string, index: u32, parent: string) string {
     let at: u32 = editor_index_of_parent(parent)
     if at == index {
         return mesh_t(loc, "editor.refusal.self")
+    }
+    if zigbee_is_coordinator(wizard_file(), index) {
+        return zigbee_placement_text(loc, zigbee_placement(wizard_file(), parent, node_device_name(index), index))
+    }
+    if node_value(index, "transport", "") == "zigbee" {
+        return mesh_t(loc, "zigbee.device_needs")
     }
     if at > 0 && is_device_node(at) {
         return mesh_t(loc, "editor.refusal.device")

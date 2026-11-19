@@ -21,7 +21,9 @@ include "../src/mesh/domain/production.rho"
 include "../src/mesh/domain/access.rho"
 include "../src/mesh/domain/poll.rho"
 include "../src/mesh/domain/switch.rho"
+include "../src/mesh/domain/json_read.rho"
 include "../src/mesh/domain/device_reading.rho"
+include "../src/mesh/domain/zigbee.rho"
 include "../src/mesh/domain/alerting.rho"
 include "../src/mesh/domain/signals.rho"
 
@@ -104,9 +106,9 @@ test fn a_key_is_replaced_not_repeated() void {
 
 // @verifies MESH-PLAN-0005
 test fn a_transport_fits_what_both_boards_are() void {
-    let pico: BoardCaps = BoardCaps{ "", false, true, false, "uart i2c spi" }
-    let uno: BoardCaps = BoardCaps{ "", false, false, false, "uart i2c" }
-    let host: BoardCaps = BoardCaps{ "", true, true, true, "" }
+    let pico: BoardCaps = BoardCaps{ "", false, true, false, "uart i2c spi", false }
+    let uno: BoardCaps = BoardCaps{ "", false, false, false, "uart i2c", false }
+    let host: BoardCaps = BoardCaps{ "", true, true, true, "", true }
     check(transport_fits("wifi", pico, pico), "two wireless boards share wifi")
     check(!transport_fits("wifi", pico, uno), "a board without radio has no wifi")
     check(transport_fits("uart", pico, uno), "a bus both have")
@@ -119,8 +121,8 @@ test fn a_transport_fits_what_both_boards_are() void {
 
 // @verifies MESH-PLAN-0005
 test fn declared_links_are_the_whole_answer() void {
-    let gateway: BoardCaps = BoardCaps{ "uart console", true, true, false, "" }
-    let relay: BoardCaps = BoardCaps{ "uart wifi", false, true, false, "" }
+    let gateway: BoardCaps = BoardCaps{ "uart console", true, true, false, "", false }
+    let relay: BoardCaps = BoardCaps{ "uart wifi", false, true, false, "", false }
     check(transport_fits("uart", gateway, relay), "a link both declare")
     check(!transport_fits("wifi", gateway, relay), "a link one does not declare, whatever its radio")
     check(!transport_fits("console", gateway, relay), "a console the child does not declare")
@@ -770,6 +772,168 @@ test fn a_switch_function_is_an_output_signal() void {
     print("[PASS] a_switch_function_is_an_output_signal\n")
 }
 
+/* -------------------------------------------------------------------------- */
+/*  The MQTT contract's additions and Zigbee coordinators                     */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-0034
+test fn the_online_state_may_be_read_from_inside_json() void {
+    check(str_eq(device_online_state_at("{\"state\":\"online\"}", "state", "online"), "online"), "Zigbee2MQTT's availability is online")
+    check(str_eq(device_online_state_at("{\"state\":\"offline\"}", "state", "\"online\""), "unreachable"), "offline is unreachable")
+    check(str_eq(device_online_state_at("online", "state", "online"), "unreachable"), "a payload that is not JSON is unreachable")
+    check(str_eq(device_online_state_at("{\"other\":1}", "state", "online"), "unreachable"), "a payload without the path is unreachable")
+    check(str_eq(device_online_state_at("", "state", "online"), ""), "nothing said yet is unknown")
+    check(str_eq(device_online_state_at("{\"a\":{\"b\":\"up\"}}", "a.b", "up"), "online"), "a nested path is read")
+    check(str_eq(device_online_state_at("Online", "", "Online"), "online"), "without a path the whole payload is compared")
+    check(str_eq(device_online_state_at("{\"state\":\"online\"}", "", "online"), "unreachable"), "and a JSON payload is not the word")
+    print("[PASS] the_online_state_may_be_read_from_inside_json\n")
+}
+
+// @verifies MESH-0035
+test fn an_action_payload_may_carry_on_or_off() void {
+    let payload: string = "{\"state\":\"{ONOFF}\"}"
+    check(str_eq(device_template_fill(payload, "zigbee/m/c/plug", "true", "x"), "{\"state\":\"ON\"}"), "{ONOFF} is ON")
+    check(str_eq(device_template_fill(payload, "zigbee/m/c/plug", "false", "x"), "{\"state\":\"OFF\"}"), "{ONOFF} is OFF")
+    check(str_eq(device_template_fill("{on}", "p", "true", "x"), "true"), "{on} keeps its meaning")
+    check(str_eq(device_template_fill("{prefix}/set", "zigbee/m/c/plug", "", "x"), "zigbee/m/c/plug/set"), "the prefix is filled")
+    check(str_eq(device_template_fill("{\"src\":\"{client}\"}", "p", "true", "robohub-mesh"), "{\"src\":\"robohub-mesh\"}"), "the client is filled")
+    print("[PASS] an_action_payload_may_carry_on_or_off\n")
+}
+
+// @verifies MESH-ZB-0015, MESH-ZB-0014
+test fn topic_levels_are_refused_when_they_could_reach_other_topics() void {
+    check(zigbee_level_ok("home-1_b"), "letters, digits, - and _ are a level")
+    check(!zigbee_level_ok("a/b") && !zigbee_level_ok("a+") && !zigbee_level_ok("#") && !zigbee_level_ok("a b") &&
+        !zigbee_level_ok("a\nb") && !zigbee_level_ok("") && !zigbee_level_ok("a.b"), "a topic character is refused")
+    check(str_eq(zigbee_base_topic("home", "zb1"), "zigbee/home/zb1"), "the base topic")
+    check(str_eq(zigbee_device_prefix("home", "zb1", "heater"), "zigbee/home/zb1/heater"), "a device's prefix")
+    check(str_eq(zigbee_device_prefix("home", "zb/1", "heater"), ""), "no prefix from a coordinator that is not a level")
+    check(str_eq(zigbee_device_prefix("ho me", "zb1", "heater"), ""), "nor from a mesh id that is not one")
+    check(str_eq(zigbee_device_prefix("home", "zb1", "+"), ""), "nor from a device address that is not one")
+    print("[PASS] topic_levels_are_refused_when_they_could_reach_other_topics\n")
+}
+
+// @verifies MESH-ZB-0002
+test fn a_coordinator_goes_only_under_a_board_that_can_host_it() void {
+    let manifest: string = "device:\n  kind: coordinator\nneeds:\n  host: true\n  usb_host: true # a USB port\n  wireless: false\nzigbee:\n  adapter: ember\n"
+    let needs: string = zigbee_true_keys(manifest, "needs")
+    check(str_eq(needs, "host usb_host"), "what it needs is read from the manifest: " + needs)
+    check(str_eq(zigbee_needs_missing(needs, "host usb_host"), ""), "the native gateway has both")
+    check(str_eq(zigbee_needs_missing(needs, "host"), "usb_host"), "a host without a USB host lacks usb_host")
+    check(str_eq(zigbee_needs_missing(needs, ""), "host"), "a Pico lacks host first")
+    check(str_eq(zigbee_placement_problem("gateway", "", 0), ""), "under the gateway it is placed")
+    check(str_eq(zigbee_placement_problem("compute", "usb_host", 0), "missing:usb_host"), "the missing capability is named")
+    check(str_eq(zigbee_placement_problem("compute", "", 1), "taken"), "one coordinator per board")
+    check(str_eq(zigbee_placement_problem("device", "", 0), "notboard"), "not under a device")
+    check(str_eq(zigbee_placement_problem("mesh", "", 0), "notboard"), "not free-standing")
+    let usb: BoardCaps = BoardCaps{ "uart", true, false, true, "usb", true }
+    check(usb.usb_host, "a board's capabilities carry usb_host")
+    print("[PASS] a_coordinator_goes_only_under_a_board_that_can_host_it\n")
+}
+
+// @verifies MESH-ZB-0003
+test fn a_serial_port_is_a_device_path() void {
+    check(zigbee_port_ok("/dev/ttyUSB0"), "a tty")
+    check(zigbee_port_ok("/dev/serial/by-id/usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_12854a28-if00-port0"), "a by-id name")
+    check(zigbee_port_ok("/dev/serial/by-path/pci-0000:00:14.0-usb-0:1:1.0-port0"), "a by-path name")
+    check(!zigbee_port_ok("/dev/../etc/passwd"), "no ..")
+    check(!zigbee_port_ok("/dev/tty USB0") && !zigbee_port_ok("/dev/ttyUSB0;rm -rf ~") && !zigbee_port_ok("/dev/$(id)") &&
+        !zigbee_port_ok("/dev/tty'x") && !zigbee_port_ok("/dev/`x`"), "no space or shell character")
+    check(!zigbee_port_ok("dev/ttyUSB0") && !zigbee_port_ok("/tmp/x") && !zigbee_port_ok("/dev/") && !zigbee_port_ok("/dev/serial/"), "only under /dev/")
+    let patterns: string = "  - \"usb-ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2_*-if00\"\n  - \"usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_*-if00-port0\"\n"
+    check(zigbee_glob_match("usb-*-if00", "usb-abc-if00") && !zigbee_glob_match("usb-*-if00", "usb-abc-if00-port0"), "* is any run")
+    check(zigbee_port_matches(patterns, "usb-Itead_Sonoff_Zigbee_3.0_USB_Dongle_Plus_V2_12854a28a978f0118f10a3e70ba521c7-if00-port0"), "the CP210x variant matches")
+    check(zigbee_port_matches(patterns, "usb-ITEAD_SONOFF_Zigbee_3.0_USB_Dongle_Plus_V2_20240219-if00"), "the CH9102F variant matches")
+    check(!zigbee_port_matches(patterns, "usb-1a86_USB_Serial-if00-port0"), "another adapter does not")
+    print("[PASS] a_serial_port_is_a_device_path\n")
+}
+
+// @verifies MESH-ZB-0005
+test fn the_configuration_is_filled_and_only_mesh_keys_are_rewritten() void {
+    let template: string = "version: 4\nmqtt:\n  server: \"{server}\"\n  user: \"{user}\"\n  password: \"!secret password\"\n  base_topic: \"{base_topic}\"\n  client_id: \"{user}\"\nserial:\n  port: \"{serial_port}\"\n  adapter: {adapter}\nadvanced:\n  network_key: \"!secret network_key\"\n  pan_id: GENERATE\n  ext_pan_id: GENERATE\n  channel: {channel}\n"
+    let filled: string = zigbee_config_fill(template, "home", "zb1", "mqtt://127.0.0.1:1884", "mesh-z2m-1", "/dev/ttyUSB0", "ember", "15")
+    check(str_eq(zigbee_yaml_get(filled, "mqtt", "base_topic"), "zigbee/home/zb1"), "the base topic is the coordinator's")
+    check(str_eq(zigbee_yaml_get(filled, "serial", "adapter"), "ember"), "the adapter is always written")
+    check(str_eq(zigbee_yaml_get(filled, "advanced", "channel"), "15"), "the channel")
+    check(str_index_of(filled, "{") < 0 || str_index_of(filled, "{server}") < 0, "no placeholder is left")
+    // What Zigbee2MQTT writes back after it started: the network made, keys
+    // unquoted, a list as a block, and keys of its own.
+    let started: string = "version: 4\nmqtt:\n  server: mqtt://127.0.0.1:1884\n  user: mesh-z2m-1\n  password: '!secret password'\n  base_topic: zigbee/home/zb1\n  client_id: mesh-z2m-1\nserial:\n  port: /dev/ttyUSB0\n  adapter: ember\nadvanced:\n  network_key: '!secret network_key'\n  pan_id: 6754\n  ext_pan_id:\n    - 221\n    - 221\n    - 1\n  channel: 15\n  log_output:\n    - console\ndevices:\n  '0x00124b0012345678':\n    friendly_name: heater\n"
+    let rewritten: string = zigbee_config_rewrite(started, "home", "zb1", "mqtt://192.168.1.5:1884", "mesh-z2m-1", "/dev/serial/by-id/usb-x-if00", "ember")
+    check(str_eq(zigbee_yaml_get(rewritten, "mqtt", "server"), "mqtt://192.168.1.5:1884"), "the broker's address is Mesh's")
+    check(str_eq(zigbee_yaml_get(rewritten, "serial", "port"), "/dev/serial/by-id/usb-x-if00"), "and the port")
+    check(str_eq(zigbee_yaml_get(rewritten, "advanced", "pan_id"), "6754"), "the PAN id is kept")
+    check(str_eq(zigbee_yaml_get(rewritten, "advanced", "ext_pan_id"), "[221, 221, 1]"), "the extended PAN id is kept")
+    check(str_eq(zigbee_yaml_get(rewritten, "advanced", "network_key"), "!secret network_key"), "the network key stays a secret reference")
+    check(str_eq(zigbee_yaml_get(rewritten, "mqtt", "password"), "!secret password"), "so does the password")
+    check(str_index_of(rewritten, "friendly_name: heater") > 0 && str_index_of(rewritten, "log_output:\n    - console") > 0,
+        "Zigbee2MQTT's own keys are kept as it wrote them")
+    let secret: string = "password: abc\nnetwork_key:\n  - 1\n  - 2\n  - 3\n"
+    check(str_eq(zigbee_yaml_get(secret, "", "network_key"), "[1, 2, 3]"), "the generated key is read as a list")
+    let secret2: string = zigbee_yaml_set(secret, "", "password", "\"new\"")
+    check(str_eq(zigbee_yaml_get(secret2, "", "password"), "new") && str_eq(zigbee_yaml_get(secret2, "", "network_key"), "[1, 2, 3]"),
+        "a new broker password leaves the network key")
+    check(zigbee_network_kept(started, secret) && !zigbee_network_kept(filled, "network_key: GENERATE\n"), "a made network is told from GENERATE")
+    let restored: string = zigbee_yaml_set(filled, "advanced", "ext_pan_id", "[221, 221, 1]")
+    check(str_eq(zigbee_yaml_get(restored, "advanced", "ext_pan_id"), "[221, 221, 1]") &&
+        str_eq(zigbee_yaml_get(restored, "advanced", "pan_id"), "GENERATE"), "a restored value replaces only its key")
+    check(str_eq(zigbee_unhex(zigbee_hex("{\"a\":1}\n")), "{\"a\":1}\n"), "a backup travels as hex and back")
+    print("[PASS] the_configuration_is_filled_and_only_mesh_keys_are_rewritten\n")
+}
+
+// @verifies MESH-ZB-0009, MESH-ZB-0010
+test fn the_bridge_state_and_info_are_read() void {
+    check(str_eq(zigbee_bridge_state("{\"state\":\"online\"}"), "online"), "online")
+    check(str_eq(zigbee_bridge_state("{\"state\":\"offline\"}"), "offline"), "offline")
+    check(str_eq(zigbee_bridge_state("online"), "online"), "a bare word, as 1.x wrote it")
+    check(str_eq(zigbee_bridge_state(""), ""), "unknown while it said nothing")
+    let info: string = "{\"version\":\"2.14.3\",\"coordinator\":{\"ieee_address\":\"0x1\",\"type\":\"EmberZNet\",\"meta\":{\"revision\":\"7.4.4.0 [GA]\"}},\"network\":{\"channel\":15,\"pan_id\":6754,\"extended_pan_id\":[1,2]},\"permit_join\":true,\"permit_join_end\":1763650000123,\"config\":{\"a\":[1,{\"b\":\"]\"}]}}"
+    let line: string = zigbee_bridge_info(info)
+    check(str_eq(line, "2.14.3|EmberZNet 7.4.4.0 [GA]|15|true|1763650000"), "version, firmware, channel and joining: " + line)
+    check(zigbee_permit_left("true", "1763650000", 0, 0, 1763649900) == 100, "the time left from the bridge's end")
+    check(zigbee_permit_left("", "", 1000, 254, 1100) == 154, "or from when Mesh asked")
+    check(zigbee_permit_left("false", "1763650000", 1000, 254, 1100) == 0, "closed is closed")
+    check(zigbee_permit_time_ok("254") && zigbee_permit_time_ok("0") && !zigbee_permit_time_ok("255") &&
+        !zigbee_permit_time_ok("") && !zigbee_permit_time_ok("-1") && !zigbee_permit_time_ok("9999"), "joining is bounded by 254 s")
+    check(str_eq(zigbee_permit_payload(254), "{\"time\":254}"), "the permit request")
+    print("[PASS] the_bridge_state_and_info_are_read\n")
+}
+
+// @verifies MESH-ZB-0011, MESH-ZB-0012, MESH-ZB-0013
+test fn joined_devices_are_listed_matched_and_answered() void {
+    let devices: string = "[{\"ieee_address\":\"0x00124b0000000001\",\"type\":\"Coordinator\",\"friendly_name\":\"Coordinator\",\"definition\":null},\n {\"ieee_address\":\"0xa4c1380000000002\",\"type\":\"Router\",\"friendly_name\":\"0xa4c1380000000002\",\"supported\":true,\"interview_state\":\"SUCCESSFUL\",\"definition\":{\"model\":\"S60ZBTPF\",\"vendor\":\"SONOFF\",\"description\":\"Smart plug\"}},\n {\"ieee_address\":\"0xa4c1380000000003\",\"type\":\"EndDevice\",\"friendly_name\":\"x|y\",\"supported\":false,\"interview_state\":\"IN_PROGRESS\",\"definition\":null},\n {\"ieee_address\":\"0xa4c1380000000004\",\"type\":\"Router\",\"friendly_name\":\"heater\",\"supported\":true,\"interview_state\":\"SUCCESSFUL\",\"definition\":{\"model\":\"S60ZBTPF\",\"vendor\":\"SONOFF\"}}]"
+    let found: string = zigbee_discovered(devices, "|0xa4c1380000000004|")
+    check(str_index_of(found, "0x00124b0000000001") < 0, "the coordinator is not listed")
+    check(str_index_of(found, "0xa4c1380000000004") < 0, "nor a device in the plan")
+    check(str_index_of(found, "0xa4c1380000000002|0xa4c1380000000002|SONOFF|S60ZBTPF|true|SUCCESSFUL|Smart plug\n") == 0, "a joined plug is: " + found)
+    check(str_index_of(found, "0xa4c1380000000003|x/y|||false|IN_PROGRESS|") > 0, "an unknown device too, its name kept to one field")
+    let rows: string = "robohub-device-sonoff-s60tpf|S60TPF|SONOFF\nrobohub-device-sonoff-s60zbtpf|S60ZBTPF|SONOFF\nrobohub-device-any|ANY|\n"
+    check(str_eq(zigbee_manifest_match("S60ZBTPF", "SONOFF", rows), "robohub-device-sonoff-s60zbtpf"), "matched by model and vendor")
+    check(str_eq(zigbee_manifest_match("S60ZBTPF", "Other", rows), ""), "a vendor the manifest names must be the device's")
+    check(str_eq(zigbee_manifest_match("ANY", "Whoever", rows), "robohub-device-any"), "a manifest without a vendor matches by model")
+    check(str_eq(zigbee_manifest_match("", "", rows), ""), "nothing matches no model")
+    check(str_eq(zigbee_adopt_problem("SUCCESSFUL", "m"), ""), "an interviewed, known device is adoptable")
+    check(str_eq(zigbee_adopt_problem("IN_PROGRESS", "m"), "interview") && str_eq(zigbee_adopt_problem("SUCCESSFUL", ""), "manifest"), "else it says which")
+    check(str_eq(zigbee_rename_payload("0xa4c1380000000002", "heater", "t1"), "{\"from\":\"0xa4c1380000000002\",\"to\":\"heater\",\"transaction\":\"t1\"}"), "the rename request")
+    check(str_eq(zigbee_remove_payload("0xa4c1380000000002", "t2"), "{\"id\":\"0xa4c1380000000002\",\"transaction\":\"t2\"}"), "the remove request")
+    check(str_eq(zigbee_response_outcome("{\"data\":{\"from\":\"0x1\",\"to\":\"heater\"},\"status\":\"ok\",\"transaction\":\"t1\"}", "t1"), "ok"), "ok for its transaction")
+    check(str_eq(zigbee_response_outcome("{\"data\":{},\"status\":\"ok\",\"transaction\":\"t9\"}", "t1"), ""), "another transaction says nothing")
+    let failed: string = "{\"data\":{},\"status\":\"error\",\"error\":\"Device 'x' does not exist\",\"transaction\":\"t2\"}"
+    check(str_eq(zigbee_response_outcome(failed, "t2"), "error") && str_eq(zigbee_response_error(failed), "Device 'x' does not exist"), "an error and why")
+    check(zigbee_ieee_ok("0xa4c1380000000002") && !zigbee_ieee_ok("0xA4C1380000000002") && !zigbee_ieee_ok("a4c1380000000002"), "an IEEE address")
+    print("[PASS] joined_devices_are_listed_matched_and_answered\n")
+}
+
+// @verifies MESH-ZB-0007, MESH-ZB-0008
+test fn the_program_is_checked_and_the_container_command_is_one_command() void {
+    check(str_eq(zigbee_node_major("v24.11.1\n"), "24") && str_eq(zigbee_node_major("garbage"), ""), "node's major version")
+    check(zigbee_major_wanted("[22, 24]", "24") && !zigbee_major_wanted("[22, 24]", "20") && !zigbee_major_wanted("[22, 24]", "2"), "the plugin's majors")
+    let run: string = zigbee_docker_run("home", "zb1", "/dev/ttyUSB0", "$HOME/robohub-zigbee/home/zb1", "ghcr.io/koenkk/zigbee2mqtt:2.14.3")
+    check(str_index_of(run, "docker run -d --name rh-z2m-home-zb1 --restart unless-stopped --device /dev/ttyUSB0:/dev/ttyUSB0 -v \"$HOME/robohub-zigbee/home/zb1\":/app/data -e Z2M_ONBOARD_NO_SERVER=1 ghcr.io/koenkk/zigbee2mqtt:2.14.3") > 0, run)
+    check(str_eq(zigbee_docker_run("home", "zb1", "/dev/x;reboot", "d", "i"), ""), "a port that is not a path makes no command")
+    print("[PASS] the_program_is_checked_and_the_container_command_is_one_command\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -810,5 +974,14 @@ fn main() void {
     the_online_topic_says_whether_a_device_is_there()
     an_alert_is_raised_once_per_cooldown()
     a_switch_function_is_an_output_signal()
+    the_online_state_may_be_read_from_inside_json()
+    an_action_payload_may_carry_on_or_off()
+    topic_levels_are_refused_when_they_could_reach_other_topics()
+    a_coordinator_goes_only_under_a_board_that_can_host_it()
+    a_serial_port_is_a_device_path()
+    the_configuration_is_filled_and_only_mesh_keys_are_rewritten()
+    the_bridge_state_and_info_are_read()
+    joined_devices_are_listed_matched_and_answered()
+    the_program_is_checked_and_the_container_command_is_one_command()
     print("mesh domain tests ok\n")
 }

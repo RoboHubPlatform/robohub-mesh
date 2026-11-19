@@ -184,3 +184,22 @@ func TestTheShellyTopicReadsAsBefore(t *testing.T) {
 		t.Errorf("the single-path readers changed")
 	}
 }
+
+// A Zigbee plug through Zigbee2MQTT: its whole state on the prefix itself, its
+// availability beside it, and a neighbour whose address starts with its own in
+// the listing, which is not read (MESH-ZB-0014; the telemetry-store suite carries
+// the tag).
+func TestZigbeeStateIsReadFromThePrefixItself(t *testing.T) {
+	topics := "zigbee/home/zb1/heater\n"
+	fields := `"switch|state||onoff|state|1"
+"power|power_w|W|f32|power|1"
+"energy_total|energy_total_kwh|kWh|f32|energy|1"
+`
+	listing := "zigbee/home/zb1/heater2\t0\t{\"state\":\"ON\",\"power\":99}\n" +
+		"zigbee/home/zb1/heater/availability\t1\t{\"state\":\"online\"}\n" +
+		"zigbee/home/zb1/heater\t3\t{\"state\":\"OFF\",\"power\":0,\"current\":0,\"energy\":3.42}\n"
+	got := fieldsOf(t, telemetryDeviceFields(listing, topics, fields))
+	if got["state"] != "0|3|" || got["power_w"] != "0|3|" || got["energy_total_kwh"] != "3.42|3|" {
+		t.Errorf("the plug's own topic is read, not its neighbour's: %v", got)
+	}
+}

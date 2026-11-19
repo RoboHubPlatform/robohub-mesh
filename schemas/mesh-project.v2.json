@@ -1,0 +1,472 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://robohub.org/schemas/mesh-project.v2.json",
+  "title": "A RoboHub Mesh project file, schema 2",
+  "description": "One mesh's definition, exported by RoboHub Mesh to be imported again: over the same mesh, as a new mesh or a copy, on this Mesh or another. The `plan` section is the plan's own definition keys (plan.yml), with no runtime state, history or secret. Mesh writes it as YAML (nested maps of quoted scalars) or, on request, as JSON with the same keys and every value a string; it reads either, and a number or a boolean in JSON as its text. Mesh holds the same keys and patterns in src/mesh/domain/project_file.rho, and tests/project_schema_test.py holds the two together. Schema 2 adds Zigbee coordinators and devices (a node's `channel` and `ieee`), a coordinator's network under `sealed`, and its name under `omitted`; a schema 1 file is read as it is.",
+  "type": "object",
+  "required": [
+    "format",
+    "schema",
+    "mesh"
+  ],
+  "properties": {
+    "format": {
+      "$ref": "#/$defs/format"
+    },
+    "schema": {
+      "$ref": "#/$defs/schema"
+    },
+    "exported": {
+      "description": "Who wrote the file — the Mesh and its version — and when, in UTC.",
+      "type": "object",
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/text"
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mesh": {
+      "description": "The mesh: its id, name and description, and the area and ports it had, which the importing Mesh keeps when no other mesh there has them.",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/meshid"
+        },
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "description": {
+          "$ref": "#/$defs/text"
+        },
+        "area": {
+          "$ref": "#/$defs/area"
+        },
+        "rest_port": {
+          "$ref": "#/$defs/port"
+        },
+        "uplink_port": {
+          "$ref": "#/$defs/port"
+        }
+      },
+      "additionalProperties": false
+    },
+    "omitted": {
+      "description": "Each secret the export left out, by name, with a sentence saying what it is — never its value.",
+      "type": "object",
+      "properties": {
+        "gateway_key": {
+          "$ref": "#/$defs/text"
+        },
+        "relay_key": {
+          "$ref": "#/$defs/text"
+        },
+        "signing_key": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_token": {
+          "$ref": "#/$defs/text"
+        },
+        "password": {
+          "$ref": "#/$defs/text"
+        },
+        "node": {
+          "type": "object",
+          "properties": {},
+          "patternProperties": {
+            "^[1-9][0-9]*$": {
+              "type": "object",
+              "properties": {
+                "password": {
+                  "$ref": "#/$defs/text"
+                },
+                "zigbee_network": {
+                  "$ref": "#/$defs/text"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "plan": {
+      "description": "The plan's definition: the gateway, the defaults a board's link falls back to, the telemetry retention, the relay id, the linked meshes, and every node.",
+      "type": "object",
+      "properties": {
+        "baud": {
+          "$ref": "#/$defs/text"
+        },
+        "bus_address": {
+          "$ref": "#/$defs/text"
+        },
+        "child_endpoint": {
+          "$ref": "#/$defs/text"
+        },
+        "child_host": {
+          "$ref": "#/$defs/text"
+        },
+        "driver": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_description": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_driver": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_host": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_name": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_sensors": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_serial": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_tls_cert": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_tls_key": {
+          "$ref": "#/$defs/text"
+        },
+        "gateway_url": {
+          "$ref": "#/$defs/text"
+        },
+        "link": {
+          "$ref": "#/$defs/text"
+        },
+        "mesh_children": {
+          "$ref": "#/$defs/meshids"
+        },
+        "mesh_parent": {
+          "$ref": "#/$defs/meshidopt"
+        },
+        "parent_endpoint": {
+          "$ref": "#/$defs/text"
+        },
+        "parent_host": {
+          "$ref": "#/$defs/text"
+        },
+        "port": {
+          "$ref": "#/$defs/text"
+        },
+        "relay": {
+          "$ref": "#/$defs/text"
+        },
+        "relay_uid": {
+          "$ref": "#/$defs/uid"
+        },
+        "sensors": {
+          "$ref": "#/$defs/text"
+        },
+        "serial_port": {
+          "$ref": "#/$defs/text"
+        },
+        "ssid": {
+          "$ref": "#/$defs/text"
+        },
+        "telemetry_retention_days": {
+          "$ref": "#/$defs/digits"
+        },
+        "node": {
+          "description": "The nodes: how many there are, the next number a new node takes, and each one by its row.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "$ref": "#/$defs/count"
+            },
+            "next_number": {
+              "$ref": "#/$defs/digits"
+            }
+          },
+          "patternProperties": {
+            "^[1-9][0-9]*$": {
+              "description": "One node — a board, a sensor module or a network device — by its row in the plan.",
+              "type": "object",
+              "properties": {
+                "address": {
+                  "$ref": "#/$defs/text"
+                },
+                "baud": {
+                  "$ref": "#/$defs/text"
+                },
+                "board": {
+                  "$ref": "#/$defs/text"
+                },
+                "bus_address": {
+                  "$ref": "#/$defs/text"
+                },
+                "channel": {
+                  "$ref": "#/$defs/channel"
+                },
+                "child_endpoint": {
+                  "$ref": "#/$defs/text"
+                },
+                "child_host": {
+                  "$ref": "#/$defs/text"
+                },
+                "description": {
+                  "$ref": "#/$defs/text"
+                },
+                "device": {
+                  "$ref": "#/$defs/text"
+                },
+                "device_id": {
+                  "$ref": "#/$defs/text"
+                },
+                "driver": {
+                  "$ref": "#/$defs/text"
+                },
+                "epoch": {
+                  "$ref": "#/$defs/digits"
+                },
+                "gateway_host": {
+                  "$ref": "#/$defs/text"
+                },
+                "id": {
+                  "$ref": "#/$defs/uid"
+                },
+                "ieee": {
+                  "$ref": "#/$defs/ieee"
+                },
+                "kind": {
+                  "$ref": "#/$defs/kind"
+                },
+                "link": {
+                  "$ref": "#/$defs/text"
+                },
+                "module": {
+                  "$ref": "#/$defs/text"
+                },
+                "name": {
+                  "$ref": "#/$defs/text"
+                },
+                "number": {
+                  "$ref": "#/$defs/number"
+                },
+                "parent": {
+                  "$ref": "#/$defs/parent"
+                },
+                "parent_endpoint": {
+                  "$ref": "#/$defs/text"
+                },
+                "parent_host": {
+                  "$ref": "#/$defs/text"
+                },
+                "parent_node": {
+                  "$ref": "#/$defs/number"
+                },
+                "port": {
+                  "$ref": "#/$defs/text"
+                },
+                "production": {
+                  "$ref": "#/$defs/onoff"
+                },
+                "revoked": {
+                  "$ref": "#/$defs/flag"
+                },
+                "role": {
+                  "$ref": "#/$defs/text"
+                },
+                "sensors": {
+                  "$ref": "#/$defs/text"
+                },
+                "serial_port": {
+                  "$ref": "#/$defs/text"
+                },
+                "ssid": {
+                  "$ref": "#/$defs/text"
+                },
+                "transport": {
+                  "$ref": "#/$defs/text"
+                },
+                "uid": {
+                  "$ref": "#/$defs/uid"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "sealed": {
+      "description": "The secrets the person asked for — the gateway key, the Wi-Fi passwords and the record of what the boards run — encrypted with AES-256-GCM under a key PBKDF2-HMAC-SHA256 derives from a passphrase of at least 12 characters, with format|schema|mesh.id|exported.at as associated data.",
+      "type": "object",
+      "required": [
+        "cipher",
+        "kdf",
+        "iterations",
+        "salt",
+        "nonce",
+        "data"
+      ],
+      "properties": {
+        "cipher": {
+          "$ref": "#/$defs/cipher"
+        },
+        "kdf": {
+          "$ref": "#/$defs/kdf"
+        },
+        "iterations": {
+          "$ref": "#/$defs/iterations"
+        },
+        "salt": {
+          "$ref": "#/$defs/salt"
+        },
+        "nonce": {
+          "$ref": "#/$defs/nonce"
+        },
+        "data": {
+          "$ref": "#/$defs/hex"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "format": {
+      "description": "What the file is.",
+      "type": "string",
+      "const": "robohub-mesh-project"
+    },
+    "schema": {
+      "description": "The schema version the file follows, a whole number; 2 for this one (1 is read too). Mesh imports any version it has written and refuses a newer one.",
+      "type": "string",
+      "pattern": "^[0-9]{1,9}$"
+    },
+    "text": {
+      "description": "One line of text: no control character, at most 1024 bytes (Mesh counts bytes).",
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u001f\\u007f]{0,1024}$"
+    },
+    "time": {
+      "description": "A UTC time.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "meshid": {
+      "description": "A mesh id: letters, digits, -, _ and ., at most 64, neither starting with . nor holding .. — it becomes a folder name and a header value.",
+      "type": "string",
+      "pattern": "^(?!\\S*\\.\\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$"
+    },
+    "meshidopt": {
+      "description": "A mesh id, or nothing.",
+      "type": "string",
+      "pattern": "^((?!\\S*\\.\\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,63})?$"
+    },
+    "meshids": {
+      "description": "Mesh ids separated by single spaces, or nothing.",
+      "type": "string",
+      "pattern": "^((?!\\S*\\.\\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}( (?!\\S*\\.\\.)[A-Za-z0-9_-][A-Za-z0-9._-]{0,63})*)?$"
+    },
+    "area": {
+      "description": "An area, 1 to 65535, or nothing.",
+      "type": "string",
+      "pattern": "^(|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+    },
+    "port": {
+      "description": "A TCP port, 1 to 65535, or nothing.",
+      "type": "string",
+      "pattern": "^(|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+    },
+    "number": {
+      "description": "A node number, 1 to 65535, or nothing.",
+      "type": "string",
+      "pattern": "^(|[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
+    },
+    "uid": {
+      "description": "A board id: 16 lowercase hex digits, or nothing.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{16})?$"
+    },
+    "count": {
+      "description": "How many nodes the plan has: 0 to 64.",
+      "type": "string",
+      "pattern": "^([0-9]|[1-5][0-9]|6[0-4])$"
+    },
+    "digits": {
+      "description": "A whole number, or nothing.",
+      "type": "string",
+      "pattern": "^([0-9]{1,9})?$"
+    },
+    "kind": {
+      "description": "What a node is.",
+      "type": "string",
+      "pattern": "^(|compute|module|device)$"
+    },
+    "onoff": {
+      "description": "A setting that is on or off.",
+      "type": "string",
+      "pattern": "^(|on|off)$"
+    },
+    "flag": {
+      "description": "0 or 1.",
+      "type": "string",
+      "pattern": "^(|0|1)$"
+    },
+    "parent": {
+      "description": "A node's parent when it is the gateway (stored form), or a row (`node.3`) in a file written by hand.",
+      "type": "string",
+      "pattern": "^(|gateway|node\\.[1-9][0-9]?)$"
+    },
+    "cipher": {
+      "description": "How the secrets are sealed.",
+      "type": "string",
+      "const": "aes-256-gcm"
+    },
+    "kdf": {
+      "description": "How the key is derived from the passphrase.",
+      "type": "string",
+      "const": "pbkdf2-hmac-sha256"
+    },
+    "iterations": {
+      "description": "The PBKDF2 iterations.",
+      "type": "string",
+      "const": "600000"
+    },
+    "salt": {
+      "description": "The 16-byte random salt, as hex.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "nonce": {
+      "description": "The 12-byte random nonce, as hex.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{24}$"
+    },
+    "hex": {
+      "description": "The sealed secrets and their authentication tag, as hex.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{2})+$"
+    },
+    "channel": {
+      "description": "A Zigbee channel, 11 to 26, or empty.",
+      "type": "string",
+      "pattern": "^(|1[1-9]|2[0-6])$"
+    },
+    "ieee": {
+      "description": "A Zigbee device's IEEE address as Zigbee2MQTT writes it: 0x and 16 lowercase hex digits, or empty.",
+      "type": "string",
+      "pattern": "^(|0x[0-9a-f]{16})$"
+    }
+  }
+}

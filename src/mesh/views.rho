@@ -208,8 +208,10 @@ fn node_attached(index: u32) bool {
         }
         let parent_index: u32 = rho_int_from_str(
             rho_str_slice(parent, 5, u32(rho_strlen(parent)) - 5))
+        // A Zigbee device hangs under its coordinator, the one device node that
+        // carries others (MESH-ZB-0014).
         if parent_index < 1 || parent_index > node_count() || is_module_node(parent_index) ||
-            is_device_node(parent_index) {
+            (is_device_node(parent_index) && !zigbee_is_coordinator(wizard_file(), parent_index)) {
             return false
         }
         return node_attached(parent_index)
@@ -408,6 +410,8 @@ fn mesh_project_delete(req: Request) Response {
     // The project's own gateway goes with it, by its process id; another
     // mesh's gateway keeps running.
     ignore_u32(fleet_stop_gateway(id))
+    // Its coordinators stop and their broker users go (MESH-ZB-0004).
+    zigbee_forget_mesh(id)
     fleet_forget(id)
     ignore_u32(rho_exec_args("rm", "-rf\n" + project_location(id) + "\n", wizard_report("delete-project")))
     if was_current {
@@ -469,7 +473,10 @@ fn mesh_select(name: string, label: string, options: string, help: string) strin
 // (MESH-0014); any other device is carried by the node it is attached to.
 fn mesh_device_actions(loc: string, index: u32) string {
     let transport: string = node_device_transport(index)
-    if !rho_str_eq(transport, "http") && !rho_str_eq(transport, "mqtt") {
+    if zigbee_is_coordinator(wizard_file(), index) {
+        return ""
+    }
+    if !rho_str_eq(transport, "http") && !device_on_bus(transport) {
         return "<p><small>" + mesh_t(loc, "device.carried") + "</small></p>"
     }
     var switch_forms: string = ""

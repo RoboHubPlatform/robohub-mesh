@@ -1,0 +1,18 @@
+#
+# A stand-in for robohub-zigbee2mqtt, as the contract with robohub's plugin has
+# it (robohub ADR-0017): the pinned Zigbee2MQTT, the Node.js majors it runs on and
+# the configuration template Mesh fills. tests/zigbee_smoke.py plans and starts a
+# coordinator from it without depending on what the checkout carries today.
+#
+module:
+  name: robohub-zigbee2mqtt
+  id: robohub.plugin.zigbee2mqtt
+  type: plugin
+  version: 0.0.0
+
+zigbee2mqtt:
+  version: "2.14.3"
+  source: "https://github.com/Koenkk/zigbee2mqtt/archive/refs/tags/2.14.3.tar.gz"
+  image: "ghcr.io/koenkk/zigbee2mqtt:2.14.3"
+  node_major: [22, 24]
+  config: templates/configuration.yaml

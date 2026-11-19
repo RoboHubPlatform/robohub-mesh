@@ -609,3 +609,59 @@ from its manifest, with no code of its own (ADR-0009, MESH-0029..0032, approved)
 
 The devices smoke plans a stand-in Tasmota plug on a broker of its own that holds
 Mesh to the grants its manifest asks for.
+
+## [0.23.0] - 2026-11-20
+
+Zigbee: a coordinator is a device node Mesh runs Zigbee2MQTT for, and the Zigbee
+devices that join it are MQTT devices under it (ADR-0010, MESH-0033..0035,
+MESH-ZB-0001..0017).
+
+- **Two additions to the MQTT device contract**, for any device:
+  `telemetry_mqtt.online_path` reads the online word from inside a JSON payload
+  (Zigbee2MQTT's `{"state":"online"}`), a payload that is not JSON or lacks the path
+  being unreachable; and an action's payload may carry `{ONOFF}`, filled with `ON`
+  or `OFF`, beside `{on}`. A single-quoted payload in a manifest is read without
+  its quotes. A device whose status topic is its prefix itself is read.
+- **Boards declare `capabilities.usb_host`**, read into the board rows; the native
+  gateway counts as a host and a USB host.
+- **Coordinators.** A device of kind `coordinator` is added from its own form,
+  offered only under the gateway or a board whose capabilities meet its manifest's
+  `needs:`, at most one per board, refused elsewhere saying which capability is
+  missing. Its name is its address and a topic level; its serial port is picked
+  from `/dev/serial/by-id/` (the manifest's `usb.by_id` matches marked) or typed
+  and checked as a device path; its channel is 15 unless changed before the first
+  start. The coordinator is no device in the list or the API.
+- **Running Zigbee2MQTT** from the coordinator's Zigbee tab: a broker user of its
+  own from the keeper (`POST /api/v1/bus/users`, confined to
+  `zigbee/<mesh>/<coordinator>`), its password owner-only and only in
+  `secret.yaml`; the configuration written from the robohub-zigbee2mqtt plugin's
+  template before the first start and afterwards only Mesh's keys rewritten, so
+  the network key and PAN ids Zigbee2MQTT made are kept; on this machine `node
+  index.js` from `~/.rho/toolchains/zigbee2mqtt/<version>` with its data folder
+  and `Z2M_ONBOARD_NO_SERVER=1`, stopped by its pid only while it is that program,
+  independent of the gateway and started again when Mesh starts; on another host
+  board that deploys with docker, the pinned image over the board's login, refused
+  while the broker listens on loopback only. A missing Node.js or Zigbee2MQTT is
+  said, with an install job for Zigbee2MQTT. The bridge's state, version, firmware
+  and channel are shown. Removing a coordinator stops it, removes its broker user
+  and keeps its data folder; removing a mesh removes its coordinators' users.
+- **Pairing**: joining opened for at most 254 s with the time left and *Stop
+  joining*; the devices that joined and are not in the plan, matched to a manifest
+  by `zigbee.model`/`zigbee.vendor`; *Adopt* adds a `zigbee` device node and renames
+  the device to its address, the node marked not yet renamed until the bridge
+  answers its transaction with ok; removing the node removes the device from the
+  network, saying when it could not. Every action needs the plan's grant and
+  Mesh's form token.
+- **Reading and switching**: a Zigbee device is read, polled, switched, confirmed
+  and listed exactly as an MQTT device with the prefix
+  `zigbee/<mesh>/<coordinator>/<address>`. Mesh's bus grants add `zigbee/#`,
+  `zigbee/+/+/+/set`, `zigbee/+/+/bridge/request/#` and `issue: [zigbee]`; a mesh
+  id, coordinator or device address that is not a topic level is refused.
+- **Project file schema 2** (`schemas/mesh-project.v2.json`): the node fields
+  `channel` and `ieee`; each coordinator's network key, PAN ids, channel and
+  coordinator backup sealed, or named under `omitted:`; an import writes them for
+  the coordinator's first start. Schema 1 files are read as before.
+
+The Zigbee smoke runs a broker, a keeper and a Zigbee2MQTT of its own and opens no
+serial port.
+

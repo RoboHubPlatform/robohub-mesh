@@ -442,6 +442,22 @@ fn look_module_chip(loc: string, id: string, board: u32, fitted: u32, readings: 
 // gateway and every board not itself or below it that it shares a transport
 // with; for a device, the gateway and every board.
 fn look_allowed_parents(index: u32) string {
+    // A coordinator goes only where its board can host it, a Zigbee device only
+    // under a coordinator (MESH-ZB-0002).
+    if zigbee_is_coordinator(wizard_file(), index) {
+        return zigbee_parents(wizard_file(), node_device_name(index), index)
+    }
+    if node_value(index, "transport", "") == "zigbee" {
+        var coordinators: string = ""
+        var at: u32 = 1
+        while at <= node_count() {
+            if zigbee_is_coordinator(wizard_file(), at) {
+                coordinators = coordinators + " node." + rho_int_to_str(at)
+            }
+            at = at + 1
+        }
+        return str_trim(coordinators)
+    }
     let board: string = node_value(index, "board", "")
     var out: string = ""
     if is_device_node(index) || look_transports(endpoint_board("gateway"), board) != "" {
@@ -672,8 +688,19 @@ fn look_children(loc: string, id: string, parent: string, readings: string, sele
     let count: u32 = node_count()
     while index <= count {
         if node_value(index, "parent", "gateway") == parent && node_attached(index) && !is_module_node(index) {
-            if is_device_node(index) {
-                out = out + look_branch("<span class=\"ag-badge dev\">" + escape_html(transport_label(node_value(index, "transport", "http"))) +
+            if is_device_node(index) && zigbee_is_coordinator(wizard_file(), index) {
+                // A coordinator carries its Zigbee devices below it.
+                var below: string = look_children(loc, id, "node." + rho_int_to_str(index), readings, selected)
+                if below != "" {
+                    below = "<ul class=\"mesh-children\">" + below + "</ul>"
+                }
+                out = out + look_branch("<span class=\"ag-badge dev\">USB</span>", look_device_card(loc, id, index, readings, selected), below)
+            } else if is_device_node(index) {
+                var badge: string = transport_label(node_value(index, "transport", "http"))
+                if node_value(index, "transport", "") == "zigbee" {
+                    badge = "Zigbee"
+                }
+                out = out + look_branch("<span class=\"ag-badge dev\">" + escape_html(badge) +
                     "</span>", look_device_card(loc, id, index, readings, selected), "")
             } else {
                 var below: string = look_children(loc, id, "node." + rho_int_to_str(index), readings, selected)

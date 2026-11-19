@@ -167,6 +167,57 @@ fn device_online_state(payload: string, online_up: string) string {
     return "unreachable"
 }
 
+// device_online_state_at is what a device's online topic says when its manifest
+// names `online_path`: the value at that path of the newest payload, read as
+// JSON, compared with the online word — Zigbee2MQTT's `{"state":"online"}`. A
+// payload that is not JSON, or does not carry the path, is unreachable; "" while
+// the topic has said nothing. Without a path the whole payload is compared, as
+// device_online_state does (MESH-0032).
+// @req MESH-0034
+fn device_online_state_at(payload: string, path: string, online_up: string) string {
+    let where: string = device_unquote(path)
+    if where == "" {
+        return device_online_state(payload, online_up)
+    }
+    let said: string = str_trim(payload)
+    if said == "" {
+        return ""
+    }
+    if !str_starts_with(said, "{") {
+        return "unreachable"
+    }
+    let raw: string = json_at(said, where)
+    if raw == "" {
+        return "unreachable"
+    }
+    var up: string = device_unquote(online_up)
+    if up == "" {
+        up = "true"
+    }
+    if str_eq(json_text(raw), up) {
+        return "online"
+    }
+    return "unreachable"
+}
+
+// device_template_fill puts a device's values into a manifest's template:
+// {prefix}, {client}, {on} as `true` or `false` (Tasmota, Shelly) and {ONOFF} as
+// `ON` or `OFF` (Zigbee2MQTT, which refuses a boolean). `on` is "true", "false"
+// or "" when the template is not an action's.
+// @req MESH-0035
+fn device_template_fill(text: string, prefix: string, on: string, client: string) string {
+    var word: string = ""
+    if on == "true" {
+        word = "ON"
+    } else if on == "false" {
+        word = "OFF"
+    }
+    var out: string = str_replace(text, "{prefix}", prefix)
+    out = str_replace(out, "{on}", on)
+    out = str_replace(out, "{ONOFF}", word)
+    return str_replace(out, "{client}", client)
+}
+
 // device_reading_line is the port's line for one field, or "" when no message
 // carried it.
 fn device_reading_line(reading: string, field_name: string) string {

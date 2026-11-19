@@ -1,0 +1,232 @@
+//
+// @file json_read.rho
+// @brief Reading a value out of a small JSON document: a member by its path, a string's text, the items of a list.
+//
+// @module mesh.domain.json_read
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.json_read
+
+// A device's availability and a Zigbee2MQTT bridge speak JSON: `{"state":"online"}`,
+// a list of joined devices, the answer to a request. Mesh reads a few values out
+// of them and nothing more, so this is a reader of exactly that: the raw text of
+// a member found by its dotted path, the text of a string, the items of a list.
+// It never builds a tree, and a document it cannot read answers "" rather than
+// a guess. Nothing here reads a file, so it is tested on its own
+// (tests/domain_test.rho).
+
+// json_ws is the first position at or after `at` that is not white space.
+fn json_ws(text: string, at: u32) u32 {
+    var i: u32 = at
+    let n: u32 = strlen(text)
+    while i < n {
+        let c: string = str_slice(text, i, 1)
+        if c != " " && c != "\n" && c != "\t" && c != "\r" {
+            return i
+        }
+        i = i + 1
+    }
+    return n
+}
+
+// json_value_end is the position just past the value that starts at `start`: a
+// string with its escapes, an object or a list with everything nested in it, or
+// a number, true, false or null.
+fn json_value_end(text: string, start: u32) u32 {
+    let n: u32 = strlen(text)
+    var i: u32 = start
+    if i >= n {
+        return n
+    }
+    let first: string = str_slice(text, i, 1)
+    if first == "\"" {
+        i = i + 1
+        while i < n {
+            let c: string = str_slice(text, i, 1)
+            if c == "\\" {
+                i = i + 2
+                continue
+            }
+            if c == "\"" {
+                return i + 1
+            }
+            i = i + 1
+        }
+        return n
+    }
+    if first == "{" || first == "[" {
+        var depth: u32 = 0
+        var quoted: bool = false
+        while i < n {
+            let c: string = str_slice(text, i, 1)
+            if quoted {
+                if c == "\\" {
+                    i = i + 2
+                    continue
+                }
+                if c == "\"" {
+                    quoted = false
+                }
+            } else if c == "\"" {
+                quoted = true
+            } else if c == "{" || c == "[" {
+                depth = depth + 1
+            } else if c == "}" || c == "]" {
+                depth = depth - 1
+                if depth == 0 {
+                    return i + 1
+                }
+            }
+            i = i + 1
+        }
+        return n
+    }
+    while i < n {
+        let c: string = str_slice(text, i, 1)
+        if c == "," || c == "}" || c == "]" || c == " " || c == "\n" || c == "\t" || c == "\r" {
+            return i
+        }
+        i = i + 1
+    }
+    return n
+}
+
+// json_text is a value as text: a string without its quotes and with its
+// escapes read (a \u escape is kept as written), "" for null, and a number,
+// true or false as written.
+fn json_text(raw: string) string {
+    let value: string = str_trim(raw)
+    if value == "null" {
+        return ""
+    }
+    let n: u32 = strlen(value)
+    if n < 2 || str_slice(value, 0, 1) != "\"" || str_slice(value, n - 1, 1) != "\"" {
+        return value
+    }
+    var out: string = ""
+    var i: u32 = 1
+    while i < n - 1 {
+        let c: string = str_slice(value, i, 1)
+        if c == "\\" && i + 1 < n - 1 {
+            let e: string = str_slice(value, i + 1, 1)
+            if e == "n" {
+                out = out + "\n"
+            } else if e == "t" {
+                out = out + "\t"
+            } else if e == "r" {
+                out = out + "\r"
+            } else if e == "u" {
+                out = out + "\\u"
+            } else {
+                out = out + e
+            }
+            i = i + 2
+            continue
+        }
+        out = out + c
+        i = i + 1
+    }
+    return out
+}
+
+// json_member is the raw text of an object's member, or "" when the document is
+// not an object or has no such member.
+fn json_member(object: string, key: string) string {
+    let n: u32 = strlen(object)
+    var i: u32 = json_ws(object, 0)
+    if i >= n || str_slice(object, i, 1) != "{" {
+        return ""
+    }
+    i = i + 1
+    while i < n {
+        i = json_ws(object, i)
+        if i >= n || str_slice(object, i, 1) == "}" || str_slice(object, i, 1) != "\"" {
+            return ""
+        }
+        let key_end: u32 = json_value_end(object, i)
+        let name: string = json_text(str_slice(object, i, key_end - i))
+        i = json_ws(object, key_end)
+        if i >= n || str_slice(object, i, 1) != ":" {
+            return ""
+        }
+        i = json_ws(object, i + 1)
+        let value_end: u32 = json_value_end(object, i)
+        if value_end <= i {
+            return ""
+        }
+        if str_eq(name, key) {
+            return str_slice(object, i, value_end - i)
+        }
+        i = json_ws(object, value_end)
+        if i < n && str_slice(object, i, 1) == "," {
+            i = i + 1
+        } else {
+            return ""
+        }
+    }
+    return ""
+}
+
+// json_at is the raw text of the member a dotted path names (`network.channel`,
+// or `$` for the whole document), "" when the path is not there.
+fn json_at(text: string, path: string) string {
+    if path == "" || path == "$" {
+        return str_trim(text)
+    }
+    var rest: string = path
+    if str_starts_with(rest, "$.") {
+        rest = str_slice(rest, 2, strlen(rest) - 2)
+    }
+    var current: string = text
+    while rest != "" {
+        let at: i32 = str_index_of(rest, ".")
+        var key: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            key = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        current = json_member(current, key)
+        if current == "" {
+            return ""
+        }
+    }
+    return current
+}
+
+// json_items are the items of a list, one raw item per line. A line break in a
+// JSON document is only ever white space between tokens, never inside a string,
+// so each item is put on one line by making its line breaks spaces.
+fn json_items(list: string) string {
+    let n: u32 = strlen(list)
+    var i: u32 = json_ws(list, 0)
+    if i >= n || str_slice(list, i, 1) != "[" {
+        return ""
+    }
+    i = i + 1
+    var out: string = ""
+    while i < n {
+        i = json_ws(list, i)
+        if i >= n || str_slice(list, i, 1) == "]" {
+            return out
+        }
+        let end: u32 = json_value_end(list, i)
+        if end <= i {
+            return out
+        }
+        out = out + str_replace(str_replace(str_slice(list, i, end - i), "\n", " "), "\r", " ") + "\n"
+        i = json_ws(list, end)
+        if i < n && str_slice(list, i, 1) == "," {
+            i = i + 1
+        } else {
+            return out
+        }
+    }
+    return out
+}

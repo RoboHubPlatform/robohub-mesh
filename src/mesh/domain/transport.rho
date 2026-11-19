@@ -25,6 +25,9 @@ struct BoardCaps {
     wireless: bool
     ethernet: bool
     buses: string
+    // usb_host is whether the board can host a USB device, such as a Zigbee
+    // coordinator's radio (MESH-ZB-0002).
+    usb_host: bool
 }
 
 // caps_words_has reports whether a space-separated list holds a word.

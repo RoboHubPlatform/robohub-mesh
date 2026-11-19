@@ -513,8 +513,8 @@ fn telemetry_device_poll_once() void {
         let count: u32 = u32(rho_int_from_str(state_value_in(file, "node.count")))
         var index: u32 = 1
         while index <= count {
-            if project_node_value(file, index, "kind", "") == "device" {
-                if project_node_value(file, index, "transport", "http") == "mqtt" {
+            if project_node_value(file, index, "kind", "") == "device" && !zigbee_is_coordinator(file, index) {
+                if device_on_bus(project_node_value(file, index, "transport", "http")) {
                     ignore_u32(telemetry_poll_mqtt_device(project, file, index))
                 } else {
                     ignore_u32(telemetry_poll_http_device(project, file, index))
@@ -535,6 +535,9 @@ fn telemetry_worker() void {
     telemetry_prune_once()
     mesh_prune_state()
     mesh_fault_init()
+    // The native coordinators Mesh had started run again, as a native gateway
+    // does (MESH-ZB-0006).
+    zigbee_start_wanted()
     telemetry_device_poll_once()
     ignore_string(telemetry_checkpoint("PASSIVE"))
     var ticks: u32 = 0

@@ -8,7 +8,7 @@ the running application:
 - an export carries the mesh's definition and no secret in clear: the gateway
   key, the relay key and every Wi-Fi password are left out and named under
   `omitted:`; two exports of an unchanged mesh differ only in `exported.at`; the
-  JSON form is the same tree; both validate against schemas/mesh-project.v1.json;
+  JSON form is the same tree; both validate against schemas/mesh-project.v2.json;
   every key of the mesh's plan is one the rules account for;
 - an export imported as a new mesh on another instance gives back the same
   definition, from YAML and from JSON, with its id, node numbers and ids, area and
@@ -355,7 +355,7 @@ def main() -> int:
         check('filename="garden.mesh.yml"' in headers.get("Content-Disposition", ""),
               f"the download is named from the mesh id ({headers.get('Content-Disposition')})")
         flat = yaml_flat(yaml_text)
-        check(flat.get("format") == "robohub-mesh-project" and flat.get("schema") == "1" and
+        check(flat.get("format") == "robohub-mesh-project" and flat.get("schema") == "2" and
               flat.get("exported.by", "").startswith("robohub-mesh 0.") and
               re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", flat.get("exported.at", "")),
               "the file says what it is, its schema, the Mesh that wrote it and when, in UTC")
@@ -391,7 +391,7 @@ def main() -> int:
         check({k: v for k, v in jflat.items() if k != "exported.at"} == {k: v for k, v in flat.items() if k != "exported.at"},
               "the JSON export is the same tree with the same values")
         check(schema_rules.validate(as_json(json_text), schema) == [],
-              f"the export validates against schemas/mesh-project.v1.json {schema_rules.validate(as_json(json_text), schema)}")
+              f"the export validates against schemas/mesh-project.v2.json {schema_rules.validate(as_json(json_text), schema)}")
         stored = plan_flat(alpha.projects / "garden" / "plan.yml")
         unknown = sorted(k for k in stored if key_kind(k, rules) == "")
         check(not unknown, f"every key of the mesh's plan.yml is one the project file's rules account for {unknown}")
@@ -713,12 +713,12 @@ def main() -> int:
 
         # ---------------------------------------------------------- invalid files
         # @verifies MESH-XFER-0007
-        newer = yaml_text.replace('schema: "1"', 'schema: "2"')
+        newer = yaml_text.replace('schema: "2"', 'schema: "3"')
         status, answer, _ = imported(beta, admin, {"file": newer, "mode": "copy"})
         text = problems_text(answer)
-        check(status == 422 and "schema 2" in text and "schema 1" in text and "robohub-mesh 0." in text,
+        check(status == 422 and "schema 3" in text and "schema 2" in text and "robohub-mesh 0." in text,
               f"a newer schema is refused naming its schema, Mesh's own and the Mesh that wrote it ({text})")
-        older = yaml_text.replace('schema: "1"', 'schema: "0"')
+        older = yaml_text.replace('schema: "2"', 'schema: "0"')
         status, answer, _ = imported(beta, admin, {"file": older, "mode": "copy"})
         check(status == 422 and "never written" in problems_text(answer), "a schema no Mesh wrote is refused")
 

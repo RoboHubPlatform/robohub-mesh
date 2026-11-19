@@ -133,7 +133,11 @@ fn mesh_device_poll(req: Request) Response {
         return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
     }
     var recorded: u32 = 0
-    if rho_str_eq(project_node_value(file, index, "transport", "http"), "mqtt") {
+    if zigbee_is_coordinator(file, index) {
+        save_setting("mesh_message", "A coordinator is not read as a device: its page shows its bridge.")
+        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+    }
+    if device_on_bus(project_node_value(file, index, "transport", "http")) {
         recorded = telemetry_poll_mqtt_device(project, file, index)
     } else {
         recorded = telemetry_poll_http_device(project, file, index)
@@ -624,7 +628,7 @@ fn mesh_source_action(project: string, source: string, state: string) string {
     if desired != "on" && desired != "off" {
         return "failed"
     }
-    if address != "" && (transport == "http" || transport == "mqtt" || rho_str_index_of(address, "http") == 0) {
+    if address != "" && (transport == "http" || device_on_bus(transport) || rho_str_index_of(address, "http") == 0) {
         // Drive the device the plan names, not only one the gateway already
         // knows, by what its manifest says it can be told.
         let outcome: string = mesh_device_switch_to(project, rho_int_from_str(field(spec, 1)), desired)
@@ -893,7 +897,9 @@ fn mesh_api_devices(req: Request) Response {
     var index: u32 = 1
     let count: u32 = node_count()
     while index <= count {
-        if is_device_node(index) && node_visible(index) {
+        // A coordinator is hardware of the mesh, not a device that is read or
+        // switched (MESH-ZB-0001).
+        if is_device_node(index) && node_visible(index) && !zigbee_is_coordinator(wizard_file(), index) {
             if !first {
                 out = out + ","
             }

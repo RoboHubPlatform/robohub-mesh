@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.22.0
+  version: 0.23.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -103,10 +103,15 @@ plugins:
 # The bus reaches MQTT devices: the broker the keeper runs (robohub-mqtt), as the
 # broker user the keeper made for Mesh. A Shelly speaks on <prefix>/rpc,
 # <prefix>/status/... and <prefix>/online; a Tasmota device on
-# <prefix>/cmnd/POWER, <prefix>/stat/... and <prefix>/tele/... (ADR-0009).
+# <prefix>/cmnd/POWER, <prefix>/stat/... and <prefix>/tele/... (ADR-0009). A
+# Zigbee coordinator's Zigbee2MQTT speaks under zigbee/<mesh>/<coordinator>: Mesh
+# reads all of it, sets a device on <base>/<device>/set and asks the bridge on
+# <base>/bridge/request/..., and the keeper issues each coordinator a broker user
+# of its own under the `zigbee` root (ADR-0010, MESH-ZB-0015).
 bus:
-  publish: [+/rpc, +/cmnd/POWER, mesh/+/telemetry]
-  subscribe: [+/status/#, +/online, +/stat/#, +/tele/#]
+  publish: [+/rpc, +/cmnd/POWER, mesh/+/telemetry, zigbee/+/+/+/set, zigbee/+/+/bridge/request/#]
+  subscribe: [+/status/#, +/online, +/stat/#, +/tele/#, zigbee/#]
+  issue: [zigbee]
 
 bind:
   robohub.bus:

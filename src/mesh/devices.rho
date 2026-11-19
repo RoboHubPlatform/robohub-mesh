@@ -44,12 +44,38 @@ fn mesh_relay_feeds() void {
 /// The name a command says it comes from, where a device's protocol asks for one.
 const MESH_DEVICE_CLIENT: string = "robohub-mesh"
 
-// device_fill puts a device's values into a manifest's template: {prefix}, {on}
-// and {client}.
+// device_fill puts a device's values into a manifest's template: {prefix},
+// {on} (true or false), {ONOFF} (ON or OFF) and {client}
+// (src/mesh/domain/device_reading.rho).
+// @req MESH-0035
 fn device_fill(text: string, prefix: string, on: string) string {
-    var out: string = str_replace(text, "{prefix}", prefix)
-    out = str_replace(out, "{on}", on)
-    return str_replace(out, "{client}", MESH_DEVICE_CLIENT)
+    return device_template_fill(text, prefix, on, MESH_DEVICE_CLIENT)
+}
+
+// device_on_bus is whether a device is reached through the broker: over MQTT,
+// or over Zigbee, where the coordinator's Zigbee2MQTT makes it an MQTT device
+// under its base topic (ADR-0010). Both are read and switched by one path.
+// @req MESH-ZB-0014
+fn device_on_bus(transport: string) bool {
+    return rho_str_eq(transport, "mqtt") || rho_str_eq(transport, "zigbee")
+}
+
+// mesh_device_prefix is the topic prefix a planned device is read and switched
+// under: its address over MQTT, and `zigbee/<mesh>/<coordinator>/<address>`
+// over Zigbee — "" when the device hangs under no coordinator or a part of the
+// prefix is not a topic level, so nothing is followed or published for it.
+// @req MESH-ZB-0014, MESH-ZB-0015
+fn mesh_device_prefix(file: string, index: u32) string {
+    let transport: string = project_node_value(file, index, "transport", "http")
+    let address: string = project_node_value(file, index, "address", "")
+    if rho_str_eq(transport, "zigbee") {
+        let coordinator: u32 = zigbee_parent_coordinator(file, index)
+        if coordinator == 0 {
+            return ""
+        }
+        return zigbee_device_prefix(plan_project_id(file), project_node_value(file, coordinator, "address", ""), address)
+    }
+    return address
 }
 
 // device_status_topics is the topics a device reports its status on, filled
@@ -82,7 +108,7 @@ fn device_prefix_ok(prefix: string) bool {
 // message on each of its status topics by the telemetry port (one line per field
 // some message carries, src/mesh/domain/device_reading.rho). Reading it follows
 // the device, so its messages are heard from then on.
-// @req MESH-0029, MESH-0030, MESH-0031
+// @req MESH-0029, MESH-0030, MESH-0031, MESH-ZB-0014
 fn mesh_mqtt_device_reading(manifest: string, prefix: string) string {
     if !device_prefix_ok(prefix) {
         return ""
@@ -93,7 +119,10 @@ fn mesh_mqtt_device_reading(manifest: string, prefix: string) string {
         return ""
     }
     ignore_bool(bus.follow(prefix + "/#", ""))
-    let listing: string = bus.topics(prefix + "/")
+    // The listing is asked for the prefix itself, not `<prefix>/`: a device
+    // whose status topic is its prefix (Zigbee2MQTT's `{prefix}`) reports there,
+    // and `<prefix>/#` follows it too. The port reads only the status topics.
+    let listing: string = bus.topics(prefix)
     if listing == "" {
         return ""
     }
@@ -105,10 +134,10 @@ fn mesh_mqtt_device_reading(manifest: string, prefix: string) string {
 // and stores the fields some message carries; a field none carries keeps its
 // last value. The first read starts following the device, so a reading is there
 // from its next message on.
-// @req MESH-0029
+// @req MESH-0029, MESH-ZB-0014
 fn telemetry_poll_mqtt_device(project: string, file: string, index: u32) u32 {
     let name: string = project_node_value(file, index, "device", "")
-    let prefix: string = project_node_value(file, index, "address", "")
+    let prefix: string = mesh_device_prefix(file, index)
     if name == "" || !device_prefix_ok(prefix) {
         return 0
     }
@@ -123,28 +152,33 @@ fn telemetry_poll_mqtt_device(project: string, file: string, index: u32) u32 {
     return telemetry_record_reading(project, source, reading)
 }
 
-// mesh_device_reachability is what a planned MQTT device's online topic says:
-// "online", "unreachable", or "" when the device names no online topic, is not
-// reached over MQTT, or its topic has said nothing yet.
-// @req MESH-0032
+// mesh_device_reachability is what a planned MQTT or Zigbee device's online
+// topic says: "online", "unreachable", or "" when the device names no online
+// topic, is not reached through the broker, or its topic has said nothing yet.
+// A manifest that names `online_path` is read at that path of a JSON payload
+// (MESH-0034), as Zigbee2MQTT's availability is.
+// @req MESH-0032, MESH-0034, MESH-ZB-0014
 fn mesh_device_reachability(project: string, index: u32) string {
     let file: string = project_file(project)
-    if !rho_str_eq(project_node_value(file, index, "transport", "http"), "mqtt") {
+    if !device_on_bus(project_node_value(file, index, "transport", "http")) {
         return ""
     }
-    let prefix: string = project_node_value(file, index, "address", "")
+    let prefix: string = mesh_device_prefix(file, index)
     let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
     let topic: string = device_fill(device_unquote(yaml.value(manifest, "telemetry_mqtt.online_topic")), prefix, "")
     if !device_prefix_ok(prefix) || topic == "" {
         return ""
     }
     ignore_bool(bus.follow(prefix + "/#", ""))
-    return device_online_state(bus.latest(topic), yaml.value(manifest, "telemetry_mqtt.online_up"))
+    return device_online_state_at(bus.latest(topic), yaml.value(manifest, "telemetry_mqtt.online_path"),
+        yaml.value(manifest, "telemetry_mqtt.online_up"))
 }
 
 // mesh_device_command tells a device to do something its manifest's `actions`
 // names — `switch`, on or off — over the transport the plan says it speaks, and
-// answers whether it was taken.
+// answers whether it was taken. Through the broker the payload's {on} is true
+// or false and its {ONOFF} is ON or OFF (MESH-0035).
+// @req MESH-0035, MESH-ZB-0014
 fn mesh_device_command(project: string, index: u32, action: string, on: bool) bool {
     let file: string = project_file(project)
     let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
@@ -157,9 +191,15 @@ fn mesh_device_command(project: string, index: u32, action: string, on: bool) bo
     if address == "" {
         return false
     }
-    if rho_str_eq(transport, "mqtt") {
-        let topic: string = device_fill(yaml.value(manifest, "actions." + action + ".mqtt_topic"), address, value)
-        let payload: string = device_fill(yaml.value(manifest, "actions." + action + ".mqtt_payload"), address, value)
+    if device_on_bus(transport) {
+        let prefix: string = mesh_device_prefix(file, index)
+        if !device_prefix_ok(prefix) {
+            return false
+        }
+        // A manifest may single-quote a JSON payload ('{"state":"{ONOFF}"}'),
+        // which the YAML reader hands back with its quotes.
+        let topic: string = device_fill(device_unquote(yaml.value(manifest, "actions." + action + ".mqtt_topic")), prefix, value)
+        let payload: string = device_fill(device_unquote(yaml.value(manifest, "actions." + action + ".mqtt_payload")), prefix, value)
         if topic == "" || payload == "" {
             return false
         }
@@ -263,7 +303,7 @@ fn mesh_switch_forget(project: string, index: u32) void {
 // its state, whose switch is never shown as confirmed.
 fn device_state_path(manifest: string, transport: string) string {
     var key: string = "telemetry_http_fields"
-    if rho_str_eq(transport, "mqtt") {
+    if device_on_bus(transport) {
         key = "telemetry_mqtt_fields"
     }
     var rest: string = manifest_list_items(manifest, key)
@@ -288,7 +328,7 @@ fn mesh_device_can_report(project: string, index: u32) bool {
     let file: string = project_file(project)
     let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
     let transport: string = project_node_value(file, index, "transport", "http")
-    if rho_str_eq(transport, "mqtt") {
+    if device_on_bus(transport) {
         return device_state_path(manifest, transport) != "" &&
             device_status_topics(manifest, "{prefix}") != ""
     }
@@ -301,15 +341,15 @@ fn mesh_device_can_report(project: string, index: u32) bool {
 // broker that carries the state field — on whichever of the device's status
 // topics it came — and only if it arrived after the request. A newer message
 // without the state (a meter reading) says nothing about the switch.
-// @req MESH-0022, MESH-0029
+// @req MESH-0022, MESH-0029, MESH-ZB-0014
 fn mesh_device_report(project: string, index: u32, since_s: u32) string {
     let file: string = project_file(project)
     let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
     let transport: string = project_node_value(file, index, "transport", "http")
-    if !rho_str_eq(transport, "mqtt") {
+    if !device_on_bus(transport) {
         return switch_state_word(mesh_device_read_field(project, index, "state"))
     }
-    let prefix: string = project_node_value(file, index, "address", "")
+    let prefix: string = mesh_device_prefix(file, index)
     if device_state_path(manifest, transport) == "" {
         return ""
     }

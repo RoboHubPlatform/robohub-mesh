@@ -459,3 +459,50 @@ requirements:
     owner: maintainer
     changed: 2026-11-19
     tags: [devices, mqtt]
+
+  - id: MESH-0033
+    title: Zigbee devices are added to a mesh through a coordinator on one of its boards
+    statement: >
+      Mesh shall let a person place a Zigbee coordinator under a board of the
+      mesh that can host it, run the program that drives it on that board, add
+      the Zigbee devices that join it to the plan, and read and switch them over
+      the broker as it does any MQTT device.
+    rationale: A Zigbee plug is one more network device of the mesh; the radio that reaches it is part of the mesh's hardware, so it is planned, deployed and shown where the rest of the mesh is (robohub:ADR-0017).
+    satisfies: [SYS-0069, SYS-0051]
+    decided_by: [ADR-0010, robohub:ADR-0017]
+    status: approved
+    verification: demonstration
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [devices, zigbee]
+
+  - id: MESH-0034
+    title: A device's online state may be read from inside a JSON payload
+    statement: >
+      When an MQTT device's manifest names `telemetry_mqtt.online_path`, Mesh shall
+      compare the value at that path of the newest online-topic payload, read as
+      JSON, with `online_up`, and shall show the device as unreachable when the
+      payload is not JSON or does not carry the path; without `online_path` the
+      whole payload shall be compared, as MESH-0032 says.
+    rationale: Zigbee2MQTT 2.x reports availability as `{"state":"online"}` rather than a bare word; the manifests Mesh reads today must not read differently.
+    satisfies: [SYS-0051]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [devices, mqtt]
+
+  - id: MESH-0035
+    title: An action's payload may carry the switch state as ON or OFF
+    statement: >
+      An action's `mqtt_payload` shall have `{ONOFF}` replaced by `ON` or `OFF` for
+      the requested state, beside `{on}` (true or false), which keeps its meaning.
+    rationale: Zigbee2MQTT switches a plug with `{"state":"ON"}`; Tasmota's `{on}` must go on working.
+    satisfies: [SYS-0051, SYS-0025]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [devices, mqtt, outputs]

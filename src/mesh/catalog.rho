@@ -160,8 +160,10 @@ fn find_manifests(root: string, name: string) string {
 }
 
 // board_rows is one row per board the registry carries:
-//   name|label|description|platform|gateway|relay|node|host|wireless|ethernet|buses|deploy
-// plus a synthetic native row for a platform that has a native preset.
+//   name|label|description|platform|gateway|relay|node|host|wireless|ethernet|buses|deploy|manifest|links|usb_host
+// plus a synthetic native row for a platform that has a native preset, which
+// counts as a host and a USB host: it is this machine (MESH-ZB-0002).
+// @req MESH-ZB-0002
 fn board_rows() string {
     return catalog_cached("board_rows")
 }
@@ -193,7 +195,7 @@ fn board_rows_read() string {
 
         if rho_path_exists(platform_path + "/presets/native.json") {
             out = out + "native|This host (native)|The machine running the keeper; the gateway runs as a local process.|" +
-                platform_name + "|true|true|false|true|true|true|uart usb ethernet wifi|process||uart console usb ethernet wifi socket\n"
+                platform_name + "|true|true|false|true|true|true|uart usb ethernet wifi|process||uart console usb ethernet wifi socket|true\n"
         }
 
         var manifests: string = find_manifests(platform_path + "/boards", "find-" + module_name)
@@ -230,7 +232,8 @@ fn board_rows_read() string {
                 "|" + yaml.value(manifest, "capabilities.ethernet") +
                 "|" + yaml.value(manifest, "capabilities.buses") +
                 "|" + yaml.value(manifest, "capabilities.deploy") + "|" + manifest +
-                "|" + yaml.value(manifest, "capabilities.links") + "\n"
+                "|" + yaml.value(manifest, "capabilities.links") +
+                "|" + yaml.value(manifest, "capabilities.usb_host") + "\n"
         }
     }
     return out
@@ -460,7 +463,7 @@ fn device_paths() string {
 
 // device_rows is one row per device integration the robohub-devices checkout
 // lists at this moment:
-//   name|label|kind|transports|manifest
+//   name|label|kind|transports|manifest|module_id|zigbee_model|zigbee_vendor
 fn device_rows() string {
     return catalog_cached("device_rows")
 }
@@ -508,7 +511,8 @@ fn device_rows_read() string {
         let transports: string = yaml.value(manifest, "device.transports")
         let module_id: string = yaml.value(manifest, "module.id")
         out = out + name + "|" + label + "|" + kind + "|" + transports + "|" +
-            manifest + "|" + module_id + "\n"
+            manifest + "|" + module_id + "|" + yaml.value(manifest, "zigbee.model") + "|" +
+            yaml.value(manifest, "zigbee.vendor") + "\n"
     }
     return out
 }
@@ -556,6 +560,11 @@ fn device_picker(loc: string, selected: string) string {
             continue
         }
         let name: string = field(line, 0)
+        // A coordinator is added from its own form, which asks for its port
+        // and offers only the boards that can host it (MESH-ZB-0001).
+        if field(line, 2) == "coordinator" {
+            continue
+        }
         var mark: string = ""
         if name == selected {
             mark = " selected"
@@ -1511,6 +1520,10 @@ fn board_cap(name: string, key: string) string {
     if key == "links" {
         return field(row, 13)
     }
+    // @req MESH-ZB-0002
+    if key == "usb_host" {
+        return field(row, 14)
+    }
     return ""
 }
 
@@ -1552,7 +1565,8 @@ fn board_caps(board: string) BoardCaps {
         board_cap(board, "host") == "true",
         board_cap(board, "wireless") == "true",
         board_cap(board, "ethernet") == "true",
-        board_cap(board, "buses")
+        board_cap(board, "buses"),
+        board_cap(board, "usb_host") == "true"
     }
 }
 

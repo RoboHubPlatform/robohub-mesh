@@ -1,0 +1,877 @@
+//
+// @file zigbee.rho
+// @brief Zigbee coordinators and devices as rules: topic levels, placement, serial ports, the Zigbee2MQTT configuration Mesh owns, and what the bridge says.
+//
+// @module mesh.domain.zigbee
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.zigbee
+
+// A coordinator is a USB Zigbee radio placed under a board of the mesh that can
+// host it; Mesh runs Zigbee2MQTT for it on that board, and every Zigbee device
+// that joins it is an MQTT device under its base topic (ADR-0010). This module
+// is the part of that which is a rule rather than an act: which names may be a
+// topic level, which board may hold a coordinator, which path may be a serial
+// port, which keys of Zigbee2MQTT's configuration are Mesh's, and how the
+// bridge's retained messages and answers are read. Nothing here reads a file or
+// the bus, so all of it is tested on its own (tests/domain_test.rho).
+
+const ZIGBEE_DEFAULT_CHANNEL: u32 = 15
+const ZIGBEE_PERMIT_MAX_S: u32 = 254
+
+/* -------------------------------------------------------------------------- */
+/*  Topics                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_level_ok is whether a value may be one level of a topic: letters,
+// digits, `_` and `-`, so it holds no `/`, `+`, `#`, space or line break and
+// cannot reach another device's topics.
+// @req MESH-ZB-0015
+fn zigbee_level_ok(value: string) bool {
+    if value == "" || strlen(value) > 64 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(value) {
+        let c: string = str_slice(value, i, 1)
+        if !((c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_" || c == "-") {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// zigbee_base_topic is a coordinator's base topic, `zigbee/<mesh>/<coordinator>`,
+// or "" when either is not a topic level.
+// @req MESH-ZB-0015, MESH-ZB-0004
+fn zigbee_base_topic(mesh: string, coordinator: string) string {
+    if !zigbee_level_ok(mesh) || !zigbee_level_ok(coordinator) {
+        return ""
+    }
+    return "zigbee/" + mesh + "/" + coordinator
+}
+
+// zigbee_device_prefix is a Zigbee device's topic prefix, `<base>/<address>`,
+// the prefix its manifest's MQTT contract is filled with; "" when any part is
+// not a topic level.
+// @req MESH-ZB-0014, MESH-ZB-0015
+fn zigbee_device_prefix(mesh: string, coordinator: string, address: string) string {
+    let base: string = zigbee_base_topic(mesh, coordinator)
+    if base == "" || !zigbee_level_ok(address) {
+        return ""
+    }
+    return base + "/" + address
+}
+
+// zigbee_ieee_ok is whether a value is an IEEE address as Zigbee2MQTT writes
+// one: `0x` and 16 lowercase hex digits.
+fn zigbee_ieee_ok(value: string) bool {
+    if strlen(value) != 18 || !str_starts_with(value, "0x") {
+        return false
+    }
+    var i: u32 = 2
+    while i < 18 {
+        let c: string = str_slice(value, i, 1)
+        if !((c >= "0" && c <= "9") || (c >= "a" && c <= "f")) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// zigbee_channel_ok is whether a value is a Zigbee channel, 11 to 26.
+fn zigbee_channel_ok(value: string) bool {
+    if value == "" || strlen(value) > 2 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(value) {
+        let c: string = str_slice(value, i, 1)
+        if c < "0" || c > "9" {
+            return false
+        }
+        i = i + 1
+    }
+    let channel: u32 = u32(int_from_str(value))
+    return channel >= 11 && channel <= 26
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Placement                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_true_keys are the keys of a manifest's top-level block whose value is
+// `true`, space-separated: what a coordinator `needs:` (`host usb_host`).
+// @req MESH-ZB-0002
+fn zigbee_true_keys(text: string, block: string) string {
+    var out: string = ""
+    var inside: bool = false
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        let trimmed: string = str_trim(line)
+        if trimmed == "" || str_starts_with(trimmed, "#") {
+            continue
+        }
+        let indented: bool = str_starts_with(line, " ") || str_starts_with(line, "\t")
+        if !indented {
+            inside = str_eq(trimmed, block + ":")
+            continue
+        }
+        if !inside {
+            continue
+        }
+        let colon: i32 = str_index_of(trimmed, ":")
+        if colon <= 0 {
+            continue
+        }
+        let key: string = str_trim(str_slice(trimmed, 0, u32(colon)))
+        var value: string = str_trim(str_slice(trimmed, u32(colon) + 1, strlen(trimmed) - u32(colon) - 1))
+        let hash: i32 = str_index_of(value, " #")
+        if hash >= 0 {
+            value = str_trim(str_slice(value, 0, u32(hash)))
+        }
+        if value == "true" || value == "\"true\"" {
+            if out != "" {
+                out = out + " "
+            }
+            out = out + key
+        }
+    }
+    return out
+}
+
+// zigbee_needs_missing is the first capability a coordinator needs that a board
+// does not declare, or "" when the board has every one. `caps` are the words a
+// board declares true; the native gateway declares `host usb_host`.
+// @req MESH-ZB-0002
+fn zigbee_needs_missing(needs: string, caps: string) string {
+    var rest: string = needs
+    while rest != "" {
+        let at: i32 = str_index_of(rest, " ")
+        var word: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            word = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if word != "" && str_index_of(" " + caps + " ", " " + word + " ") < 0 {
+            return word
+        }
+    }
+    return ""
+}
+
+// zigbee_placement_problem is why a coordinator may not hang under a parent, or
+// "": the parent is not a board (`board` is the parent's kind: gateway, compute,
+// or anything else), the board lacks a capability (`missing`), or the board
+// holds another coordinator already (`taken`, how many other coordinators hang
+// under it). The answer is a code the pages say in words: notboard,
+// missing:<capability>, taken.
+// @req MESH-ZB-0002
+fn zigbee_placement_problem(parent_kind: string, missing: string, taken: u32) string {
+    if parent_kind != "gateway" && parent_kind != "compute" {
+        return "notboard"
+    }
+    if missing != "" {
+        return "missing:" + missing
+    }
+    if taken > 0 {
+        return "taken"
+    }
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Serial ports                                                              */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_port_ok is whether a typed serial port is a device path and nothing
+// else: absolute, under /dev/, without a space, `..` or any character a shell
+// reads, at most 255 bytes.
+// @req MESH-ZB-0003
+fn zigbee_port_ok(path: string) bool {
+    if !str_starts_with(path, "/dev/") || strlen(path) <= 5 || strlen(path) > 255 {
+        return false
+    }
+    if str_index_of(path, "..") >= 0 || str_index_of(path, "//") >= 0 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(path) {
+        let c: string = str_slice(path, i, 1)
+        if !((c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") ||
+            c == "/" || c == "." || c == "_" || c == "-" || c == ":") {
+            return false
+        }
+        i = i + 1
+    }
+    return !str_eq(str_slice(path, strlen(path) - 1, 1), "/")
+}
+
+// zigbee_glob_match is whether a name matches a pattern in which `*` stands for
+// any run of characters, as a manifest's `usb.by_id` patterns are written.
+// @req MESH-ZB-0003
+fn zigbee_glob_match(pattern: string, name: string) bool {
+    let pn: u32 = strlen(pattern)
+    let nn: u32 = strlen(name)
+    var p: u32 = 0
+    var n: u32 = 0
+    var star: i32 = -1
+    var mark: u32 = 0
+    while n < nn {
+        if p < pn && str_slice(pattern, p, 1) == "*" {
+            star = i32(p)
+            mark = n
+            p = p + 1
+        } else if p < pn && str_slice(pattern, p, 1) == str_slice(name, n, 1) {
+            p = p + 1
+            n = n + 1
+        } else if star >= 0 {
+            p = u32(star) + 1
+            mark = mark + 1
+            n = mark
+        } else {
+            return false
+        }
+    }
+    while p < pn && str_slice(pattern, p, 1) == "*" {
+        p = p + 1
+    }
+    return p == pn
+}
+
+// zigbee_port_matches is whether a by-id name matches any of a manifest's
+// patterns, one per line.
+// @req MESH-ZB-0003
+fn zigbee_port_matches(patterns: string, name: string) bool {
+    var rest: string = patterns
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        var pattern: string = str_trim(line)
+        if str_starts_with(pattern, "- ") {
+            pattern = str_trim(str_slice(pattern, 2, strlen(pattern) - 2))
+        }
+        let n: u32 = strlen(pattern)
+        if n >= 2 && (str_starts_with(pattern, "\"") || str_starts_with(pattern, "'")) {
+            pattern = str_slice(pattern, 1, n - 2)
+        }
+        if pattern != "" && zigbee_glob_match(pattern, name) {
+            return true
+        }
+    }
+    return false
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Zigbee2MQTT's configuration                                               */
+/* -------------------------------------------------------------------------- */
+
+// The configuration is Zigbee2MQTT's file, which it rewrites itself; Mesh owns
+// some keys of it, never the file. It is written once from the plugin's template
+// before the first start, and afterwards only the keys below are set again —
+// the network key, the PAN ids and whatever Zigbee2MQTT wrote stay as they are.
+
+// zigbee_config_fill is the plugin's template with a coordinator's values in
+// its placeholders.
+// @req MESH-ZB-0005
+fn zigbee_config_fill(template: string, mesh: string, coordinator: string, server: string, user: string,
+    serial_port: string, adapter: string, channel: string) string {
+    var out: string = str_replace(template, "{mesh}", mesh)
+    out = str_replace(out, "{coordinator}", coordinator)
+    out = str_replace(out, "{server}", server)
+    out = str_replace(out, "{user}", user)
+    out = str_replace(out, "{base_topic}", zigbee_base_topic(mesh, coordinator))
+    out = str_replace(out, "{serial_port}", serial_port)
+    out = str_replace(out, "{adapter}", adapter)
+    return str_replace(out, "{channel}", channel)
+}
+
+// zigbee_indent is how many spaces a line starts with.
+fn zigbee_indent(line: string) u32 {
+    var i: u32 = 0
+    while i < strlen(line) && str_slice(line, i, 1) == " " {
+        i = i + 1
+    }
+    return i
+}
+
+// zigbee_line_key is the key a YAML line sets (`  port: x` is "port"), or "".
+fn zigbee_line_key(line: string) string {
+    let trimmed: string = str_trim(line)
+    if trimmed == "" || str_starts_with(trimmed, "#") || str_starts_with(trimmed, "-") {
+        return ""
+    }
+    let colon: i32 = str_index_of(trimmed, ":")
+    if colon <= 0 {
+        return ""
+    }
+    return str_slice(trimmed, 0, u32(colon))
+}
+
+// zigbee_child_indent is how far the entries of the section whose header line
+// ends just before `rest` are indented: the indent of its first key, or 2.
+fn zigbee_child_indent(rest: string) u32 {
+    var probe: string = rest
+    while probe != "" {
+        let at: i32 = str_index_of(probe, "\n")
+        var line: string = probe
+        if at < 0 {
+            probe = ""
+        } else {
+            line = str_slice(probe, 0, u32(at))
+            probe = str_slice(probe, u32(at) + 1, strlen(probe) - u32(at) - 1)
+        }
+        let trimmed: string = str_trim(line)
+        if trimmed == "" || str_starts_with(trimmed, "#") {
+            continue
+        }
+        let indent: u32 = zigbee_indent(line)
+        if indent == 0 {
+            return 2
+        }
+        return indent
+    }
+    return 2
+}
+
+// zigbee_section_has is whether the section whose header ends just before
+// `rest` sets `key` at its entries' indent.
+fn zigbee_section_has(rest: string, key: string, child: u32) bool {
+    var probe: string = rest
+    while probe != "" {
+        let at: i32 = str_index_of(probe, "\n")
+        var line: string = probe
+        if at < 0 {
+            probe = ""
+        } else {
+            line = str_slice(probe, 0, u32(at))
+            probe = str_slice(probe, u32(at) + 1, strlen(probe) - u32(at) - 1)
+        }
+        let trimmed: string = str_trim(line)
+        if trimmed == "" || str_starts_with(trimmed, "#") {
+            continue
+        }
+        let indent: u32 = zigbee_indent(line)
+        if indent == 0 {
+            return false
+        }
+        if indent == child && str_eq(zigbee_line_key(line), key) {
+            return true
+        }
+    }
+    return false
+}
+
+fn zigbee_pad(count: u32) string {
+    var pad: string = ""
+    var k: u32 = 0
+    while k < count {
+        pad = pad + " "
+        k = k + 1
+    }
+    return pad
+}
+
+// zigbee_yaml_get is the value of `key` in a YAML file's top-level `section`
+// (or at the top level when the section is ""): a scalar without its quotes, or
+// a block list (`- 1` lines) written as a flow list, `[1, 2]`. "" when the key
+// is not there.
+fn zigbee_yaml_get(text: string, section: string, key: string) string {
+    var inside: bool = section == ""
+    var child: u32 = 0
+    var collecting: bool = false
+    var key_indent: u32 = 0
+    var items: string = ""
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        let trimmed: string = str_trim(line)
+        if trimmed == "" || str_starts_with(trimmed, "#") {
+            continue
+        }
+        let indent: u32 = zigbee_indent(line)
+        if collecting {
+            if indent >= key_indent && str_starts_with(trimmed, "-") {
+                if items != "" {
+                    items = items + ", "
+                }
+                items = items + str_trim(str_slice(trimmed, 1, strlen(trimmed) - 1))
+                continue
+            }
+            return "[" + items + "]"
+        }
+        if indent == 0 && section != "" {
+            inside = str_eq(zigbee_line_key(line), section)
+            child = zigbee_child_indent(rest)
+            continue
+        }
+        if !inside || indent != child || !str_eq(zigbee_line_key(line), key) {
+            continue
+        }
+        let colon: i32 = str_index_of(trimmed, ":")
+        var value: string = str_trim(str_slice(trimmed, u32(colon) + 1, strlen(trimmed) - u32(colon) - 1))
+        if value == "" {
+            collecting = true
+            key_indent = indent
+            continue
+        }
+        let n: u32 = strlen(value)
+        if n >= 2 && ((str_starts_with(value, "\"") && str_slice(value, n - 1, 1) == "\"") ||
+            (str_starts_with(value, "'") && str_slice(value, n - 1, 1) == "'")) {
+            value = str_slice(value, 1, n - 2)
+        }
+        return value
+    }
+    if collecting {
+        return "[" + items + "]"
+    }
+    return ""
+}
+
+// zigbee_yaml_set sets `key` in a YAML file's top-level `section` (the top level
+// when "") to a value written as given: the key's line is replaced, with any
+// lines nested under it (a block list), or the key is added as the section's
+// first entry; a section that is not there is added at the end. Every other line
+// is kept as it was.
+// @req MESH-ZB-0005
+fn zigbee_yaml_set(text: string, section: string, key: string, value: string) string {
+    var out: string = ""
+    var inside: bool = section == ""
+    var seen_section: bool = section == ""
+    var done: bool = false
+    var child: u32 = 0
+    var skipping: bool = false
+    var skip_indent: u32 = 0
+    var rest: string = text
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        let trimmed: string = str_trim(line)
+        let indent: u32 = zigbee_indent(line)
+        if skipping {
+            // A block list under the replaced key: its items are more indented,
+            // or at the key's own indent when the key is at the top level.
+            if trimmed != "" && (indent > skip_indent || (indent == skip_indent && str_starts_with(trimmed, "-"))) {
+                continue
+            }
+            skipping = false
+        }
+        if trimmed != "" && !str_starts_with(trimmed, "#") && indent == 0 && section != "" {
+            inside = str_eq(zigbee_line_key(line), section)
+            out = out + line + "\n"
+            if inside {
+                seen_section = true
+                child = zigbee_child_indent(rest)
+                if !done && !zigbee_section_has(rest, key, child) {
+                    out = out + zigbee_pad(child) + key + ": " + value + "\n"
+                    done = true
+                }
+            }
+            continue
+        }
+        if inside && !done && trimmed != "" && indent == child && str_eq(zigbee_line_key(line), key) {
+            out = out + zigbee_pad(indent) + key + ": " + value + "\n"
+            done = true
+            skipping = true
+            skip_indent = indent
+            continue
+        }
+        out = out + line + "\n"
+    }
+    if !done {
+        if section == "" {
+            out = out + key + ": " + value + "\n"
+        } else if !seen_section {
+            out = out + section + ":\n  " + key + ": " + value + "\n"
+        }
+    }
+    return out
+}
+
+// zigbee_yaml_quote is a value as a double-quoted YAML scalar.
+fn zigbee_yaml_quote(value: string) string {
+    return "\"" + str_replace(str_replace(value, "\\", "\\\\"), "\"", "\\\"") + "\""
+}
+
+// zigbee_config_rewrite sets again, in a configuration Zigbee2MQTT may have
+// rewritten, the keys Mesh owns — the broker's address, the user, the base topic
+// and client id, the serial port and the adapter — and nothing else, so the
+// network key, the PAN ids, the channel and Zigbee2MQTT's own state stay as it
+// wrote them.
+// @req MESH-ZB-0005
+fn zigbee_config_rewrite(text: string, mesh: string, coordinator: string, server: string, user: string,
+    serial_port: string, adapter: string) string {
+    var out: string = zigbee_yaml_set(text, "mqtt", "server", zigbee_yaml_quote(server))
+    out = zigbee_yaml_set(out, "mqtt", "user", zigbee_yaml_quote(user))
+    out = zigbee_yaml_set(out, "mqtt", "base_topic", zigbee_yaml_quote(zigbee_base_topic(mesh, coordinator)))
+    out = zigbee_yaml_set(out, "mqtt", "client_id", zigbee_yaml_quote(user))
+    out = zigbee_yaml_set(out, "serial", "port", zigbee_yaml_quote(serial_port))
+    return zigbee_yaml_set(out, "serial", "adapter", adapter)
+}
+
+// zigbee_network_kept is whether a configuration and its secret file hold a
+// network Zigbee2MQTT made: a network key and PAN ids that are no longer
+// GENERATE.
+fn zigbee_network_kept(config: string, secret: string) bool {
+    let key: string = zigbee_yaml_get(secret, "", "network_key")
+    let pan: string = zigbee_yaml_get(config, "advanced", "pan_id")
+    return key != "" && key != "GENERATE" && pan != "" && pan != "GENERATE"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The bridge                                                                */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_bridge_state is what `<base>/bridge/state` says: "online", "offline",
+// or "" while it has said nothing. Zigbee2MQTT 2.x writes `{"state":"online"}`;
+// a bare word, as 1.x wrote, is read too.
+// @req MESH-ZB-0009
+fn zigbee_bridge_state(payload: string) string {
+    let said: string = str_trim(payload)
+    if said == "" {
+        return ""
+    }
+    var state: string = said
+    if str_starts_with(said, "{") {
+        state = json_text(json_member(said, "state"))
+    }
+    if state == "online" {
+        return "online"
+    }
+    return "offline"
+}
+
+// zigbee_bridge_info is what `<base>/bridge/info` says, as
+// `version|firmware|channel|permit_join|permit_join_end` (permit_join_end in
+// seconds, or ""): the Zigbee2MQTT version, the coordinator's firmware (its type
+// and revision), the network's channel, and whether joining is open and until
+// when.
+// @req MESH-ZB-0009, MESH-ZB-0010
+fn zigbee_bridge_info(payload: string) string {
+    let info: string = str_trim(payload)
+    if !str_starts_with(info, "{") {
+        return "||||"
+    }
+    var firmware: string = json_text(json_at(info, "coordinator.type"))
+    let revision: string = json_text(json_at(info, "coordinator.meta.revision"))
+    if revision != "" {
+        if firmware != "" {
+            firmware = firmware + " "
+        }
+        firmware = firmware + revision
+    }
+    var end: string = json_text(json_at(info, "permit_join_end"))
+    // Zigbee2MQTT says when joining ends in milliseconds since 1970.
+    if strlen(end) > 3 {
+        end = str_slice(end, 0, strlen(end) - 3)
+    } else {
+        end = ""
+    }
+    return str_replace(json_text(json_at(info, "version")), "|", "/") + "|" + str_replace(firmware, "|", "/") + "|" +
+        json_text(json_at(info, "network.channel")) + "|" + json_text(json_at(info, "permit_join")) + "|" + end
+}
+
+// zigbee_permit_time_ok is whether a time asked for joining is a whole number of
+// seconds from 0 (close) to 254: joining is never opened without a bound.
+// @req MESH-ZB-0010
+fn zigbee_permit_time_ok(text: string) bool {
+    if text == "" || strlen(text) > 3 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(text) {
+        let c: string = str_slice(text, i, 1)
+        if c < "0" || c > "9" {
+            return false
+        }
+        i = i + 1
+    }
+    return u32(int_from_str(text)) <= ZIGBEE_PERMIT_MAX_S
+}
+
+// zigbee_permit_left is how many seconds joining stays open: until the end the
+// bridge said, or, while it has not said one, until the time Mesh asked for ran
+// from when it asked; 0 when the bridge says joining is closed.
+// @req MESH-ZB-0010
+fn zigbee_permit_left(open: string, end_s: string, asked_at: u32, asked_time: u32, now: u32) u32 {
+    if open == "false" {
+        return 0
+    }
+    if end_s != "" {
+        let end: u32 = u32(int_from_str(end_s))
+        if end > now {
+            return end - now
+        }
+        return 0
+    }
+    if asked_at > 0 && asked_at + asked_time > now {
+        return asked_at + asked_time - now
+    }
+    return 0
+}
+
+// The bridge requests, as Zigbee2MQTT 2.x reads them.
+
+fn zigbee_permit_payload(time: u32) string {
+    return "{\"time\":" + int_to_str(time) + "}"
+}
+
+fn zigbee_rename_payload(ieee: string, to: string, transaction: string) string {
+    return "{\"from\":\"" + ieee + "\",\"to\":\"" + to + "\",\"transaction\":\"" + transaction + "\"}"
+}
+
+fn zigbee_remove_payload(ieee: string, transaction: string) string {
+    return "{\"id\":\"" + ieee + "\",\"transaction\":\"" + transaction + "\"}"
+}
+
+// zigbee_response_outcome is what a bridge response says about a request:
+// "ok", "error", or "" when the response is for another transaction or is not
+// one Zigbee2MQTT wrote.
+// @req MESH-ZB-0012, MESH-ZB-0013
+fn zigbee_response_outcome(payload: string, transaction: string) string {
+    let said: string = str_trim(payload)
+    if transaction == "" || !str_starts_with(said, "{") {
+        return ""
+    }
+    if !str_eq(json_text(json_member(said, "transaction")), transaction) {
+        return ""
+    }
+    let status: string = json_text(json_member(said, "status"))
+    if status == "ok" {
+        return "ok"
+    }
+    if status == "error" {
+        return "error"
+    }
+    return ""
+}
+
+// zigbee_response_error is the error a bridge response gives, or "".
+fn zigbee_response_error(payload: string) string {
+    return json_text(json_member(str_trim(payload), "error"))
+}
+
+// zigbee_clean is a value kept in a `|` separated line: no `|` and no line break.
+fn zigbee_clean(value: string) string {
+    return str_replace(str_replace(str_replace(value, "|", "/"), "\n", " "), "\r", " ")
+}
+
+// zigbee_discovered are the devices of the newest `<base>/bridge/devices` that
+// are not the coordinator and not in the plan (`planned` holds the plan's IEEE
+// addresses as `|0x…|0x…|`), one line each:
+//   ieee|friendly_name|vendor|model|supported|interview_state|description
+// @req MESH-ZB-0011
+fn zigbee_discovered(devices: string, planned: string) string {
+    var out: string = ""
+    var rest: string = json_items(devices)
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        let ieee: string = json_text(json_member(item, "ieee_address"))
+        let kind: string = json_text(json_member(item, "type"))
+        if !zigbee_ieee_ok(ieee) || kind == "Coordinator" || str_index_of(planned, "|" + ieee + "|") >= 0 {
+            continue
+        }
+        let definition: string = json_member(item, "definition")
+        var supported: string = json_text(json_member(item, "supported"))
+        if supported == "" {
+            supported = "false"
+        }
+        out = out + ieee + "|" + zigbee_clean(json_text(json_member(item, "friendly_name"))) + "|" +
+            zigbee_clean(json_text(json_member(definition, "vendor"))) + "|" +
+            zigbee_clean(json_text(json_member(definition, "model"))) + "|" + supported + "|" +
+            zigbee_clean(json_text(json_member(item, "interview_state"))) + "|" +
+            zigbee_clean(json_text(json_member(definition, "description"))) + "\n"
+    }
+    return out
+}
+
+// zigbee_manifest_match is the device manifest that reads a joined device: the
+// first of `rows` (`name|zigbee.model|zigbee.vendor` lines) whose model is the
+// device's and whose vendor, when it names one, is the device's too; "" when
+// none does.
+// @req MESH-ZB-0011
+fn zigbee_manifest_match(model: string, vendor: string, rows: string) string {
+    if model == "" {
+        return ""
+    }
+    var rest: string = rows
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        let name: string = str_field(line, "|", 0)
+        let wanted_model: string = str_field(line, "|", 1)
+        let wanted_vendor: string = str_field(line, "|", 2)
+        if name != "" && str_eq(wanted_model, model) && (wanted_vendor == "" || str_eq(wanted_vendor, vendor)) {
+            return name
+        }
+    }
+    return ""
+}
+
+// zigbee_adopt_problem is why a joined device cannot be adopted yet, or "": its
+// interview is not done (`interview`), or no manifest reads it (`manifest`).
+// @req MESH-ZB-0012
+fn zigbee_adopt_problem(interview: string, manifest: string) string {
+    if interview != "SUCCESSFUL" {
+        return "interview"
+    }
+    if manifest == "" {
+        return "manifest"
+    }
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Running it                                                                */
+/* -------------------------------------------------------------------------- */
+
+// zigbee_node_major is the major version a `node --version` answer names
+// (`v24.11.1` is "24"), or "".
+// @req MESH-ZB-0008
+fn zigbee_node_major(answer: string) string {
+    var text: string = str_trim(answer)
+    if str_starts_with(text, "v") {
+        text = str_slice(text, 1, strlen(text) - 1)
+    }
+    let dot: i32 = str_index_of(text, ".")
+    if dot <= 0 {
+        return ""
+    }
+    let major: string = str_slice(text, 0, u32(dot))
+    var i: u32 = 0
+    while i < strlen(major) {
+        let c: string = str_slice(major, i, 1)
+        if c < "0" || c > "9" {
+            return ""
+        }
+        i = i + 1
+    }
+    return major
+}
+
+// zigbee_major_wanted is whether a major version is one the plugin's
+// `node_major` list names (`[22, 24]`, or `22 24`).
+// @req MESH-ZB-0008
+fn zigbee_major_wanted(majors: string, major: string) bool {
+    if major == "" {
+        return false
+    }
+    let words: string = " " + str_replace(str_replace(str_replace(majors, "[", " "), "]", " "), ",", " ") + " "
+    return str_index_of(words, " " + major + " ") >= 0
+}
+
+// zigbee_container_name is the name of a coordinator's container on a board.
+fn zigbee_container_name(mesh: string, coordinator: string) string {
+    return "rh-z2m-" + mesh + "-" + coordinator
+}
+
+// zigbee_docker_run is the command that runs the pinned Zigbee2MQTT image for a
+// coordinator on a board: detached, named after the mesh and the coordinator,
+// restarted unless it is stopped, the serial port mapped as a device, the data
+// folder mounted, and the onboarding page never served. Every value it holds is
+// a topic level, a checked device path, a checked folder or the plugin's image,
+// so it is one command and nothing else; "" when one of them is not.
+// @req MESH-ZB-0007
+fn zigbee_docker_run(mesh: string, coordinator: string, port: string, folder: string, image: string) string {
+    if !zigbee_level_ok(mesh) || !zigbee_level_ok(coordinator) || !zigbee_port_ok(port) || image == "" ||
+        str_index_of(image, " ") >= 0 || str_index_of(image, "'") >= 0 || str_index_of(folder, "'") >= 0 {
+        return ""
+    }
+    let name: string = zigbee_container_name(mesh, coordinator)
+    return "docker rm -f " + name + " >/dev/null 2>&1; docker run -d --name " + name +
+        " --restart unless-stopped --device " + port + ":" + port + " -v \"" + folder + "\":/app/data" +
+        " -e Z2M_ONBOARD_NO_SERVER=1 " + image
+}
+
+// zigbee_hex is a text as lowercase hex digits, two per byte: how a file
+// travels in a sealed block, whose values are one line each.
+// @req MESH-ZB-0016
+fn zigbee_hex(text: string) string {
+    let digits: string = "0123456789abcdef"
+    var out: string = ""
+    var i: u32 = 0
+    while i < strlen(text) {
+        let b: u32 = u32(str_at(text, i))
+        out = out + str_slice(digits, b / 16, 1) + str_slice(digits, b % 16, 1)
+        i = i + 1
+    }
+    return out
+}
+
+fn zigbee_hex_digit(c: string) u32 {
+    let digits: string = "0123456789abcdef"
+    let at: i32 = str_index_of(digits, c)
+    if at < 0 {
+        return 16
+    }
+    return u32(at)
+}
+
+// zigbee_unhex is the text hex digits stand for, or "" when they are not hex.
+// @req MESH-ZB-0016
+fn zigbee_unhex(hex: string) string {
+    if strlen(hex) % 2 != 0 {
+        return ""
+    }
+    var out: string = ""
+    var i: u32 = 0
+    while i < strlen(hex) {
+        let high: u32 = zigbee_hex_digit(str_slice(hex, i, 1))
+        let low: u32 = zigbee_hex_digit(str_slice(hex, i + 1, 1))
+        if high > 15 || low > 15 {
+            return ""
+        }
+        out = out + str_from_byte(u8(high * 16 + low))
+        i = i + 2
+    }
+    return out
+}

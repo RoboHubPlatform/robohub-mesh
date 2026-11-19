@@ -1,0 +1,324 @@
+# Zigbee: a coordinator (a USB Zigbee radio) placed under a board of the mesh
+# that can host it, the Zigbee2MQTT program Mesh runs for it on that board, its
+# broker user, pairing devices, and reading and switching them over the broker
+# (src/mesh/zigbee.rho, devices.rho, editor.rho, catalog.rho, projectfile.rho).
+# Nothing implements these yet: they are proposed, with ADR-0010 and
+# robohub:ADR-0017, for the maintainer to decide before any code is written.
+level: SUB
+prefix: MESH-ZB
+title: Zigbee coordinators and devices
+requirements:
+  # The coordinator in the plan
+  - id: MESH-ZB-0001
+    title: A coordinator is a device node of kind coordinator
+    statement: >
+      Mesh shall offer, when adding a device, the devices whose manifest's
+      `device.kind` is `coordinator`, and shall keep such a node in the plan as a
+      device node with its device, its parent board, its serial port and a name
+      unique in the mesh, which is also its address; a coordinator shall have no
+      transport of its own and shall not be read or switched as a device.
+    rationale: The radio is hardware of the mesh, planned like the rest; making it a device node keeps one way of adding hardware, and its manifest says what it needs (robohub-devices ADR-0003).
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, plan]
+
+  - id: MESH-ZB-0002
+    title: A coordinator goes only under a board that can host it
+    statement: >
+      Mesh shall offer as a coordinator's parent, and accept, only the gateway or
+      a node whose board declares every capability the coordinator's manifest
+      lists under `needs:` (for a USB coordinator `host: true` and
+      `usb_host: true`), treating the native gateway as declaring both; it shall
+      refuse any other parent naming the capability the board lacks, offer no
+      coordinator at all in a mesh with no such board, and allow at most one
+      coordinator per board.
+    rationale: A USB radio needs a USB host and a machine that runs Zigbee2MQTT; a Pico, an ESP32, an STM32 or an AVR board has neither, and two coordinators on one board would contend for one serial port (robohub:ADR-0017).
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010, robohub:ADR-0017]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, plan, capabilities]
+
+  - id: MESH-ZB-0003
+    title: A coordinator's serial port is a device path
+    statement: >
+      Mesh shall offer as a coordinator's serial port the entries of
+      `/dev/serial/by-id/` on the board, marking those that match the `usb.by_id`
+      patterns of its manifest, and shall accept a port typed by hand only as an
+      absolute path under `/dev/` without spaces, `..` or shell characters; on
+      this machine Mesh shall say,
+      before starting the coordinator, when the port does not exist or this user
+      cannot read and write it, naming the group that owns it.
+    rationale: Behind usbipd or a VM the by-id name can differ from the vendor's, so the person picks from what is there. A wrong port is the first thing that goes wrong with a USB radio (an unplugged dongle, a WSL machine where it was not attached, a user not in dialout); it must be said in words, and the path is passed to a program, so it must be a path and nothing else.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, usb, security]
+
+  # Running Zigbee2MQTT
+  - id: MESH-ZB-0004
+    title: A coordinator is a broker user of its own, confined to its base topic
+    statement: >
+      Before starting a coordinator, Mesh shall obtain from the keeper a broker
+      user for it limited to its base topic `zigbee/<mesh>/<coordinator>`
+      (keeper KEEP-PROV-0006), keep the password owner-only in the mesh's folder
+      and hand it to Zigbee2MQTT only through an owner-only secret file, never on
+      a command line, in the plan, in a log or in an unsealed export; removing
+      the coordinator or the mesh shall remove the user.
+    rationale: Zigbee2MQTT must reach only its own coordinator's topics, and must not carry Mesh's own broker credential, least of all to another board (SYS-0028, SYS-0033).
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010, robohub-keeper:ADR-0006]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, mqtt, security, least-privilege]
+
+  - id: MESH-ZB-0005
+    title: Zigbee2MQTT's configuration is written from the plugin's template
+    statement: >
+      Mesh shall write a coordinator's Zigbee2MQTT configuration from the
+      robohub-zigbee2mqtt plugin's template — the broker's address and the
+      coordinator's user, its password and the network key as `!secret`
+      references to an owner-only `secret.yaml`, the base topic, the serial port
+      and the adapter its manifest names (always written: Zigbee2MQTT 2.x has no
+      default adapter), the channel the coordinator node records (15 unless the
+      person chose another before the first start), availability on, the web
+      frontend and Home Assistant discovery off, and a network key, PAN id and
+      extended PAN id of `GENERATE` — into a data folder of the coordinator's own,
+      owner-only, before Zigbee2MQTT first starts, and shall start it with
+      `Z2M_ONBOARD_NO_SERVER` set so it never opens its onboarding page; and once
+      Zigbee2MQTT has started there,
+      Mesh shall change only the keys it owns and leave the network's keys and
+      Zigbee2MQTT's own state as Zigbee2MQTT wrote them.
+    rationale: Zigbee2MQTT's built-in network key and PAN ids are the same for every installation, and without a configuration it serves an unauthenticated setup page on every interface. The network key is made once and must survive every restart and upgrade, or every device must be paired again; Zigbee2MQTT rewrites its own configuration, so Mesh owns some keys and not the file (robohub:ADR-0017).
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010, robohub:ADR-0017]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, configuration, security]
+
+  - id: MESH-ZB-0006
+    title: On this machine Zigbee2MQTT runs as a process Mesh starts and stops
+    statement: >
+      For a coordinator under the native gateway, Mesh shall start Zigbee2MQTT —
+      the version the plugin pins, from `~/.rho/toolchains/zigbee2mqtt/<version>`,
+      with the Node.js the plugin requires and `ZIGBEE2MQTT_DATA` set to the
+      coordinator's data folder — as a process with its data folder,
+      its log and its process id in the mesh's folder, as it starts the native
+      gateway; it shall stop it by that process id only when the process is that
+      Zigbee2MQTT, and starting or restarting the gateway shall not restart it.
+    rationale: A native gateway already runs this way; the coordinator is the mesh's, not the keeper's, and a gateway rebuild must not drop the Zigbee network.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010, robohub:ADR-0017]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, process]
+
+  - id: MESH-ZB-0007
+    title: On another host board Zigbee2MQTT runs as a container
+    statement: >
+      For a coordinator under a node whose board deploys with `docker`, Mesh shall
+      run the official Zigbee2MQTT image (`ghcr.io/koenkk/zigbee2mqtt`) at the version the plugin pins on that
+      board, over the board's own deployment login, with the serial port mapped as
+      a device, a data folder on the board kept owner-only and a restart policy;
+      and it shall refuse to, saying why, while the keeper reports that the broker
+      listens on loopback only.
+    rationale: The UNO Q's Linux side runs Docker and is reached over SSH already; a coordinator there needs the broker opened to the network by an admin (SYS-0032), which Mesh must say rather than start a client that never connects.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010, robohub:ADR-0017]
+    status: approved
+    verification: demonstration
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, deploy, docker]
+
+  - id: MESH-ZB-0008
+    title: What the machine lacks for a coordinator is said before it starts
+    statement: >
+      Mesh shall say, on the coordinator's page and before starting it on this
+      machine, when Node.js of the version the plugin requires or the pinned
+      Zigbee2MQTT is missing, and offer a job that installs that Zigbee2MQTT
+      version into `~/.rho/toolchains/zigbee2mqtt/<version>` (its release source,
+      then `pnpm install --frozen-lockfile` through Node.js's corepack); Node.js itself is
+      installed by `rho keeper sync` from the plugin's `system_deps`.
+    rationale: SYS-0004; a coordinator that fails to start because a program is missing looks, from outside, like a broken dongle.
+    satisfies: [MESH-0033, SYS-0004]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: demonstration
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, dependencies]
+
+  - id: MESH-ZB-0009
+    title: A coordinator's state is shown from its bridge
+    statement: >
+      Mesh shall show a coordinator as online or offline from the newest payload
+      of `<base>/bridge/state`, as unknown while it has said nothing, and shall
+      show the Zigbee2MQTT version, the coordinator's firmware and the network
+      channel from `<base>/bridge/info` when it has been published.
+    rationale: The person must see whether the radio and its program are up before asking why a plug does not answer.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, status]
+
+  # Pairing
+  - id: MESH-ZB-0010
+    title: Joining is opened for a bounded time only
+    statement: >
+      Mesh shall open a coordinator's network to joining only when a person
+      holding the mesh's plan asks, from a form posted from Mesh's own pages, by
+      publishing `<base>/bridge/request/permit_join` with a time of at most 254
+      seconds, shall show the time left, shall let the person close it early with
+      a time of 0, and shall never open joining without a bound.
+    rationale: An open Zigbee network admits any device in range, and a device joining hands it the network key; joining open by mistake must close by itself.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, pairing, security]
+
+  - id: MESH-ZB-0011
+    title: Devices that joined and are not in the plan are listed
+    statement: >
+      Mesh shall list, for a coordinator, every device in the newest retained
+      `<base>/bridge/devices` that is not the coordinator and is not yet in the
+      plan, with its IEEE address, vendor, model, whether Zigbee2MQTT supports it
+      and its `interview_state`, and with the device manifest whose
+      `zigbee.model` (and `zigbee.vendor`, when given) matches it, or none.
+    rationale: A joined device is known to the coordinator first and to the plan only when the person adopts it; the person must see what joined and whether RoboHub knows how to read it.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, pairing]
+
+  - id: MESH-ZB-0012
+    title: Adopting a device adds it to the plan under its coordinator
+    statement: >
+      Adopting a listed device whose `interview_state` is `SUCCESSFUL` and whose model a
+      device manifest matches shall add a device node under the coordinator with
+      transport `zigbee`, that device, its IEEE address and a name unique in the
+      mesh as its address, and shall ask Zigbee2MQTT to rename it to that address
+      (`<base>/bridge/request/device/rename` with `{"from": <IEEE address>, "to":
+      <address>}` and a transaction id), keeping the node marked as not yet renamed
+      until the response with that transaction says `ok`; a device with no matching manifest or
+      an incomplete interview shall be listed but not adoptable, saying which.
+    rationale: Mesh reads a device by its topic, which Zigbee2MQTT names after the device's friendly name; renaming it to the plan's address is what makes the plan's address the topic (MESH-ZB-0014).
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, pairing, plan]
+
+  - id: MESH-ZB-0013
+    title: Removing a Zigbee device takes it off the network
+    statement: >
+      Removing a Zigbee device node from the plan shall ask Zigbee2MQTT to remove
+      the device from the network (`<base>/bridge/request/device/remove` with
+      `{"id": <IEEE address>}`) and say
+      when the coordinator is offline or the request fails, so the person can
+      reset the device by hand.
+    rationale: A device left on the network keeps the network key and keeps reporting; leaving the plan should mean leaving the network.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, pairing, security]
+
+  # Reading and switching
+  - id: MESH-ZB-0014
+    title: A Zigbee device is read and switched as an MQTT device under its coordinator's base topic
+    statement: >
+      Mesh shall read and switch a device node of transport `zigbee` exactly as an
+      MQTT device whose prefix is `<base>/<address>`, with its coordinator's base
+      topic, from its manifest's `telemetry_mqtt`, field lines and actions
+      (MESH-0029 to MESH-0032, MESH-0034, MESH-0035), with a switch confirmed from
+      the state the device reports (MESH-0022).
+    rationale: Zigbee2MQTT makes every Zigbee device an MQTT device; reusing the MQTT device path means a Zigbee plug gets the same readings, history, controls and confirmation as a Tasmota plug without a second implementation.
+    satisfies: [MESH-0033, MESH-0022]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, devices, mqtt]
+
+  - id: MESH-ZB-0015
+    title: Mesh's bus access covers every coordinator's topics
+    statement: >
+      Mesh's manifest shall subscribe to `zigbee/#`, publish `zigbee/+/+/+/set`
+      and `zigbee/+/+/bridge/request/#`, and declare `zigbee` under `bus.issue`,
+      and Mesh shall refuse a mesh id or a coordinator or device address that is
+      not a valid topic level (no `/`, `+`, `#`, space or newline).
+    rationale: One set of patterns covers every mesh and coordinator, so adding one needs no manifest change and no broker rewrite; an address with a topic character would reach another device's topics.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010, robohub-keeper:ADR-0006]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, mqtt, least-privilege]
+
+  # Carrying a mesh
+  - id: MESH-ZB-0016
+    title: The project file carries coordinators and Zigbee devices, and seals the network
+    statement: >
+      The project file shall carry coordinator nodes and Zigbee device nodes with
+      their IEEE addresses, as schema 2 (`schemas/mesh-project.v2.json`), with a
+      schema 1 file carried forward; a sealed export shall carry each
+      coordinator's network key, PAN id, extended PAN id, channel and Zigbee2MQTT's
+      coordinator backup in `sealed:`, an unsealed export shall list them under
+      `omitted:`, and an import that restores them shall write them into the
+      coordinator's data folder before Zigbee2MQTT first starts there.
+    rationale: Moving a mesh with its network key keeps every paired device (decision D5, robohub:ADR-0017); without it every device must be paired again, which the import must say.
+    satisfies: [MESH-0033, MESH-0025, MESH-0026]
+    decided_by: [ADR-0010, ADR-0004, ADR-0005]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, transfer, secrets]
+
+  - id: MESH-ZB-0017
+    title: The guide says how to make a coordinator work
+    statement: >
+      Mesh's documentation shall describe adding a coordinator — which boards
+      can host one, the serial port and the dialout group, attaching the dongle to
+      WSL with usbipd, opening the broker for a coordinator on another board,
+      installing Zigbee2MQTT — pairing and adopting a device, and what to do when
+      the coordinator is offline or a device does not join.
+    rationale: Most of what goes wrong with a USB radio is outside Mesh; the guide is where the person finds it.
+    satisfies: [MESH-0033]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [zigbee, docs]

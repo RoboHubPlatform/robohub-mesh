@@ -23,11 +23,14 @@ module mesh.domain.project_file
 // before the runtime's reader sees it, every problem a file can have, the
 // migration of an older schema, and the pure decisions an import makes. Nothing
 // here reads or writes a file, so all of it is tested on its own
-// (tests/domain_test.rho), and schemas/mesh-project.v1.json publishes the same
+// (tests/domain_test.rho), and schemas/mesh-project.v2.json publishes the same
 // keys and classes, held to these by tests/project_schema_test.py.
 
 const PROJECT_FORMAT: string = "robohub-mesh-project"
-const PROJECT_SCHEMA: u32 = 1
+// Schema 2 added Zigbee coordinators and devices (MESH-ZB-0016): the node fields
+// `channel` and `ieee`, a coordinator's network under `sealed:` and its name
+// under `omitted:`. A schema 1 file is carried forward unchanged.
+const PROJECT_SCHEMA: u32 = 2
 const PROJECT_SECRETS_FORMAT: string = "robohub-mesh-secrets"
 // The largest file an import reads, and the most nodes a mesh has.
 const PROJECT_MAX_BYTES: u32 = 1048576
@@ -48,7 +51,7 @@ const PROJECT_PLAN_KEYS: string = "baud:text bus_address:text child_endpoint:tex
 // A node's definition fields: what it is, where it hangs, its link and the
 // link's settings except the password, its module or device, and its key epoch,
 // revocation and production setting.
-const PROJECT_NODE_FIELDS: string = "address:text baud:text board:text bus_address:text child_endpoint:text child_host:text description:text device:text device_id:text driver:text epoch:digits gateway_host:text id:uid kind:kind link:text module:text name:text number:number parent:parent parent_endpoint:text parent_host:text parent_node:number port:text production:onoff revoked:flag role:text sensors:text serial_port:text ssid:text transport:text uid:uid"
+const PROJECT_NODE_FIELDS: string = "address:text baud:text board:text bus_address:text channel:channel child_endpoint:text child_host:text description:text device:text device_id:text driver:text epoch:digits gateway_host:text id:uid ieee:ieee kind:kind link:text module:text name:text number:number parent:parent parent_endpoint:text parent_host:text parent_node:number port:text production:onoff revoked:flag role:text sensors:text serial_port:text ssid:text transport:text uid:uid"
 
 // What else a plan holds, by kind, so that every key of a plan is accounted for:
 // a key in none of these lists is one this module has not been told about.
@@ -58,20 +61,21 @@ const PROJECT_PLACEMENT_KEYS: string = "area_id rest_port uplink_port"
 const PROJECT_IDENTITY_KEYS: string = "project.name project.description"
 const PROJECT_RUNTIME_KEYS: string = "revision updated current_step mesh_message build build_message build_node run_token import.wifi_needed import.catalog_missing"
 const PROJECT_RUNTIME_PREFIXES: string = "status. message. fault. step_"
-const PROJECT_RUNTIME_NODE_FIELDS: string = "rev state last_value last_checked"
+const PROJECT_RUNTIME_NODE_FIELDS: string = "rev state last_value last_checked zigbee_rename"
 
-// The names `omitted.` may list (and `omitted.node.<row>.password`).
+// The names `omitted.` may list (and `omitted.node.<row>.password` and
+// `omitted.node.<row>.zigbee_network`).
 const PROJECT_OMITTED_KEYS: string = "gateway_key relay_key signing_key gateway_token password"
 
 // The renames that carry a file from one schema to the next, as
 // `<from>:<old key>><new key>` words (an empty new key drops the old one). Schema
-// 1 is the first Mesh has written, so there are none yet.
+// 2 only added keys to schema 1, so there are none yet.
 const PROJECT_MIGRATIONS: string = ""
 
 // Values of each class, and whether the class takes them, as `class;value;1|0`
 // lines. The domain tests hold project_value_ok to them and the schema test
 // holds the published patterns to the same lines.
-const PROJECT_CLASS_SAMPLES: string = "text;Garden pump;1\ntext;;1\ntext;tab\there;0\nschema;1;1\nschema;one;0\nschema;;0\ntime;2026-11-19T10:00:00Z;1\ntime;2026-11-19 10:00;0\nmeshid;garden;1\nmeshid;Garden_2.b-c;1\nmeshid;.hidden;0\nmeshid;a..b;0\nmeshid;a/b;0\nmeshid;;0\nmeshidopt;;1\nmeshidopt;north;1\nmeshidopt;../x;0\nmeshids;;1\nmeshids;north south-2;1\nmeshids;north ../x;0\narea;7;1\narea;;1\narea;0;0\narea;65536;0\narea;07;0\nport;8080;1\nport;65535;1\nport;70000;0\nport;80a;0\nuid;0123456789abcdef;1\nuid;;1\nuid;0123456789ABCDEF;0\nuid;0123;0\nnumber;12;1\nnumber;;1\nnumber;0;0\ncount;0;1\ncount;64;1\ncount;65;0\ncount;;0\ndigits;30;1\ndigits;;1\ndigits;-1;0\nkind;compute;1\nkind;module;1\nkind;device;1\nkind;;1\nkind;robot;0\nonoff;on;1\nonoff;off;1\nonoff;yes;0\nflag;1;1\nflag;0;1\nflag;2;0\nparent;gateway;1\nparent;node.3;1\nparent;node.0;0\nparent;board;0\ncipher;aes-256-gcm;1\ncipher;aes-128-cbc;0\nkdf;pbkdf2-hmac-sha256;1\nkdf;scrypt;0\niterations;600000;1\niterations;1000;0\nsalt;00112233445566778899aabbccddeeff;1\nsalt;0011;0\nnonce;00112233445566778899aabb;1\nnonce;00112233445566778899aabbcc;0\nhex;00ff;1\nhex;0f0;0\nhex;;0\nformat;robohub-mesh-project;1\nformat;robohub-mesh;0\n"
+const PROJECT_CLASS_SAMPLES: string = "text;Garden pump;1\ntext;;1\ntext;tab\there;0\nschema;1;1\nschema;one;0\nschema;;0\ntime;2026-11-19T10:00:00Z;1\ntime;2026-11-19 10:00;0\nmeshid;garden;1\nmeshid;Garden_2.b-c;1\nmeshid;.hidden;0\nmeshid;a..b;0\nmeshid;a/b;0\nmeshid;;0\nmeshidopt;;1\nmeshidopt;north;1\nmeshidopt;../x;0\nmeshids;;1\nmeshids;north south-2;1\nmeshids;north ../x;0\narea;7;1\narea;;1\narea;0;0\narea;65536;0\narea;07;0\nport;8080;1\nport;65535;1\nport;70000;0\nport;80a;0\nuid;0123456789abcdef;1\nuid;;1\nuid;0123456789ABCDEF;0\nuid;0123;0\nnumber;12;1\nnumber;;1\nnumber;0;0\ncount;0;1\ncount;64;1\ncount;65;0\ncount;;0\ndigits;30;1\ndigits;;1\ndigits;-1;0\nkind;compute;1\nkind;module;1\nkind;device;1\nkind;;1\nkind;robot;0\nonoff;on;1\nonoff;off;1\nonoff;yes;0\nflag;1;1\nflag;0;1\nflag;2;0\nparent;gateway;1\nparent;node.3;1\nparent;node.0;0\nparent;board;0\ncipher;aes-256-gcm;1\ncipher;aes-128-cbc;0\nkdf;pbkdf2-hmac-sha256;1\nkdf;scrypt;0\niterations;600000;1\niterations;1000;0\nsalt;00112233445566778899aabbccddeeff;1\nsalt;0011;0\nnonce;00112233445566778899aabb;1\nnonce;00112233445566778899aabbcc;0\nhex;00ff;1\nhex;0f0;0\nhex;;0\nformat;robohub-mesh-project;1\nformat;robohub-mesh;0\nchannel;15;1\nchannel;;1\nchannel;26;1\nchannel;10;0\nchannel;27;0\nchannel;1a;0\nieee;0xa4c138000000abcd;1\nieee;;1\nieee;0xA4C138000000ABCD;0\nieee;a4c138000000abcd;0\nieee;0x1234;0\n"
 
 /* -------------------------------------------------------------------------- */
 /*  Words and lines                                                           */
@@ -287,6 +291,12 @@ fn project_value_ok(class: string, value: string) bool {
         }
         return str_index_of(value, "node.") == 0 && project_whole(str_slice(value, 5, strlen(value) - 5), 1, 99)
     }
+    if class == "channel" {
+        return value == "" || project_whole(value, 11, 26)
+    }
+    if class == "ieee" {
+        return value == "" || (strlen(value) == 18 && str_index_of(value, "0x") == 0 && project_lower_hex(str_slice(value, 2, 16)))
+    }
     if class == "cipher" {
         return value == "aes-256-gcm"
     }
@@ -329,6 +339,8 @@ fn project_class_message(class: string) string {
     if class == "salt" { return "must be 32 hex digits" }
     if class == "nonce" { return "must be 24 hex digits" }
     if class == "hex" { return "must be hex digits" }
+    if class == "channel" { return "must be a Zigbee channel from 11 to 26" }
+    if class == "ieee" { return "must be an IEEE address: 0x and 16 lowercase hex digits" }
     return "is not what schema 1 takes there (" + class + ")"
 }
 
@@ -411,7 +423,84 @@ fn project_omitted_ok(name: string) bool {
     if project_word_listed(PROJECT_OMITTED_KEYS, name) {
         return true
     }
-    return str_eq(project_node_field(name), "password") && plan_node_row(name) <= PROJECT_MAX_NODES
+    let field: string = project_node_field(name)
+    return (str_eq(field, "password") || str_eq(field, "zigbee_network")) && plan_node_row(name) <= PROJECT_MAX_NODES
+}
+
+// project_zigbee_omitted_lines name each coordinator's network an unsealed
+// export leaves out — its network key, PAN ids, channel and coordinator backup —
+// never a value of it. `rows` are `<row>|<coordinator>` lines, one for each
+// coordinator whose folder holds a network.
+// @req MESH-ZB-0016
+fn project_zigbee_omitted_lines(rows: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(rows) {
+        let line: string = project_line_at(rows, at)
+        at = project_line_next(rows, at)
+        let bar: i32 = str_index_of(line, "|")
+        if bar > 0 {
+            out = out + "omitted.node." + str_slice(line, 0, u32(bar)) + ".zigbee_network=the Zigbee network of coordinator " +
+                str_slice(line, u32(bar) + 1, strlen(line) - u32(bar) - 1) +
+                " (network key, PAN ids, channel, coordinator backup): without it every device must be paired again\n"
+        }
+    }
+    return out
+}
+
+// project_zigbee_secret_problem is why a sealed `zigbee.<row>.<what>` line may
+// not be in a sealed block of a mesh of `count` nodes, or "": its row is a node,
+// and its value is what Zigbee2MQTT writes there — a list of numbers for the
+// network key and the extended PAN id, a number for the PAN id, a channel, and
+// hex for the coordinator backup.
+// @req MESH-ZB-0016
+fn project_zigbee_secret_problem(key: string, value: string, count: u32) string {
+    if str_index_of(key, "zigbee.") != 0 {
+        return "not a coordinator's network"
+    }
+    let rest: string = str_slice(key, 7, strlen(key) - 7)
+    let dot: i32 = str_index_of(rest, ".")
+    if dot <= 0 {
+        return "not a coordinator's network"
+    }
+    let row: string = str_slice(rest, 0, u32(dot))
+    let what: string = str_slice(rest, u32(dot) + 1, strlen(rest) - u32(dot) - 1)
+    if !project_whole(row, 1, count) {
+        return "names no node"
+    }
+    if what == "pan_id" {
+        if project_whole(value, 0, 65535) {
+            return ""
+        }
+        return "the PAN id is not a number"
+    }
+    if what == "channel" {
+        if project_whole(value, 11, 26) {
+            return ""
+        }
+        return "the channel is not 11 to 26"
+    }
+    if what == "backup" {
+        if value != "" && strlen(value) % 2 == 0 && project_lower_hex(value) {
+            return ""
+        }
+        return "the coordinator backup is not hex"
+    }
+    if what == "network_key" || what == "ext_pan_id" {
+        if strlen(value) < 3 || str_slice(value, 0, 1) != "[" || str_slice(value, strlen(value) - 1, 1) != "]" {
+            return "the " + what + " is not a list"
+        }
+        var i: u32 = 1
+        while i + 1 < strlen(value) {
+            let c: string = str_slice(value, i, 1)
+            if !((c >= "0" && c <= "9") || c == "," || c == " " || c == "x" || (c >= "a" && c <= "f")) {
+                return "the " + what + " is not a list of numbers"
+            }
+            i = i + 1
+        }
+        return ""
+    }
+    return "not a coordinator's network"
 }
 
 // project_key_class is the class of a key of a project file, or "" for a key
