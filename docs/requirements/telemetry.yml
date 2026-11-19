@@ -1,0 +1,98 @@
+# The telemetry store: collecting each gateway's outbox, the series and their
+# identity, retention and roll-ups, the poller's backoff and faults, and the live
+# feed (src/mesh/telemetry.rho, plugins/mesh-telemetry/ports/telemetry.go).
+# Proposed until the maintainer approves them.
+level: SUB
+prefix: MESH-TEL
+title: Mesh telemetry store
+requirements:
+  - id: MESH-TEL-0001
+    title: An outbox page is stored in one transaction, then acknowledged
+    statement: >
+      Mesh's background worker shall read each started gateway's outbox in pages
+      of at most 500 readings after the cursor it keeps for that gateway, write a
+      page in one transaction, advance the cursor only with that commit, and then
+      acknowledge the page's highest sequence to the gateway.
+    rationale: A failure at any point leaves the page to be read again rather than lost.
+    satisfies: [MESH-0009]
+    decided_by: [robohub-gateway:ADR-0004, ADR-0003]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, ingest]
+
+  - id: MESH-TEL-0002
+    title: A reading is stored once per gateway and sequence
+    statement: >
+      The store shall keep at most one reading per gateway and sequence, so a
+      page read again after a failed acknowledgement, or a sequence the gateway's
+      feed has already committed sent again, adds nothing: no reading, no change
+      to the latest value, no fault and nothing on the live feed.
+    rationale: Delivery from the outbox is at least once; the history must still count each reading once.
+    satisfies: [MESH-0009]
+    decided_by: [robohub-gateway:ADR-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, ingest]
+
+  - id: MESH-TEL-0003
+    title: A gateway that does not answer is backed off and faulted once
+    statement: >
+      A gateway whose poll fails shall be asked again after 2 s, doubling at each
+      further failure up to the Storage tab's maximum (60 s by default), and the
+      first failure of an outage shall be recorded as one fault, cleared by the
+      next successful poll.
+    rationale: A dead link must not be hammered, nor fill the fault inbox.
+    satisfies: [MESH-0009, MESH-0017]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, faults]
+
+  - id: MESH-TEL-0004
+    title: A series is a source and a field, never a place
+    statement: >
+      A reading shall be kept under its board's source identity and field, never
+      under its area and node; a reading from a board that reports from a place
+      the plan gives another board shall be recorded as a fault and kept as its
+      own series.
+    rationale: Merging two boards at one place would make both histories wrong.
+    satisfies: [MESH-0010]
+    decided_by: [robohub:ADR-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, identity]
+
+  - id: MESH-TEL-0005
+    title: Readings are rolled up before they are pruned
+    statement: >
+      A maintenance pass, at start and every 6 hours by default, shall roll each
+      mesh's readings up by minute and hour and then prune raw readings older than
+      14 days, minute roll-ups older than 90, hourly roll-ups older than 1825 and
+      faults older than 365, each window changeable on the Storage tab.
+    rationale: A chart of an older season is still there after the raw rows are gone, and the store stops growing.
+    satisfies: [MESH-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, retention]
+
+  - id: MESH-TEL-0006
+    title: A mesh's live feed carries only what is stored, and only that mesh
+    statement: >
+      A reading shall reach a mesh's live feed only once it is stored, and each
+      mesh shall have a feed of its own.
+    rationale: A page is never shown a value the store does not hold, and a reader of one mesh hears no other's readings.
+    satisfies: [MESH-0013]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, live]

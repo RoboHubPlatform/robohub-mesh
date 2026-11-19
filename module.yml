@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.20.1
+  version: 0.20.2
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -26,6 +26,10 @@ description: >
   nodes, the network between them, and the firmware on their boards.
 
 platform: robohub
+
+# Mesh's requirements are numbered MESH-NNNN (and MESH-<SUB>-NNNN for its
+# subsystems) and serve the system requirements robohub holds.
+requirements: { prefix: MESH, parent: robohub }
 
 main: src/main.rho
 
@@ -56,7 +60,7 @@ sql:
 # The application's own files, embedded when it is built.
 assets:
   - module.yml
-  - docs/index.md
+  - docs/doc/index.md
 
 deps:
   rho-log: ">=0.1.2"
@@ -135,9 +139,9 @@ docs:
   title: The RoboHub Mesh application
   section: applications
   order: "31"
-  index: docs/index.md
+  index: docs/doc/index.md
   sources:
-    - docs/index.md
+    - docs/doc/index.md
 
 # What Mesh needs from the machine. Firmware for a board is built and flashed
 # through rho-target and the board's platform, which declare their own toolchains;

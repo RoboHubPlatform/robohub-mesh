@@ -98,6 +98,7 @@ fn deploy_gateway_address(text: string) string {
 }
 
 // deploy_node_signature is what a board's image is built from.
+// @req MESH-0003, MESH-BUILD-0001
 fn deploy_node_signature(text: string, index: u32) string {
     let row: string = "node." + int_to_str(index)
     var out: string = "board=" + plan_value(text, deploy_node_key(index, "board")) +
@@ -134,6 +135,7 @@ fn deploy_node_signature(text: string, index: u32) string {
 }
 
 // deploy_gateway_signature is what the gateway is started with.
+// @req MESH-BUILD-0001
 fn deploy_gateway_signature(text: string) string {
     var out: string = "runs=" + plan_value(text, "gateway") +
         ";host=" + plan_value(text, "gateway_host") +
@@ -196,6 +198,7 @@ fn deploy_segment_words(label: string) string {
 
 // deploy_reason says what differs between what was deployed and what is
 // planned: "" when nothing does, "never programmed" when nothing was.
+// @req MESH-BUILD-0002
 fn deploy_reason(deployed: string, planned: string) string {
     if deployed == "" {
         return "never programmed"

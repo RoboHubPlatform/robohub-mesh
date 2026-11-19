@@ -69,7 +69,7 @@ fn registry_from_keeper() bool {
     if status != 200 {
         return fetched > 0
     }
-    ignore_u32(rho_exec("mkdir", "-p " + dir, wizard_report("mkdir-registry")))
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + dir + "\n", wizard_report("mkdir-registry")))
     var rest: string = rho_read_text(report)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -122,7 +122,7 @@ fn registry_folder() string {
 
 fn registry_names() string {
     ensure_wizard_dir()
-    let code: u32 = rho_exec("ls", registry_folder(), wizard_report("ls-registry"))
+    let code: u32 = rho_exec_args("ls", registry_folder() + "\n", wizard_report("ls-registry"))
     if code != 0 {
         return ""
     }
@@ -146,12 +146,13 @@ fn mesh_workspace() string {
     return canonical_path(robohub_root() + "/..")
 }
 
+// @req MESH-PLAN-0006
 fn find_manifests(root: string, name: string) string {
     // Discovery is called while the state directory is being prepared. Asking
     // to prepare it here would re-enter that preparation from inside it.
     let report: string = wizard_report(name)
-    let code: u32 = rho_exec("find",
-        root + " -maxdepth 4 -type f -name module.yml", report)
+    let code: u32 = rho_exec_args("find",
+        root + "\n-maxdepth\n4\n-type\nf\n-name\nmodule.yml\n", report)
     if code != 0 {
         return ""
     }
@@ -1018,6 +1019,7 @@ fn node_assignments_count(assignments: string, prefix: string) u32 {
 // node_bus_plan returns one row per attached module:
 //   name|status|detail
 // where status is `ok`, `shared` or `conflict`.
+// @req MESH-PLAN-0004
 fn node_bus_plan(loc: string, index: u32) string {
     var rows: string = ""
     var assignments: string = ""
@@ -1131,6 +1133,7 @@ fn node_bus_plan(loc: string, index: u32) string {
     return rows
 }
 
+// @req MESH-PLAN-0004
 fn node_bus_conflicts(index: u32) bool {
     var rest: string = node_bus_plan("en", index)
     while rest != "" {
@@ -1566,6 +1569,7 @@ fn transport_label(transport: string) string {
     return transport
 }
 
+// @req MESH-PLAN-0005
 fn transport_options_for(index: u32) string {
     let parent: string = node_value(index, "parent", "gateway")
     let parent_board: string = endpoint_board(parent)
@@ -1779,18 +1783,7 @@ fn manifest_list_items(path: string, key: string) string {
     return out
 }
 
-fn signal_function_row(name: string) string {
-    let fn_name: string = str_trim(name)
-    if fn_name == "temperature" { return "temperature|Temperature|input|°C|temperature_c|numeric chart table" }
-    if fn_name == "humidity" { return "humidity|Humidity|input|%|humidity|numeric chart table" }
-    if fn_name == "pressure" { return "pressure|Pressure|input|hPa|pressure_hpa|numeric chart table" }
-    if fn_name == "altitude" { return "altitude|Altitude|input|m|altitude_m|numeric chart table" }
-    if fn_name == "light" { return "light|Light|input|%|light|numeric chart table" }
-    if fn_name == "analog" { return "analog|Analog|input||analog|numeric chart table" }
-    if fn_name == "button" { return "button|Button|input||button|numeric chart table" }
-    if fn_name == "pulse" { return "pulse|Pulse|input|bpm|pulse|numeric chart table" }
-    return ""
-}
+// signal_function_row is in src/mesh/domain/signals.rho.
 
 fn signal_function_rows(path: string) string {
     let names: string = manifest_list_items(path, "functions")
@@ -1813,19 +1806,7 @@ fn signal_function_rows(path: string) string {
     return out
 }
 
-fn signal_device_rows(kind: string) string {
-    if kind == "plug" {
-        return "switch|Switch|output||state|toggle button\n" +
-            "power|Power|input|W|power_w|numeric chart table"
-    }
-    if kind == "actuator" {
-        return "switch|Switch|output||state|toggle button"
-    }
-    if kind == "inverter" {
-        return "power|Power|input|W|power_w|numeric chart table"
-    }
-    return ""
-}
+// signal_device_rows is in src/mesh/domain/signals.rho.
 
 fn manifest_signal_rows(path: string, is_device: bool) string {
     let explicit: string = signal_rows(path)

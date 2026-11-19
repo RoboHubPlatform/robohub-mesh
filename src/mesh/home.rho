@@ -32,6 +32,7 @@ fn mesh_new_mesh_form(loc: string) string {
 
 // mesh_old_target is where an old address leads in the agora of the project
 // it names (or the open one).
+// @req MESH-UI-0003
 fn mesh_old_page_to(req: Request, selection: string) Response {
     mesh_follow_project(req)
     let id: string = current_project()

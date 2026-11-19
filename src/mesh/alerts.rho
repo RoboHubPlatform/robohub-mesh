@@ -1,0 +1,77 @@
+//
+// @file alerts.rho
+// @brief The faults Mesh raises as alerts through robohub.alert, each once per cooldown.
+//
+// @module mesh.alerts
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.alerts
+
+// Mesh binds robohub.alert (the log, e-mail and Telegram channels its Settings
+// page sets). It raises an alert for the faults that need a person rather than
+// a glance at the inbox:
+//
+// - a mesh's gateway stops answering (ERROR) — once per outage, the poller's
+//   fault — and answers again (INFO, only after an outage that was alerted);
+// - a build or flash job fails (ERROR);
+// - a board's revocation or key rotation could not be sent to a gateway on
+//   another host (ERROR): until it is, that gateway still admits the board, or
+//   still holds the old key.
+//
+// An alert with the same mesh and subject is not raised again within
+// MESH_ALERT_COOLDOWN_S (src/mesh/domain/alerting.rho), so a link that flaps or a
+// job retried in a loop is one message. When it was last raised is kept beside
+// the plan (alert-<key>.txt, "<when>|open" or "<when>|resolved"), so a restart
+// does not forget it, and the all-clear does not reset the cooldown: a link that
+// flaps is at most one alert and one all-clear per cooldown.
+
+fn mesh_alert_file(project: string, subject: string) string {
+    return project_location(project) + "/alert-" + mesh_alert_key(project, subject) + ".txt"
+}
+
+// mesh_alert raises an alert for a mesh unless one with the same subject was
+// raised within the cooldown, and answers whether it was raised.
+// @req MESH-0023
+fn mesh_alert(project: string, subject: string, level: string, message: string) bool {
+    let path: string = mesh_alert_file(project, subject)
+    let now: u32 = mesh_now_seconds()
+    var last: u32 = 0
+    if rho_path_exists(path) {
+        last = u32(rho_int_from_str(field(first_line(rho_read_text(path)), 0)))
+    }
+    if !mesh_alert_due(last, now, MESH_ALERT_COOLDOWN_S) {
+        return false
+    }
+    ignore_bool(rho_write_text(path, rho_int_to_str(now) + "|open\n"))
+    let metadata: string = "{\"app\":\"mesh\",\"project\":" + json_string(project) +
+        ",\"rule\":" + json_string(subject) + "}"
+    let sent: u32 = alert.raise(level, "Mesh " + project_name(project) + ": " + message, metadata)
+    if sent == 0 {
+        warn("mesh", "alert for " + project + " (" + subject + ") reached no channel: " + message)
+    }
+    return true
+}
+
+// mesh_alert_resolved raises the all-clear for a subject whose fault was
+// alerted, and only then: a gateway that answers again after an outage nobody
+// was told of is not news.
+// @req MESH-0023
+fn mesh_alert_resolved(project: string, subject: string, message: string) void {
+    let path: string = mesh_alert_file(project, subject)
+    if !rho_path_exists(path) {
+        return
+    }
+    let line: string = first_line(rho_read_text(path))
+    if field(line, 1) != "open" {
+        return
+    }
+    ignore_bool(rho_write_text(path, field(line, 0) + "|resolved\n"))
+    let metadata: string = "{\"app\":\"mesh\",\"project\":" + json_string(project) +
+        ",\"rule\":" + json_string(subject) + ",\"resolved\":true}"
+    ignore_u32(alert.raise("INFO", "Mesh " + project_name(project) + ": " + message, metadata))
+}

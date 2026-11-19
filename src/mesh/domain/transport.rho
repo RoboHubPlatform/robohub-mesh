@@ -54,6 +54,7 @@ fn caps_words_has(words: string, word: string) bool {
 // transport is matched against what the boards are: wifi needs both wireless,
 // ethernet both wired, a socket both on a network or a host, and anything else
 // is a bus both boards have.
+// @req MESH-PLAN-0005
 fn transport_fits(transport: string, parent: BoardCaps, child: BoardCaps) bool {
     if str_eq(transport, "console") {
         if !parent.host {

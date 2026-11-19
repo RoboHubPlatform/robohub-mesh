@@ -189,6 +189,7 @@ fn plan_view(stored: string) string {
 
 // plan_stored is row-form plan text in the stored form: every node numbered,
 // and a parent that is a node named by its number.
+// @req MESH-PLAN-0002
 fn plan_stored(view: string) string {
     let count: u32 = u32(int_from_str(plan_value(view, "node.count")))
     var numbers: string = "|"
@@ -285,6 +286,7 @@ fn plan_stored(view: string) string {
 // it move up one with every key they have, references to rows move with them (a
 // child of the removed node goes to the gateway), and the count falls by one.
 // The nodes keep their numbers.
+// @req MESH-PLAN-0002
 fn plan_text_remove_node(text: string, index: u32) string {
     var out: string = ""
     var count: u32 = 0

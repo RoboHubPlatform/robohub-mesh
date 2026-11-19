@@ -22,7 +22,7 @@ fn gateway_project() string {
 
 fn canonical_path(path: string) string {
     let report: string = wizard_report("canonical-path")
-    let code: u32 = rho_exec("realpath", "-m " + path, report)
+    let code: u32 = rho_exec_args("realpath", "-m\n" + path + "\n", report)
     if code == 0 {
         let resolved: string = first_line(rho_read_text(report))
         if resolved != "" {
@@ -209,8 +209,8 @@ fn run_shell(command: string, label: string) u32 {
         ". " + shell_quote(command_file) + " >> " + shell_quote(progress) + " 2>&1\n" +
         "exit $?\n"
     ignore_bool(rho_write_text(stage_file, script))
-    ignore_u32(rho_exec("chmod", "+x " + stage_file, wizard_report("chmod-stage")))
-    return rho_exec("sh", stage_file, wizard_report("stage-exit"))
+    ignore_u32(rho_exec_args("chmod", "+x\n" + stage_file + "\n", wizard_report("chmod-stage")))
+    return rho_exec_args("sh", stage_file + "\n", wizard_report("stage-exit"))
 }
 
 fn kconfig_string(value: string) string {
@@ -467,6 +467,7 @@ fn augment_node_build(target: string, sensors: string) u32 {
     return 1
 }
 
+// @req MESH-0001, MESH-BUILD-0006
 fn prepare_node() u32 {
     let source: string = node_source()
     if source == "" || !rho_path_exists(source) {
@@ -632,6 +633,7 @@ fn mesh_gateway_mode() string {
 // gateway_env is what a gateway is started with: key_file is its own key and
 // relay_key the key it reports through its parent with, each where the gateway
 // will read it ("" for none).
+// @req MESH-0011, MESH-BUILD-0007
 fn gateway_env(key_file: string, relay_key: string) string {
     let link: string = node_link()
     let rest: string = default_value("rest_port", fleet_rest_port(current_project()))
@@ -1004,10 +1006,19 @@ fn gateway_push_manifest(project: string) u32 {
     if command == "" {
         return 0
     }
-    if command == "-" || !rho_path_exists(mesh_manifest_file(project)) {
-        return 1
+    var code: u32 = 1
+    if command != "-" && rho_path_exists(mesh_manifest_file(project)) {
+        code = run_shell(command, "push-gateway-manifest")
     }
-    return run_shell(command, "push-gateway-manifest")
+    // Until the manifest is in place the gateway still admits a board that was
+    // revoked, or holds a key that was replaced: a person must hear of it.
+    if code != 0 {
+        ignore_bool(mesh_alert(project, "manifest", "ERROR",
+            "the board list could not be sent to the gateway; until it is, a revoked board is still admitted and a rotated key is not in force there"))
+    } else {
+        mesh_alert_resolved(project, "manifest", "the board list reached the gateway")
+    }
+    return code
 }
 
 // gateway_reachable is whether the active mesh's gateway answers, as the
@@ -1058,6 +1069,7 @@ fn update_build_step(loc: string) void {
     save_setting("step_verify", "pending")
 }
 
+// @req MESH-BUILD-0007
 fn mesh_gateway_restart(req: Request) Response {
     if !mesh_may(req, current_project(), true) {
         return mesh_denied(req)
@@ -1111,6 +1123,7 @@ fn mesh_gateway_return(req: Request) Response {
     return mesh_redirect("/mesh")
 }
 
+// @req MESH-BUILD-0007
 fn mesh_gateway_stop(req: Request) Response {
     if !mesh_may(req, current_project(), true) {
         return mesh_denied(req)

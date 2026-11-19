@@ -13,22 +13,10 @@
 module mesh.views
 
 // A gateway's API is under /api/v1/, and a gateway only answers a caller with a
-// short-lived token keeper issued for the audience `gateway`. Mesh orchestrates
-// every gateway of its projects, so it asks for `gateway:*` with its own client
-// credential; a device's own HTTP interface (a smart plug's RPC) is not a
-// gateway and is sent no token.
-const MESH_GATEWAY_SCOPE: string = "gateway:*"
-
-// mesh_gateway_scope is what Mesh asks a token for when it speaks to one
-// project's gateway: that gateway's scopes only (its GATEWAY_ID is the
-// project's). A token taken from the network then opens that gateway and no
-// other; gateway:* is what Mesh may be issued, not what it presents.
-fn mesh_gateway_scope(project: string) string {
-    if project == "" {
-        return MESH_GATEWAY_SCOPE
-    }
-    return "gateway:" + project + ":*"
-}
+// short-lived token keeper issued for the audience `gateway`. Mesh asks for one
+// with its own client credential, for one mesh's gateway at a time
+// (mesh_gateway_scope, in domain/access.rho); a device's own HTTP interface (a
+// smart plug's RPC) is not a gateway and is sent no token.
 
 // MESH_LOCALES are the languages Mesh's pages are drawn in, as the catalogs in
 // locales/ and the i18n module know them.
@@ -396,6 +384,7 @@ fn mesh_project_settings_post(req: Request) Response {
     return mesh_redirect("/mesh/project/" + param(req, "id") + "/settings")
 }
 
+// @req MESH-FLEET-0001
 fn mesh_project_delete(req: Request) Response {
     if !mesh_may(req, "", true) {
         return mesh_denied(req)
@@ -413,7 +402,7 @@ fn mesh_project_delete(req: Request) Response {
     // mesh's gateway keeps running.
     ignore_u32(fleet_stop_gateway(id))
     fleet_forget(id)
-    ignore_u32(rho_exec("rm", "-rf " + project_location(id), wizard_report("delete-project")))
+    ignore_u32(rho_exec_args("rm", "-rf\n" + project_location(id) + "\n", wizard_report("delete-project")))
     if was_current {
         var next: string = ""
         var listing: string = project_listing()
@@ -490,7 +479,7 @@ fn mesh_device_actions(loc: string, index: u32) string {
         "<button type=\"submit\" class=\"quiet\">" + mesh_t(loc, "device.poll") + "</button></form>" +
         switch_forms + "</div>" +
         "<p><small>" + escape_html(mesh_fill(mesh_fill(mesh_fill(mesh_t(loc, "device.last"),
-            "state", mesh_device_state(index)), "power", mesh_device_last(index)), "time", mesh_device_checked(index))) +
+            "state", mesh_device_state_text(loc, index)), "power", mesh_device_last(index)), "time", mesh_device_checked(index))) +
         "</small></p>"
 }
 
@@ -535,7 +524,7 @@ fn mesh_project_menu(req: Request) string {
 // shared, or opened from another mesh's card, and shows the mesh it was for.
 fn mesh_follow_project(req: Request) void {
     let wanted: string = request_query_param(req, "project")
-    if wanted != "" && wanted != current_project() {
+    if wanted != "" && wanted != current_project() && mesh_may(req, wanted, false) {
         ignore_bool(load_project(wanted))
     }
 }
@@ -641,9 +630,10 @@ fn mesh_shell(req: Request, title: string, content: string) string {
         vars("notifications", notification_embed()) + vars("body", content))
 }
 
+// @req MESH-0019
 fn mesh_docs_page(req: Request) Response {
     // The guide ships with the application, embedded when it is built.
-    var content: string = docs_render_source(rho_asset_dir("mesh") + "/docs/index.md")
+    var content: string = docs_render_source(rho_asset_dir("mesh") + "/docs/doc/index.md")
     if content == "" {
         content = "<h1>" + i18n_t(req, "nav.docs") + "</h1><p>" + i18n_t(req, "docs.missing") + "</p>"
     }

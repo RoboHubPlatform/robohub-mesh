@@ -1,0 +1,146 @@
+# Keys and who may have them: each mesh's gateway key, the boards' derived keys,
+# the node manifest, revocation and key rotation, host nodes fetching their key,
+# and the owner-only tree (src/mesh/firmware.rho, manifest.rho,
+# domain/manifest.rho, nodekey.rho, store.rho). Proposed until the maintainer
+# approves them.
+level: SUB
+prefix: MESH-ACCESS
+title: Mesh keys and access
+requirements:
+  - id: MESH-ACCESS-0001
+    title: A mesh's gateway key is made once and never replaced
+    statement: >
+      Each mesh shall have a gateway key of 32 random bytes, made the first time
+      it is needed and kept as `gateway.key` (0600) in the mesh's folder; a key
+      file that exists shall never be replaced, also when it cannot be read as a
+      key.
+    rationale: Every board's key derives from it; a new one silences every board until each is rebuilt and flashed.
+    satisfies: [MESH-0002, MESH-0008]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, keys]
+
+  - id: MESH-ACCESS-0002
+    title: A board's key derives from the gateway key, its id and its epoch
+    statement: >
+      A board's key shall be the first 16 bytes of HMAC-SHA256 under the gateway
+      key of `rh-dev1` and the board's id at epoch 0, and of `rh-dev2`, the id and
+      the epoch as four little-endian bytes at a later epoch, and shall be written
+      into the board's build as `src/robohub_secret.h` with the epoch and the
+      gateway's key scope.
+    rationale: The gateway derives the same key from the same inputs, so nothing secret is handed out per board.
+    satisfies: [MESH-0002, MESH-0006]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, keys]
+
+  - id: MESH-ACCESS-0003
+    title: The node manifest lists every keyed board and every linked mesh
+    statement: >
+      Mesh shall write `nodes.txt` (0600) beside the gateway key whenever the plan
+      changes and at every gateway start, with one line
+      `uid|area|node|role|epoch|revoked|areas` per board that has an id — no
+      module, device or board without an id — and one relay line for each mesh
+      that reports through this one, for its area and the areas below it.
+    rationale: The gateway admits only what the manifest lists, takes a board's readings only for its placement, and an announce only from a relay for its own areas.
+    satisfies: [MESH-0005, MESH-0015]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, manifest]
+
+  - id: MESH-ACCESS-0004
+    title: A board is revoked and admitted again from its inspector
+    statement: >
+      Revoking a board shall mark it revoked in the plan and in the node manifest
+      without changing any key, and admitting it again shall clear both.
+    rationale: A lost board is shut out at once, and one found again comes back without a rebuild.
+    satisfies: [MESH-0005]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, revocation]
+
+  - id: MESH-ACCESS-0005
+    title: A rotation waits for the board to confirm the last one
+    statement: >
+      Rotating a board shall raise its epoch by one in the plan and the manifest,
+      and shall be refused while the gateway's report — `rekey.txt` for a gateway
+      on this machine, `GET /api/v1/keys` for one on another host — does not say
+      the board confirmed its current epoch, or says the board cannot rotate.
+    rationale: The gateway accepts only the current epoch and the one before it; a second rotation before the first is confirmed would lock the board out.
+    satisfies: [MESH-0006]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, key-rotation]
+
+  - id: MESH-ACCESS-0006
+    title: A host node gets its board's key for a verified credential
+    statement: >
+      `POST /mesh/api/nodes/key` shall answer the id, key and epoch of the board
+      planned at the placement the keeper's `/api/nodes/verify` gives for an
+      `Authorization: Node <device>:<credential>` it accepts, and answer 401
+      without a node credential, 403 for a credential the keeper refuses or a
+      revoked board, and 404 when no board is planned there.
+    rationale: Mesh answers what was planned where the keeper says the node is, and nothing else.
+    satisfies: [MESH-0007]
+    decided_by: [robohub:ADR-0011]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, enrollment, api]
+
+  - id: MESH-ACCESS-0007
+    title: A node credential cannot add to the keeper's form
+    statement: >
+      A node credential shall be refused unless it names both a device and a
+      credential, and neither holds a character that would add a field to the form
+      Mesh sends the keeper.
+    rationale: The credential is passed on as form fields; one that smuggles a field could verify as another node.
+    satisfies: [MESH-0007]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, enrollment]
+
+  - id: MESH-ACCESS-0008
+    title: A key client has a budget of ten calls a minute
+    statement: >
+      Each client of `POST /mesh/api/nodes/key`, told apart by the last entry of
+      X-Forwarded-For (the keeper's proxy) or as a direct caller, shall be
+      answered at most ten times in a minute and 429 beyond that.
+    rationale: Guessing credentials against the key endpoint must be slow.
+    satisfies: [MESH-0007]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, limits]
+
+  - id: MESH-ACCESS-0009
+    title: Mesh's tree is closed at every start
+    statement: >
+      At start Mesh shall make its state and projects folders and everything under
+      them unreadable by the group and others, closing what an older version left
+      readable, and builds and jobs shall run under umask 077.
+    rationale: Board folders hold keys and Wi-Fi passwords, and images are built with both.
+    satisfies: [MESH-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, secrets]

@@ -1,0 +1,80 @@
+# The pages: the agora and the fleet updated over server-sent events, the
+# inspector answered as a fragment or a page, the wizard's old addresses, a new
+# mesh's first run, and the Alerts tab (src/mesh/agora.rho, editor.rho, home.rho,
+# settings.rho, views.rho). Proposed until the maintainer approves them.
+level: SUB
+prefix: MESH-UI
+title: Mesh pages
+requirements:
+  - id: MESH-UI-0001
+    title: The agora and the fleet are live
+    statement: >
+      A mesh's page shall update its bar, tree and activity strip, and the fleet
+      its bar, cards, side and activity, through server-sent events, each event
+      replacing the inside of the element that holds the stream and never the
+      element itself.
+    rationale: An event that carried the stream's element would replace the connection, and the page would reconnect after every event.
+    satisfies: [MESH-0017, MESH-0001]
+    decided_by: [robohub:ADR-0009]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [ui, live]
+
+  - id: MESH-UI-0002
+    title: An edit answers with the inspector, or with the page
+    statement: >
+      An edit posted by htmx shall be answered with the inspector fragment and the
+      tree replaced out of band, and the same form posted without htmx with a
+      redirect to the mesh's page with that node selected.
+    rationale: The inspector edits in place, and a browser without scripts still lands where it was.
+    satisfies: [MESH-0001]
+    decided_by: [robohub:ADR-0009]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [ui, editing]
+
+  - id: MESH-UI-0003
+    title: The wizard's addresses open the agora
+    statement: >
+      The wizard's old addresses — `/mesh/plan`, `/mesh/step/...`, `/mesh/gateway`,
+      `/mesh/node/<n>` and `/mesh/network/link/<n>` — shall open the mesh's agora
+      with what they showed selected in the address.
+    rationale: Bookmarks and links from older releases keep working.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [ui, compatibility]
+
+  - id: MESH-UI-0004
+    title: A new mesh opens with its first steps
+    statement: >
+      A new mesh shall open on its agora with three prompts — choose where the
+      gateway runs, add the first node, apply — and none of the old wizard's
+      steps.
+    rationale: An empty canvas must say what to do first.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [ui, first-run]
+
+  - id: MESH-UI-0005
+    title: The Alerts tab saves to the binding
+    statement: >
+      The Settings page's Alerts tab shall save each channel's setting to Mesh's
+      `bind.conf` (0600), carry its CSRF token, and show the saved values when
+      opened again.
+    rationale: The alert channels are the binding's settings, and may hold a bot token.
+    satisfies: [MESH-0018, MESH-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [ui, settings, alerts]

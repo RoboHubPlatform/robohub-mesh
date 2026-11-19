@@ -78,8 +78,39 @@ fn mesh_device_last(index: u32) string {
     return state_value("node." + rho_int_to_str(index) + ".last_value")
 }
 
+// mesh_device_state is the state the device last reported (node.<n>.state),
+// never one it was only asked for.
 fn mesh_device_state(index: u32) string {
     return state_value("node." + rho_int_to_str(index) + ".state")
+}
+
+// mesh_device_state_shown is a device's state as the API answers it: the
+// reported state, or "pending" / "unconfirmed" while a switch has not been
+// confirmed by the device (src/mesh/domain/switch.rho).
+// @req MESH-0022
+fn mesh_device_state_shown(index: u32) string {
+    let project: string = current_project()
+    let outcome: string = mesh_switch_settle(project, index)
+    return switch_shown(outcome, mesh_device_state(index))
+}
+
+// mesh_device_state_text is a device's state as a page says it: the reported
+// state, or the requested one marked as waiting for the device or unconfirmed.
+fn mesh_device_state_text(loc: string, index: u32) string {
+    let project: string = current_project()
+    let outcome: string = mesh_switch_settle(project, index)
+    let requested: string = mesh_switch_requested(project, index)
+    var reported: string = mesh_device_state(index)
+    if reported == "" {
+        reported = "?"
+    }
+    if outcome == "pending" {
+        return mesh_fill(mesh_fill(mesh_t(loc, "device.state_pending"), "state", requested), "reported", reported)
+    }
+    if outcome == "unconfirmed" {
+        return mesh_fill(mesh_fill(mesh_t(loc, "device.state_unconfirmed"), "state", requested), "reported", reported)
+    }
+    return mesh_device_state(index)
 }
 
 fn mesh_device_poll(req: Request) Response {
@@ -122,6 +153,9 @@ fn mesh_device_poll(req: Request) Response {
         } else {
             save_setting("node." + rho_int_to_str(index) + ".state", "off")
         }
+        // A reading the person asked for is the device's word: it ends a switch
+        // that was waiting for one, confirmed or not.
+        mesh_switch_forget(project, index)
     }
     let power: string = telemetry_latest_text(project, source, "power_w")
     if power != "" {
@@ -133,12 +167,11 @@ fn mesh_device_poll(req: Request) Response {
     return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
 }
 
-fn mesh_device_switch(index: u32, state: string) bool {
-    let ok: bool = mesh_device_command(current_project(), index, "switch", rho_str_eq(state, "on"))
-    if ok {
-        save_setting("node." + rho_int_to_str(index) + ".state", state)
-    }
-    return ok
+// mesh_device_switch switches a device of the active mesh and answers where it
+// stands: "failed", "confirmed", "pending" or "unconfirmed". The device's state
+// is recorded only from what it reports (mesh_device_switch_to).
+fn mesh_device_switch(index: u32, state: string) string {
+    return mesh_device_switch_to(current_project(), index, state)
 }
 
 fn mesh_device_set(req: Request) Response {
@@ -154,8 +187,17 @@ fn mesh_device_set(req: Request) Response {
     if index < 1 || index > node_count() || !is_device_node(index) {
         return mesh_redirect("/mesh/plan")
     }
-    if mesh_device_switch(index, state) {
+    if state != "on" && state != "off" {
+        save_setting("mesh_message", "A switch is on or off.")
+        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+    }
+    let outcome: string = mesh_device_switch(index, state)
+    if outcome == "confirmed" {
         save_setting("mesh_message", "Device switched " + state + ".")
+    } else if outcome == "pending" {
+        save_setting("mesh_message", "Switch " + state + " sent; waiting for the device to report it.")
+    } else if outcome == "unconfirmed" {
+        save_setting("mesh_message", "Switch " + state + " sent, but the device cannot report its state: unconfirmed.")
     } else {
         save_setting("mesh_message", "The device did not answer at " + node_device_address(index) + ".")
     }
@@ -197,6 +239,7 @@ fn mesh_gateway_answers(url: string) bool {
     return code == 0
 }
 
+// @req MESH-0013, MESH-API-0003
 fn mesh_source_entry(project: string, kind: string, index: u32, owner: string,
     module_id: string, driver_id: string, row: string, origin: string) string {
     let signal: string = field(row, 0)
@@ -565,38 +608,57 @@ fn mesh_source_value(project: string, source: string) string {
     return ""
 }
 
-fn mesh_source_action(project: string, source: string, state: string) bool {
+// mesh_source_action switches an output source and answers where that stands:
+// "failed", "confirmed", "pending" or "unconfirmed" — never "done" on the
+// strength of a command that was only taken.
+// @req MESH-0022
+fn mesh_source_action(project: string, source: string, state: string) string {
     let spec: string = mesh_source_spec(project, source)
     if spec == "" || field(spec, 4) != "output" {
-        return false
+        return "failed"
     }
     let transport: string = field(spec, 7)
     let address: string = field(spec, 8)
-    var desired: string = state
+    // The state is said, never assumed.
+    let desired: string = state
     if desired != "on" && desired != "off" {
-        desired = "on"
+        return "failed"
     }
     if address != "" && (transport == "http" || transport == "mqtt" || rho_str_index_of(address, "http") == 0) {
         // Drive the device the plan names, not only one the gateway already
         // knows, by what its manifest says it can be told.
-        if mesh_device_command(project, rho_int_from_str(field(spec, 1)), "switch", desired == "on") {
-            return true
+        let outcome: string = mesh_device_switch_to(project, rho_int_from_str(field(spec, 1)), desired)
+        if outcome != "failed" {
+            return outcome
         }
     }
     let base: string = mesh_project_gateway(project)
     if base == "" {
-        return false
+        return "failed"
     }
     let object: string = gateway_device_object(project, base, field(spec, 6), address,
         field(spec, 11))
     if object == "" {
-        return false
+        return "failed"
     }
     let id: string = json_number(object, "id")
     if id == "" {
-        return false
+        return "failed"
     }
-    return mesh_gateway_command(project, base, "/api/v1/devices/" + id + "/switch?state=" + desired, "")
+    // The gateway reads the device back after switching it and says whether it
+    // reported the requested state (robohub-gateway 0.7.3): 200 with
+    // "confirmed":true when it did, 202 while it has not. A gateway that does
+    // not say is taken at its word for nothing more than that it sent it.
+    let report: string = wizard_report("mesh-gateway-switch")
+    let status: u32 = rho_http_request("POST", mesh_http_base(base) + "/api/v1/devices/" + id + "/switch?state=" + desired, "",
+        "application/json", "gateway", mesh_gateway_scope(project), report)
+    if status < 200 || status >= 300 {
+        return "failed"
+    }
+    if status == 200 && rho_str_index_of(rho_read_text(report), "\"confirmed\":true") >= 0 {
+        return "confirmed"
+    }
+    return "pending"
 }
 
 fn mesh_api_sources(req: Request) Response {
@@ -702,21 +764,49 @@ fn mesh_api_source_value(req: Request) Response {
     return Response{ 200, value, "text/plain; charset=utf-8", "" }
 }
 
+// mesh_api_source_action switches an output source. It changes a device, so it
+// is a POST that needs a grant to change the mesh (`mesh:<mesh>`, `mesh:*` or
+// `*`; a `:read` grant reads only), says the state it wants (on or off — nothing
+// is assumed), and, from a browser's session cookie, carries the form token: a
+// bearer ticket is what a program sends and a page on another site cannot make
+// a browser send (forms_machine_ok). The answer says where the switch stands:
+// 200 confirmed once the device reports it, 202 pending or unconfirmed while it
+// has not.
+// @req MESH-API-0010, MESH-0022
 fn mesh_api_source_action(req: Request) Response {
-    if !mesh_may(req, param(req, "project"), rho_str_eq(request_method(req), "POST")) {
+    if !mesh_may(req, param(req, "project"), true) {
         return mesh_denied(req)
     }
     if !mesh_scoped(req, param(req, "project")) {
         return mesh_scope_denied()
     }
+    let body: string = request_body(req)
+    if !forms_machine_ok(req, body) {
+        return json(403, "{\"ok\":false,\"error\":\"a session needs the form token; a program sends a bearer ticket\"}")
+    }
     var state: string = request_query_param(req, "state")
     if state == "" {
-        state = form_field(request_body(req), "state")
+        state = form_field(body, "state")
     }
-    if mesh_source_action(param(req, "project"), param(req, "source"), state) {
-        return json(200, "{\"ok\":true}")
+    if state != "on" && state != "off" {
+        return json(400, "{\"ok\":false,\"error\":\"state must be on or off\"}")
+    }
+    let outcome: string = mesh_source_action(param(req, "project"), param(req, "source"), state)
+    if outcome == "confirmed" {
+        return json(200, "{\"ok\":true,\"confirmed\":true,\"outcome\":\"confirmed\"}")
+    }
+    if outcome == "pending" || outcome == "unconfirmed" {
+        return json(202, "{\"ok\":true,\"confirmed\":false,\"outcome\":" + json_string(outcome) + "}")
     }
     return json(502, "{\"ok\":false}")
+}
+
+// mesh_api_source_action_get answers a GET of a source's action, which until
+// 0.20.2 switched the output (on, when no state was given): any page could do
+// that with an image link in a signed-in browser. It switches nothing now.
+// @req MESH-API-0010
+fn mesh_api_source_action_get(req: Request) Response {
+    return json(405, "{\"ok\":false,\"error\":\"switching an output is a POST with state=on or state=off\"}")
 }
 
 fn mesh_api_projects(req: Request) Response {
@@ -775,6 +865,9 @@ fn mesh_api_project_gateway(req: Request) Response {
 
 fn mesh_api_gateway(req: Request) Response {
     let active: string = current_project()
+    if !mesh_scoped(req, active) {
+        return mesh_scope_denied()
+    }
     let url: string = mesh_gateway_url()
     if url == "" {
         return json(503, "{\"available\":false,\"project\":" + json_string(active) + "}")
@@ -806,7 +899,9 @@ fn mesh_api_devices(req: Request) Response {
                 ",\"device\":" + json_string(node_device_name(index)) +
                 ",\"transport\":" + json_string(node_device_transport(index)) +
                 ",\"address\":" + json_string(node_device_address(index)) +
-                ",\"state\":" + json_string(mesh_device_state(index)) +
+                ",\"state\":" + json_string(mesh_device_state_shown(index)) +
+                ",\"reported\":" + json_string(mesh_device_state(index)) +
+                ",\"requested\":" + json_string(mesh_switch_requested(current_project(), index)) +
                 ",\"power_w\":" + json_string(mesh_device_last(index)) + "}"
         }
         index = index + 1
@@ -814,6 +909,7 @@ fn mesh_api_devices(req: Request) Response {
     return json(status_ok(), out + "]")
 }
 
+// @req MESH-0014
 fn mesh_api_device_switch(req: Request) Response {
     if !mesh_may(req, current_project(), true) {
         return mesh_denied(req)
@@ -830,10 +926,23 @@ fn mesh_api_device_switch(req: Request) Response {
     if index < 1 || index > node_count() || !is_device_node(index) {
         return json(status_not_found(), "{\"success\":false}")
     }
-    if !mesh_device_switch(index, state) {
+    // The state is said, never assumed: anything but on or off was sent as off.
+    if state != "on" && state != "off" {
+        return json(400, "{\"success\":false,\"error\":\"state must be on or off\"}")
+    }
+    let outcome: string = mesh_device_switch(index, state)
+    if outcome == "failed" {
         return json(502, "{\"success\":false}")
     }
-    return json(status_ok(), "{\"success\":true,\"state\":" + json_string(state) + "}")
+    // The answer says what the device reports: 200 once it reported the
+    // requested state, 202 while that is still awaited or cannot be known.
+    let reported: string = mesh_device_state(index)
+    let answer: string = ",\"requested\":" + json_string(state) +
+        ",\"reported\":" + json_string(reported) + ",\"outcome\":" + json_string(outcome)
+    if outcome == "confirmed" {
+        return json(status_ok(), "{\"success\":true,\"confirmed\":true,\"state\":" + json_string(state) + answer + "}")
+    }
+    return json(202, "{\"success\":true,\"confirmed\":false,\"state\":" + json_string(outcome) + answer + "}")
 }
 
 fn json_number(text: string, key: string) string {

@@ -147,3 +147,190 @@ fn mesh_device_read_field(project: string, index: u32, wanted: string) string {
     }
     return ""
 }
+
+/* -------------------------------------------------------------------------- */
+/*  A switch, as the device reports it                                        */
+/* -------------------------------------------------------------------------- */
+
+// A device that took a switch command is recorded as asked, not as switched: the
+// request waits in a file beside the plan (switch-<n>.txt, "requested|since_s|
+// outcome"), and the state Mesh shows comes from what the device reports after
+// it — its HTTP status read back, or a status message on the broker newer than
+// the request (src/mesh/domain/switch.rho decides). A file rather than the plan:
+// a page view that settles a request must not rewrite the person's plan.
+
+fn mesh_switch_file(project: string, index: u32) string {
+    return project_location(project) + "/switch-" + rho_int_to_str(index) + ".txt"
+}
+
+fn mesh_switch_line(project: string, index: u32) string {
+    let path: string = mesh_switch_file(project, index)
+    if !rho_path_exists(path) {
+        return ""
+    }
+    return first_line(rho_read_text(path))
+}
+
+fn mesh_switch_keep(project: string, index: u32, line: string) void {
+    ignore_bool(rho_write_text(mesh_switch_file(project, index), line + "\n"))
+}
+
+// mesh_switch_forget ends a request: confirmed, or overtaken by a reading the
+// person asked for.
+fn mesh_switch_forget(project: string, index: u32) void {
+    if rho_path_exists(mesh_switch_file(project, index)) {
+        mesh_switch_keep(project, index, "")
+    }
+}
+
+// device_state_path is where a device's manifest finds its switch state in what
+// the device sends over a transport: the path of the field map line whose field
+// is `state`, or "" when the manifest names none — a device that cannot report
+// its state, whose switch is never shown as confirmed.
+fn device_state_path(manifest: string, transport: string) string {
+    var key: string = "telemetry_http_fields"
+    if rho_str_eq(transport, "mqtt") {
+        key = "telemetry_mqtt_fields"
+    }
+    var rest: string = manifest_list_items(manifest, key)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
+        line = str_trim(line)
+        if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") {
+            line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
+        }
+        if rho_str_eq(field(line, 1), "state") {
+            return field(line, 4)
+        }
+    }
+    return ""
+}
+
+// mesh_device_can_report is whether a planned device can say which state its
+// switch is in, over the transport the plan says it speaks.
+fn mesh_device_can_report(project: string, index: u32) bool {
+    let file: string = project_file(project)
+    let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
+    let transport: string = project_node_value(file, index, "transport", "http")
+    if rho_str_eq(transport, "mqtt") {
+        return device_state_path(manifest, transport) != "" &&
+            yaml.value(manifest, "telemetry_mqtt.status_topic") != ""
+    }
+    return device_state_path(manifest, transport) != "" && yaml.value(manifest, "telemetry.http_path") != ""
+}
+
+// mesh_device_report is the state a device reports, "on" or "off", heard at or
+// after since_s; "" when it has said nothing since. Over HTTP the status is read
+// now, so it is always new; over MQTT it is the newest status message on the
+// broker, and only if it arrived after the request.
+fn mesh_device_report(project: string, index: u32, since_s: u32) string {
+    let file: string = project_file(project)
+    let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
+    let transport: string = project_node_value(file, index, "transport", "http")
+    if !rho_str_eq(transport, "mqtt") {
+        return switch_state_word(mesh_device_read_field(project, index, "state"))
+    }
+    let prefix: string = project_node_value(file, index, "address", "")
+    if prefix == "" || rho_str_index_of(prefix, "#") >= 0 || rho_str_index_of(prefix, "+") >= 0 {
+        return ""
+    }
+    let topic: string = device_fill(yaml.value(manifest, "telemetry_mqtt.status_topic"), prefix, "")
+    let path: string = device_state_path(manifest, transport)
+    if topic == "" || path == "" {
+        return ""
+    }
+    ignore_bool(bus.follow(prefix + "/#", ""))
+    // bus.topics answers "topic<TAB>seconds since<TAB>payload" per line.
+    var rest: string = bus.topics(prefix)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
+        if rho_str_starts_with(line, topic + "\t") {
+            let tail: string = rho_str_slice(line, u32(rho_strlen(topic)) + 1, u32(rho_strlen(line)) - u32(rho_strlen(topic)) - 1)
+            let tab: i32 = rho_str_index_of(tail, "\t")
+            if tab < 0 {
+                return ""
+            }
+            let age: u32 = u32(rho_int_from_str(rho_str_slice(tail, 0, u32(tab))))
+            let payload: string = rho_str_slice(tail, u32(tab) + 1, u32(rho_strlen(tail)) - u32(tab) - 1)
+            let now: u32 = mesh_now_seconds()
+            if age > now || now - age < since_s {
+                return ""
+            }
+            return switch_state_word(telemetry_json_bool(payload, path))
+        }
+    }
+    return ""
+}
+
+// mesh_device_reported_set keeps the state a device reported, where the pages
+// and the API read it (node.<n>.state in the plan), when it changed.
+fn mesh_device_reported_set(project: string, index: u32, state: string) void {
+    let file: string = project_file(project)
+    let key: string = "node." + rho_int_to_str(index) + ".state"
+    if state != "" && !rho_str_eq(state_value_in(file, key), state) {
+        save_setting_at(file, key, state)
+    }
+}
+
+// mesh_switch_settle says where a requested switch stands — "idle", "confirmed",
+// "pending" or "unconfirmed" — asking the device when one is waiting. A
+// confirmed request is forgotten; one that ran out of time is kept as
+// unconfirmed, and no longer asked about, until the next request or a reading.
+// @req MESH-0022
+fn mesh_switch_settle(project: string, index: u32) string {
+    let line: string = mesh_switch_line(project, index)
+    let requested: string = field(line, 0)
+    if requested == "" {
+        return "idle"
+    }
+    if rho_str_eq(field(line, 2), "unconfirmed") {
+        return "unconfirmed"
+    }
+    let since: u32 = u32(rho_int_from_str(field(line, 1)))
+    let can_report: bool = mesh_device_can_report(project, index)
+    var reported: string = ""
+    if can_report {
+        reported = mesh_device_report(project, index, since)
+    }
+    mesh_device_reported_set(project, index, reported)
+    let now: u32 = mesh_now_seconds()
+    var elapsed: u32 = 0
+    if now > since {
+        elapsed = now - since
+    }
+    let outcome: string = switch_outcome(requested, reported, can_report, elapsed, MESH_SWITCH_TIMEOUT_S)
+    if outcome == "confirmed" {
+        mesh_switch_forget(project, index)
+    } else if outcome == "unconfirmed" {
+        mesh_switch_keep(project, index, requested + "|" + field(line, 1) + "|unconfirmed")
+        if can_report {
+            warn("mesh", "device " + rho_int_to_str(index) + " in " + project + " did not report " + requested +
+                " within " + rho_int_to_str(MESH_SWITCH_TIMEOUT_S) + " s")
+        }
+    }
+    return outcome
+}
+
+// mesh_switch_requested is the state a waiting request asked for, or "".
+fn mesh_switch_requested(project: string, index: u32) string {
+    return field(mesh_switch_line(project, index), 0)
+}
+
+// mesh_device_switch_to tells a device to switch and answers where that stands:
+// "failed" when the device did not take the command (nothing is recorded), or
+// what mesh_switch_settle says once it has been asked for its state.
+// @req MESH-0014, MESH-0022
+fn mesh_device_switch_to(project: string, index: u32, desired: string) string {
+    if desired != "on" && desired != "off" {
+        return "failed"
+    }
+    if !mesh_device_command(project, index, "switch", desired == "on") {
+        return "failed"
+    }
+    mesh_switch_keep(project, index, desired + "|" + rho_int_to_str(mesh_now_seconds()) + "|pending")
+    return mesh_switch_settle(project, index)
+}

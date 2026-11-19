@@ -108,6 +108,7 @@ fn cross_move_form(loc: string, id: string, index: u32) string {
         "<div class=\"form-actions\"><button type=\"submit\">" + mesh_t(loc, "cross.move") + "</button></div></form></details>"
 }
 
+// @req MESH-FLEET-0003
 fn mesh_p_node_move(req: Request) Response {
     if !mesh_may(req, param(req, "project"), true) {
         return mesh_denied(req)
@@ -214,6 +215,7 @@ fn cross_template_lines(text: string) string {
     return out
 }
 
+// @req MESH-FLEET-0004
 fn mesh_project_copy(req: Request) Response {
     if !mesh_may(req, "", true) {
         return mesh_denied(req)
@@ -237,6 +239,7 @@ fn mesh_project_copy(req: Request) Response {
 }
 
 // mesh_apply_all applies what is out of date in every mesh.
+// @req MESH-FLEET-0005
 fn mesh_apply_all(req: Request) Response {
     if !mesh_may(req, "", true) {
         return mesh_denied(req)
@@ -293,6 +296,7 @@ fn cross_matches(text: string, wanted: string) bool {
 }
 
 // mesh_search finds nodes by name, id, board, module or device in every mesh.
+// @req MESH-FLEET-0005
 fn mesh_search(req: Request) Response {
     let wanted: string = str_trim(request_query_param(req, "q"))
     var out: string = ""
@@ -307,7 +311,8 @@ fn mesh_search(req: Request) Response {
             id = rho_str_slice(rest, 0, u32(at))
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        if id == "" {
+        // A mesh the person may not read is not searched.
+        if id == "" || !mesh_may(req, id, false) {
             continue
         }
         let file: string = project_file(id)

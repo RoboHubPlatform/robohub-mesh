@@ -105,6 +105,8 @@
   "device.carried": "Acest dispozitiv este purtat de nodul la care este atașat; acel nod face citirea și o publică.",
   "device.choose": "Alege un dispozitiv",
   "device.last": "Ultima: stare {state}, putere {power} W la {time}",
+  "device.state_pending": "{state} cerut, se așteaptă confirmarea dispozitivului (raportează {reported})",
+  "device.state_unconfirmed": "{state} cerut, neconfirmat: dispozitivul nu l-a raportat (raportează {reported})",
   "device.poll": "Interoghează dispozitivul",
   "device.switch_off": "Oprește",
   "device.switch_on": "Pornește",

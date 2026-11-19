@@ -103,12 +103,11 @@ fn mesh_token_mint(project: string, name: string, days: u32) string {
     return ""
 }
 
+// mesh_admin_request is whether a request holds Mesh as a whole. One nobody
+// vouched for (no audience) does not.
+// @req MESH-API-0006
 fn mesh_admin_request(req: Request) bool {
-    if header_str(req, "X-Rho-Aud") == "" {
-        return true
-    }
-    let scopes: string = header_str(req, "X-Rho-Scopes")
-    return mesh_scope_has(scopes, "*") || mesh_scope_has(scopes, "mesh:*")
+    return mesh_grant_admin(mesh_audience(req), mesh_scopes(req))
 }
 
 fn mesh_project_token_generate(req: Request) Response {

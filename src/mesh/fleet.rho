@@ -76,6 +76,7 @@ fn fleet_taken(text: string, id: string, key: string, value: string) bool {
 
 // fleet_place gives a mesh its area and ports, once: what its plan already says
 // when no other mesh has it, otherwise the first free one.
+// @req MESH-0015, MESH-FLEET-0001
 fn fleet_place(id: string) void {
     rho_lock("mesh.fleet")
     let text: string = fleet_text()

@@ -71,51 +71,18 @@ fn telemetry_start() bool {
     return telemetry_open(telemetry_path())
 }
 
-// telemetry_project_ids lists the projects without running the migration the
-// interactive pages run. The worker is a reader; a background task must not
-// rewrite project state while a person is editing it.
-fn mesh_scope_has(scopes: string, needle: string) bool {
-    var rest: string = scopes
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, ",")
-        var token: string = rest
-        if at < 0 {
-            rest = ""
-        } else {
-            token = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1,
-                u32(rho_strlen(rest)) - u32(at) - 1)
-        }
-        token = str_trim(token)
-        if token == needle {
-            return true
-        }
-    }
-    return false
-}
-
-// mesh_scoped accepts a request for one project. A browser session (no
-// audience header) is an administrator behind the keeper and may look at any
-// project. A service token must carry the project it is asking for, `mesh:*`,
-// or the wildcard `*`.
 // mesh_scoped is whether the caller may read or act on a project. The auth
 // middleware sets the identity headers from a token or a session it verified,
 // and removes any a client sent, so a request without an audience is one nobody
 // vouched for and is refused.
+// @req MESH-API-0002
 fn mesh_scoped(req: Request, project: string) bool {
-    let aud: string = header_str(req, "X-Rho-Aud")
-    if aud == "" {
+    let audience: string = mesh_audience(req)
+    if audience == "" {
         return false
     }
-    let subject: string = header_str(req, "X-Rho-Subject")
-    if mesh_subject_revoked(project, subject) {
-        return false
-    }
-    let scopes: string = header_str(req, "X-Rho-Scopes")
-    if mesh_scope_has(scopes, "*") || mesh_scope_has(scopes, "mesh:*") {
-        return true
-    }
-    return mesh_scope_has(scopes, "mesh:" + project)
+    let revoked: bool = mesh_subject_revoked(project, header_str(req, "X-Rho-Subject"))
+    return mesh_api_grant(audience, mesh_scopes(req), project, revoked)
 }
 
 fn mesh_scope_denied() Response {
@@ -127,6 +94,7 @@ fn mesh_scope_denied() Response {
 // shared by every project is every project's readings sent to whoever may read
 // one. The SQLite store remains the source of truth; the feed is how a reader
 // hears of a change.
+// @req MESH-TEL-0006
 fn telemetry_event_stream(project: string) string {
     return project_location(project) + "/telemetry-events.jsonl"
 }
@@ -152,6 +120,7 @@ fn telemetry_record_event(project: string, source: string, field_name: string,
 // energy) names its audience in the project as `gateway_audience`, and Mesh
 // presents a short-lived service token for it with the `<audience>:gateway`
 // scope, from the issuer, with Mesh's own credential.
+// @req MESH-0011
 fn mesh_poll_token(project: string) string {
     let audience: string = state_value_in(project_file(project), "gateway_audience")
     if audience != "" {
@@ -160,9 +129,12 @@ fn mesh_poll_token(project: string) string {
     return rho_service_token("gateway", mesh_gateway_scope(project))
 }
 
+// telemetry_project_ids lists the projects without running the migration the
+// interactive pages run. The worker is a reader; a background task must not
+// rewrite project state while a person is editing it.
 fn telemetry_project_ids() string {
     let report: string = wizard_report("telemetry-projects")
-    if rho_exec("ls", projects_dir(), report) != 0 {
+    if rho_exec_args("ls", projects_dir() + "\n", report) != 0 {
         return ""
     }
     return rho_read_text(report)
@@ -171,6 +143,7 @@ fn telemetry_project_ids() string {
 // mesh_retention_days is how long a project keeps raw readings. The minute and
 // hour rollups have their own, longer windows; a project setting changes the
 // raw window without making a chart of an older season disappear.
+// @req MESH-0010, MESH-TEL-0005
 fn mesh_retention_days(project: string) u32 {
     var value: string = settings_get("telemetry.raw_days", "")
     if value == "" {
@@ -209,6 +182,7 @@ fn mesh_vacuum_mode() string {
     return mode
 }
 
+// @req MESH-TEL-0005
 fn telemetry_prune_once() void {
     let ids: string = telemetry_project_ids()
     var rest: string = ids
@@ -270,25 +244,22 @@ fn mesh_gateway_ready(project: string) bool {
     return mesh_now_seconds() >= u32(rho_int_from_str(next))
 }
 
+// @req MESH-TEL-0003
 fn mesh_gateway_failed(project: string, message: string) void {
     let now: u32 = mesh_now_seconds()
-    var backoff: u32 = u32(rho_int_from_str(mesh_gateway_value(project, "backoff_s")))
-    if backoff == 0 {
-        backoff = 2
-    } else {
-        backoff = backoff * 2
-    }
-    let maximum: u32 = mesh_retention_setting("backoff_max_s", 60)
-    if backoff > maximum {
-        backoff = maximum
-    }
+    let backoff: u32 = telemetry_backoff_next(u32(rho_int_from_str(mesh_gateway_value(project, "backoff_s"))),
+        mesh_retention_setting("backoff_max_s", 60))
     mesh_gateway_save(project, "backoff_s", rho_int_to_str(backoff))
     mesh_gateway_save(project, "next_poll_s", rho_int_to_str(now + backoff))
     mesh_gateway_save(project, "last_error", message)
-    if mesh_gateway_value(project, "fault_open") != "true" {
+    if telemetry_outage_fault_due(mesh_gateway_value(project, "fault_open")) {
         ignore_u32(telemetry_fault_record(project, project + "@gateway", "gateway",
             "ERROR", "gateway unreachable: " + mesh_poll_error_text(message), 0, 0, 2, ""))
         mesh_gateway_save(project, "fault_open", "true")
+        // The same fault, to the person: once per outage (and not again within
+        // the alert cooldown, so a link that flaps is one message).
+        ignore_bool(mesh_alert(project, "gateway", "ERROR",
+            "the gateway does not answer (" + mesh_poll_error_text(message) + ")"))
     }
 }
 
@@ -311,6 +282,9 @@ fn mesh_poll_error_text(result: string) string {
 
 fn mesh_gateway_ok(project: string) void {
     let now: u32 = mesh_now_seconds()
+    if mesh_gateway_value(project, "fault_open") == "true" {
+        mesh_alert_resolved(project, "gateway", "the gateway answers again")
+    }
     mesh_gateway_save(project, "backoff_s", "0")
     mesh_gateway_save(project, "next_poll_s", "0")
     mesh_gateway_save(project, "fault_open", "")
@@ -322,6 +296,7 @@ fn mesh_gateway_ok(project: string) void {
 // the project and the gateway address together: a project pointed at another
 // gateway starts from its new feed rather than from a sequence that belonged to
 // the old one.
+// @req MESH-0009, MESH-TEL-0001
 fn telemetry_poll_once() void {
     let ids: string = telemetry_project_ids()
     var rest: string = ids
@@ -874,6 +849,9 @@ fn mesh_faults_events(req: Request) Response {
     if project == "" {
         return text(status_bad_request(), "no project")
     }
+    if !mesh_may(req, project, false) {
+        return mesh_denied(req)
+    }
     var rows: string = mesh_fault_rows(i18n_locale(req), project)
     if rows == "" {
         rows = "<tr><td colspan=\"4\">" + i18n_t(req, "faults.empty") + "</td></tr>"
@@ -958,6 +936,9 @@ fn mesh_faults_page(req: Request) Response {
     if project == "" {
         return page(req, i18n_t(req, "faults.title"),
             "<p>" + i18n_t(req, "faults.no_project") + "</p>")
+    }
+    if !mesh_may(req, project, false) {
+        return mesh_denied(req)
     }
     var rows: string = mesh_fault_rows(i18n_locale(req), project)
     if rows == "" {

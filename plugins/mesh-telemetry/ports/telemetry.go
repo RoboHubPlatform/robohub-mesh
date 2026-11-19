@@ -438,6 +438,7 @@ func telemetryAck(gatewayURL string, sequence uint32, token string) {
 // transaction. A page is at most five hundred readings; the gateway's cursor
 // is advanced only after the commit, and the ack follows the commit, so a
 // failure leaves the page to be read again.
+// @req MESH-TEL-0001, MESH-TEL-0002, MESH-TEL-0004, MESH-TEL-0006
 func telemetryPoll(project string, gatewayID string, gatewayURL string, token string, eventsPath string) string {
 	if !telemetryOpen("") {
 		return telemetryError("the telemetry database could not be opened")
@@ -477,14 +478,21 @@ func telemetryPoll(project string, gatewayID string, gatewayURL string, token st
 	seen := map[string][]any{}
 	binding := telemetryBindings(project)
 	maxSequence := cursor
+	// A sequence this gateway's feed has already committed, or one the page
+	// carries twice, is a reading the store has: the row would be ignored, and
+	// so is everything else it would do — the latest value, a fault, the live
+	// feed. A gateway that sends a page again, or something answering at its
+	// address that replays an old one, adds nothing.
+	taken := map[uint32]bool{}
 	for _, record := range records {
 		sequence := telemetryUint(record["seq"])
 		area := telemetryUint(record["area_id"])
 		node := telemetryUint(record["node_id"])
 		field := telemetryText(record["field"])
-		if sequence == 0 || field == "" {
+		if sequence == 0 || field == "" || sequence <= cursor || taken[sequence] {
 			continue
 		}
+		taken[sequence] = true
 		value := telemetryNumber(record["value"])
 		status := telemetryInt(record["status"])
 		received := telemetryInt(record["received_ms"])
@@ -931,6 +939,7 @@ func telemetrySeries(project string, source string, field string, fromText strin
 // telemetryRollup folds completed raw readings into one-minute buckets and
 // completed minute buckets into hours. It is called after each ingest and
 // before a retention pass, so a chart over an old range still has a series.
+// @req MESH-TEL-0005
 func telemetryRollup(project string) string {
 	if !telemetryOpen("") {
 		return telemetryError("the telemetry database could not be opened")
@@ -983,6 +992,7 @@ func telemetryRollup(project string) string {
 
 // telemetryPrune rolls the project up and then removes each window's oldest
 // rows. Raw readings go first; the minute and hour rollups outlive them.
+// @req MESH-TEL-0005
 func telemetryPrune(project string, rawDays uint32, minuteDays uint32, hourDays uint32) string {
 	if !telemetryOpen("") {
 		return telemetryError("the telemetry database could not be opened")

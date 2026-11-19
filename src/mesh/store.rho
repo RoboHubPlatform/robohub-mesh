@@ -102,7 +102,7 @@ fn wizard_report(name: string) string {
 
 fn project_listing() string {
     let report: string = wizard_report("projects")
-    ignore_u32(rho_exec("ls", projects_dir(), report))
+    ignore_u32(rho_exec_args("ls", projects_dir() + "\n", report))
     return rho_read_text(report)
 }
 
@@ -163,9 +163,9 @@ fn project_id_from_name(name: string) string {
 
 fn new_project(name: string) string {
     let dir: string = projects_dir()
-    ignore_u32(rho_exec("mkdir", "-p " + dir, wizard_report("mkdir-projects")))
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + dir + "\n", wizard_report("mkdir-projects")))
     let id: string = project_id_from_name(name)
-    ignore_u32(rho_exec("mkdir", "-p " + project_location(id), wizard_report("mkdir-project")))
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + project_location(id) + "\n", wizard_report("mkdir-project")))
     ignore_u32(rho_exec_args("chmod", "700\n" + dir + "\n" + project_location(id) + "\n", wizard_report("mkdir-project")))
     var display: string = sanitize(name)
     if display == "" {
@@ -204,6 +204,7 @@ fn mesh_home_dir() string {
 // projects hold each gateway's key, the boards' folders their keys and Wi-Fi
 // passwords, and the images built from them both. Mesh runs it when it starts,
 // which also closes what an older Mesh left readable.
+// @req MESH-0008, MESH-ACCESS-0009
 fn mesh_tree_private() void {
     let report: string = wizard_report("mesh-private")
     ignore_u32(rho_exec_args("mkdir", "-p\n" + wizard_dir() + "\n" + projects_dir() + "\n", report))
@@ -216,7 +217,7 @@ fn mesh_tree_private() void {
 
 fn ensure_wizard_dir() void {
     let dir: string = wizard_dir()
-    ignore_u32(rho_exec("mkdir", "-p " + projects_dir(), dir + "/mkdir.txt"))
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + projects_dir() + "\n", dir + "/mkdir.txt"))
     // A folder made here is Mesh's user's alone (mesh_tree_private).
     ignore_u32(rho_exec_args("chmod", "700\n" + dir + "\n" + projects_dir() + "\n", dir + "/mkdir.txt"))
     let current: string = current_project_file()
@@ -224,7 +225,7 @@ fn ensure_wizard_dir() void {
     // A project written before plan.yml is imported before anything asks
     // whether it exists, so it is listed, opened and kept active as it was.
     let listing_report: string = wizard_report("plan-listing")
-    rho_exec("ls", projects_dir(), listing_report)
+    rho_exec_args("ls", projects_dir() + "\n", listing_report)
     var listed: string = rho_read_text(listing_report)
     while listed != "" {
         let at: i32 = rho_str_index_of(listed, "\n")
@@ -245,7 +246,7 @@ fn ensure_wizard_dir() void {
     // yet cannot be opened, listed or activated.
     let legacy_current: string = first_line(rho_read_text(dir + "/current-session.txt"))
     let legacy_report: string = wizard_report("legacy-sessions")
-    ignore_u32(rho_exec("ls", dir + "/sessions", legacy_report))
+    ignore_u32(rho_exec_args("ls", dir + "/sessions\n", legacy_report))
     var rest: string = rho_read_text(legacy_report)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -262,7 +263,7 @@ fn ensure_wizard_dir() void {
         }
         let id: string = rho_str_slice(file, 0, u32(rho_str_index_of(file, ".txt")))
         if !rho_path_exists(project_file(id)) {
-            ignore_u32(rho_exec("mkdir", "-p " + project_location(id), legacy_report))
+            ignore_u32(rho_exec_args("mkdir", "-p\n" + project_location(id) + "\n", legacy_report))
             let old: string = rho_read_text(dir + "/sessions/" + file)
             ignore_bool(plan_write(project_file(id), "project.name=" + id + "\n" + old))
         }
@@ -357,9 +358,9 @@ fn write_state_file(path: string, text: string) bool {
     // Keep the state a write replaces. A plan is the person's work, and a bug
     // in a writer should cost one edit rather than the plan.
     if rho_path_exists(path) {
-        ignore_u32(rho_exec("cp", "-f " + path + " " + path + ".bak", wizard_report("state-bak")))
+        ignore_u32(rho_exec_args("cp", "-f\n" + path + "\n" + path + ".bak\n", wizard_report("state-bak")))
     }
-    let code: u32 = rho_exec("mv", "-f " + tmp + " " + path, wizard_report("state-mv"))
+    let code: u32 = rho_exec_args("mv", "-f\n" + tmp + "\n" + path + "\n", wizard_report("state-mv"))
     return code == 0
 }
 

@@ -99,6 +99,7 @@ fn mesh_manifest_text(project: string) string {
 // mesh_manifest_write writes a mesh's manifest when it changed; true when it is
 // in place. `force` writes it for a project that has no gateway key yet (a
 // gateway start, which makes the key).
+// @req MESH-0005, MESH-ACCESS-0003
 fn mesh_manifest_write(project: string, force: bool) bool {
     if project == "" || !rho_path_exists(project_file(project)) {
         return false
@@ -209,6 +210,7 @@ fn editor_key_section(loc: string, id: string, index: u32) string {
 // gateway gives the board its new key the next time it hears it. A board whose
 // last rotation is not confirmed yet is not rotated again — it would be two
 // epochs behind its gateway and refused — nor one that cannot store a key.
+// @req MESH-0006, MESH-ACCESS-0005
 fn mesh_p_node_rotate(req: Request) Response {
     if !mesh_may(req, param(req, "project"), true) {
         return mesh_denied(req)
@@ -260,6 +262,7 @@ fn project_node_revoked(id: string, index: u32) bool {
 // mesh_p_node_revoke takes a board out of its mesh, or admits it again: the
 // plan says so, the manifest is written from it, a gateway on this machine reads
 // it within seconds, and a gateway on another machine is sent the new one.
+// @req MESH-ACCESS-0004
 fn mesh_p_node_revoke(req: Request) Response {
     if !mesh_may(req, param(req, "project"), true) {
         return mesh_denied(req)

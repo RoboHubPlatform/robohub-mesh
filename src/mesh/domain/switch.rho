@@ -1,0 +1,80 @@
+//
+// @file switch.rho
+// @brief When a switched device counts as switched: the state it reports, not the one it was told.
+//
+// @module mesh.domain.switch
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.switch
+
+// A device that took a command has not necessarily done it: a relay can stick,
+// a plug can be switched back by its own button, and an MQTT command is only a
+// message the broker took. So a switch is recorded as requested, and the state
+// shown is the one the device reports afterwards:
+//
+// - "confirmed"   — the device reported the requested state after the request;
+// - "pending"     — it has not yet, and the wait is not over;
+// - "unconfirmed" — the wait is over without that report, or the device has no
+//                   way to report its state at all (its manifest names no state
+//                   field for the transport it speaks);
+// - "idle"        — nothing was requested.
+//
+// A report of the other state does not end the wait early: a status published
+// just before the command took effect would otherwise read as a refusal.
+
+/// How long a switch waits for the device to report the requested state.
+const MESH_SWITCH_TIMEOUT_S: u32 = 30
+
+// switch_state_word reads a reported value as "on" or "off": a boolean as JSON
+// spells it, the 1 or 0 the store keeps, or the word itself. Anything else is
+// not a report.
+// @req MESH-0022
+fn switch_state_word(value: string) string {
+    let v: string = str_trim(value)
+    if str_eq(v, "true") || str_eq(v, "1") || str_eq(v, "on") {
+        return "on"
+    }
+    if str_eq(v, "false") || str_eq(v, "0") || str_eq(v, "off") {
+        return "off"
+    }
+    return ""
+}
+
+// switch_outcome is where a requested switch stands. `reported` is the state the
+// device reported after the request ("" when it has reported nothing since),
+// `can_report` whether the device can report its state at all, and `elapsed_s`
+// how long ago the request was made.
+// @req MESH-0022
+fn switch_outcome(requested: string, reported: string, can_report: bool,
+    elapsed_s: u32, timeout_s: u32) string {
+    if str_eq(requested, "") {
+        return "idle"
+    }
+    if !can_report {
+        return "unconfirmed"
+    }
+    if str_eq(reported, requested) {
+        return "confirmed"
+    }
+    if elapsed_s >= timeout_s {
+        return "unconfirmed"
+    }
+    return "pending"
+}
+
+// switch_shown is the state an API answers for a device: the reported state when
+// nothing is waiting or the request was confirmed, otherwise the outcome itself
+// ("pending" or "unconfirmed"), so a caller never reads a requested state as the
+// device's.
+// @req MESH-0022
+fn switch_shown(outcome: string, reported: string) string {
+    if str_eq(outcome, "pending") || str_eq(outcome, "unconfirmed") {
+        return outcome
+    }
+    return reported
+}

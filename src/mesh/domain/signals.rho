@@ -1,0 +1,53 @@
+//
+// @file signals.rho
+// @brief The signals a part is given when its manifest has no `signals:` block: by its functions, or by its device kind.
+//
+// @module mesh.domain.signals
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.signals
+
+// A row is "id|label|direction|unit|field|widget kinds", the shape a manifest's
+// `signals:` entry is read into (catalog.rho, signal_rows). A part that declares
+// its signals is read as it says; these are the fallback for one that names only
+// its `functions:` (a board or module) or its `device.kind` (a device).
+
+// signal_function_row is the signal a function gives, or "" for one Mesh does
+// not know.
+// @req MESH-API-0009
+fn signal_function_row(name: string) string {
+    let fn_name: string = str_trim(name)
+    if fn_name == "temperature" { return "temperature|Temperature|input|°C|temperature_c|numeric chart table" }
+    if fn_name == "humidity" { return "humidity|Humidity|input|%|humidity|numeric chart table" }
+    if fn_name == "pressure" { return "pressure|Pressure|input|hPa|pressure_hpa|numeric chart table" }
+    if fn_name == "altitude" { return "altitude|Altitude|input|m|altitude_m|numeric chart table" }
+    if fn_name == "light" { return "light|Light|input|%|light|numeric chart table" }
+    if fn_name == "analog" { return "analog|Analog|input||analog|numeric chart table" }
+    if fn_name == "button" { return "button|Button|input||button|numeric chart table" }
+    if fn_name == "pulse" { return "pulse|Pulse|input|bpm|pulse|numeric chart table" }
+    // An on/off output (robohub-common's RoboHubSwitch, the device kind
+    // `switch`): a GPIO switch or a relay board that names only its function.
+    if fn_name == "switch" { return "switch|Switch|output||state|toggle button" }
+    return ""
+}
+
+// signal_device_rows are the signals a device of a kind gives, one per line.
+// @req MESH-API-0009
+fn signal_device_rows(kind: string) string {
+    if kind == "plug" {
+        return "switch|Switch|output||state|toggle button\n" +
+            "power|Power|input|W|power_w|numeric chart table"
+    }
+    if kind == "actuator" || kind == "switch" {
+        return "switch|Switch|output||state|toggle button"
+    }
+    if kind == "inverter" {
+        return "power|Power|input|W|power_w|numeric chart table"
+    }
+    return ""
+}

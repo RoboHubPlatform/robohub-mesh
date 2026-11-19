@@ -23,6 +23,11 @@ include "mesh/domain/impact.rho"
 include "mesh/domain/deploy.rho"
 include "mesh/domain/manifest.rho"
 include "mesh/domain/production.rho"
+include "mesh/domain/access.rho"
+include "mesh/domain/poll.rho"
+include "mesh/domain/switch.rho"
+include "mesh/domain/alerting.rho"
+include "mesh/domain/signals.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
 include "mesh/store.rho"
@@ -48,6 +53,7 @@ include "mesh/devices.rho"
 include "mesh/manifest.rho"
 include "mesh/nodekey.rho"
 include "mesh/production.rho"
+include "mesh/alerts.rho"
 
 import std.web.http
 import std.web.template
@@ -161,7 +167,7 @@ route GET "/mesh/api/projects/{project}/gateway" => mesh_api_project_gateway
 route GET "/mesh/api/projects/{project}/sources" => mesh_api_project_sources
 route GET "/mesh/api/projects/{project}/nodes" => mesh_api_project_nodes
 route GET "/mesh/api/projects/{project}/sources/{source}/value" => mesh_api_source_value
-route GET "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action
+route GET "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action_get
 route POST "/mesh/api/projects/{project}/sources/{source}/action" => mesh_api_source_action
 route GET "/mesh/api/projects/{project}/telemetry/status" => mesh_api_telemetry_status
 route GET "/mesh/api/projects/{project}/telemetry/latest" => mesh_api_telemetry_latest

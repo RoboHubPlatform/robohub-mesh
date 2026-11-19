@@ -688,6 +688,7 @@ fn editor_publish(id: string) void {
 
 // editor_answer is a save's answer: with htmx the inspector, the tree and the
 // bar together; without it the page with the selection.
+// @req MESH-UI-0002
 fn editor_answer(req: Request, id: string, selection: string, tab: string, notice: string) Response {
     editor_publish(id)
     if htmx_is_request(req) {
@@ -796,6 +797,7 @@ fn editor_line(key: string, value: string) string {
 }
 
 // editor_stale refuses a save from a form opened before the node's last save.
+// @req MESH-PLAN-0003
 fn editor_stale(body: string, index: u32) bool {
     let sent: string = form_field(body, "rev")
     return sent != "" && !rho_str_eq(sent, editor_rev(index))

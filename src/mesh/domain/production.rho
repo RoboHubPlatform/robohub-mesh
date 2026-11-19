@@ -67,6 +67,7 @@ fn production_trim(value: string) string {
 // production_candidates are the plan files a board's plan is looked up by, most
 // specific first, one per line: the target, its preset, its family and the
 // whole platform. A name with a path in it, or a repeated one, is skipped.
+// @req MESH-BUILD-0009
 fn production_candidates(target: string, preset: string, family: string) string {
     var out: string = ""
     var seen: string = "\n"
@@ -194,6 +195,7 @@ fn production_key_mode_ok(mode: string) bool {
 // key: "" when it can, "missing" when no key is named or the file is not
 // there, "relative" for a path that is not absolute, "open" when the file is
 // readable by others. A plan that needs no key queues without one.
+// @req MESH-BUILD-0010
 fn production_key_refusal(needs_key: bool, path: string, exists: bool, mode: string) string {
     if !needs_key {
         return ""
@@ -253,6 +255,7 @@ fn production_flash_command(board: string, dir: string, binary: string, producti
 // ends by writing what the flash will do (`rho flash --production --dry-run`)
 // to `plan_file`, which is what the person reads before typing the board's
 // name. The key's contents are never in the script.
+// @req MESH-BUILD-0010, MESH-BUILD-0011
 fn production_build_script(board: string, dir: string, binary: string, program: string, production: bool,
     key: string, otp: bool, plan_file: string) string {
     var out: string = "cd " + production_quote(dir) + "\n"
@@ -273,6 +276,7 @@ fn production_build_script(board: string, dir: string, binary: string, program: 
 // flash reads the board's name from the `.confirm` file beside the job script,
 // which Mesh writes only with what the person typed; without one it stops before
 // running anything, and rho flash checks the name itself as well.
+// @req MESH-BUILD-0011
 fn production_flash_script(board: string, dir: string, binary: string, program: string, production: bool, otp: bool) string {
     if !production {
         return production_flash_command(board, dir, binary, false, false) + "\n"

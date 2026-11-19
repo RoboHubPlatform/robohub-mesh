@@ -35,8 +35,13 @@ rho build .
 Mesh trusts the sessions and tickets the keeper issues. Started by the keeper, it
 fetches the keeper's public key from the keeper on its machine; started elsewhere,
 it is told where the keeper is with `RHO_AUTH_URL`, sends a person there to sign in,
-and fetches the key from `<RHO_AUTH_URL>/auth/public-key`, keeping a copy so a
-keeper that is briefly down locks nobody out.
+and fetches the key from `<RHO_AUTH_URL>/auth/public-key`, keeping a copy (0600, in
+`auth/issuer.pem` of its workspace, or `~/.rho/auth-app/mesh/` when started by hand)
+so a keeper that is briefly down locks nobody out. A ticket signed by any other key is
+refused. When the keeper rotates its key, a ticket naming the new key makes Mesh fetch
+it again (at most every thirty seconds), and tickets of the old key stop working. A
+key file at `~/.rho/auth/public.pem` (or `RHO_AUTH_PUBLIC_KEY`) is used instead of
+fetching when the machine has one.
 
 Without a keeper, `RHO_AUTH_STANDALONE=1 ./build/mesh` runs Mesh on its own: it
 answers requests from its own machine as the local user and refuses any from
@@ -55,7 +60,17 @@ access in the keeper):
 | `mesh:<mesh>:read` | read that mesh |
 
 A new mesh, copying one, applying in every mesh and Mesh's own settings need
-`mesh:*`. Someone granted particular meshes sees a fleet of those only.
+`mesh:*`. Someone granted particular meshes sees a fleet of those only, and finds
+only in those when searching. A gateway's token (`gateway:<mesh>:*`) is what Mesh
+presents to a gateway; it opens none of Mesh's own pages or API.
+
+Only these are public: `/healthz`, the sign-in callback, static files and
+translations, this guide (`/mesh/docs`), and `/mesh/api/nodes/key`, which checks a
+host node's own credential with the keeper. They are the auth middleware's
+`skip_paths` in `project.yml`. Every other page and API checks the grants itself as
+well, and refuses a request the middleware did not authenticate, so a path the
+middleware were ever to leave unguarded opens nothing; the guide shows no mesh to
+someone who has not signed in.
 
 ## Pages
 
@@ -188,6 +203,18 @@ is polled by Mesh's background worker and can be polled and switched from the Da
 tab; an MQTT device reaches Mesh through the broker the keeper runs. Switch actions
 appear only for a plug, switch or actuator.
 
+A switch is shown in the state the device **reports**, not the one it was told. When
+the device takes the command, Mesh records the request as pending and asks the
+device for its state — over HTTP it reads the status back at once; over MQTT it
+waits for a status message newer than the request. The request is confirmed when
+the device reports the requested state; until then the Data tab says "on
+requested, waiting for the device to report it", and after 30 seconds without that
+report, "on requested, unconfirmed" — beside the state the device does report. A
+device whose integration names no `state` field for its transport cannot report
+its state, so its switch is always shown as requested and unconfirmed rather than
+as done. A **Poll device** reading, or the next request, ends an unconfirmed one.
+A device that does not take the command changes nothing.
+
 ### Links
 
 A link offers only transports both boards can serve: the transports the
@@ -318,6 +345,21 @@ through itself or through a mesh that reports through it.
 | Storage | Telemetry retention: raw readings (14 days), minute roll-ups (90), hourly roll-ups (1825), faults (365); WAL checkpoint (5 minutes); retention pass (6 hours); vacuum mode; maximum gateway backoff (60 seconds). |
 | Logging | Level, text or JSON, rotating file, size, retention, standard error. |
 | Configuration | Read-only: the registry Mesh reads, its plugins, its alert channels. |
+
+**What Mesh raises as an alert.** Faults go to the fault inbox as before; the ones
+that need a person are also raised through every `robohub.alert` channel above
+whose threshold they meet:
+
+| Fault | Level | When |
+| --- | --- | --- |
+| A mesh's gateway stops answering | ERROR | the first failed poll of an outage (the inbox's fault); an INFO "answers again" follows when it is back |
+| A build or flash job fails | ERROR | per board and kind of job |
+| A board's revocation or key rotation cannot be sent to its gateway | ERROR | until it is sent, that gateway still admits the revoked board, or holds the replaced key |
+
+An alert with the same mesh and subject is not raised again within 15 minutes, so a
+link that flaps or a job retried in a loop is one message; when each was last raised
+is kept beside the mesh's plan (`alert-<mesh>-<subject>.txt`), so a restart does not
+forget it.
 
 **A mesh's settings** (`/mesh/project/<project>/settings`): its name, a short
 description, the gateway URL it owns, how long its raw readings are kept, **Copy as a
@@ -491,7 +533,7 @@ All under Mesh's sign-in; a program presents a service token as above.
 | `GET /mesh/api/projects/{project}/nodes` | the tree: gateway, boards, modules, devices, each with its id, parent, kind, transport and state |
 | `GET /mesh/api/projects/{project}/sources` | the project's signals |
 | `GET /mesh/api/projects/{project}/sources/{source}/value` | one signal's reading |
-| `GET`/`POST /mesh/api/projects/{project}/sources/{source}/action` | drive an output |
+| `POST /mesh/api/projects/{project}/sources/{source}/action` | drive an output: `state=on` or `off` in the query or the form body (anything else, or none, is `400`); needs a grant to change that mesh (`mesh:<project>`, `mesh:*` or `*` — a `:read` grant is `403`), and from a browser session the form token as `csrf` (a program sends a bearer ticket instead); `200` `{"ok":true,"confirmed":true}` once the device reports the state, `202` `{"ok":true,"confirmed":false,"outcome":"pending"}` (or `"unconfirmed"`) while it has not, `502` when nothing took it. A `GET` is `405` and switches nothing |
 | `GET /mesh/api/projects/{project}/telemetry/status` | rows, newest time, gateway count |
 | `GET /mesh/api/projects/{project}/telemetry/latest?source=` | the newest reading |
 | `GET /mesh/api/projects/{project}/telemetry/series?source=&from=&to=&step=` | raw readings, or bucket averages when `step` is set (ms) |
@@ -499,8 +541,8 @@ All under Mesh's sign-in; a program presents a service token as above.
 | `GET /mesh/api/projects/{project}/telemetry/faults` | the project's faults |
 | `GET /mesh/api/projects/{project}/telemetry/gateway` | the poller's state: backoff, next poll, last success, open fault, last error |
 | `GET /mesh/api/gateway`, `/mesh/api/sources` | the same for the open mesh |
-| `GET /mesh/api/devices` | the devices in the plan |
-| `POST /mesh/api/devices/{id}/switch` | switch a plug, switch or actuator |
+| `GET /mesh/api/devices` | the devices in the plan, each with `state` (what the device reports, or `pending` / `unconfirmed` while a switch waits), `reported` and `requested` |
+| `POST /mesh/api/devices/{id}/switch` | switch a plug, switch or actuator: `state=on` or `off` (anything else is `400`); `200` with `"confirmed":true` once the device reports that state, `202` with `"state":"pending"` (or `"unconfirmed"`) while it has not, `502` when it did not take the command |
 | `POST /mesh/api/clients/register`, `/heartbeat`, `/publish` | application clients |
 | `GET /mesh/api/clients` | the clients, their project, topics, last seen and online flag |
 
@@ -513,15 +555,21 @@ as `legacy_id`. The object also carries `module_id`, `driver_id`, `source`, `pro
 `instance` (the node id), `history_path` and, when Mesh knows its origin,
 `history_url`. The contract behind it is the `signals:` list in a device
 integration's or board's manifest, so a new part is visible to a dashboard without the
-dashboard knowing its type.
+dashboard knowing its type. A board or module without `signals:` is given one per
+function it names in `functions:` (`temperature`, `humidity`, `pressure`,
+`altitude`, `light`, `analog`, `button` and `pulse` as inputs, `switch` as an output
+on the field `state`), and a device without them one set by its kind (plug, switch,
+actuator, inverter).
 
 ## The telemetry store
 
 Mesh is the only telemetry store in the installation; applications read it through
 `/mesh/api`, never by opening its file. A background worker polls every mesh's
 gateway outbox, writes a page in one transaction, advances the cursor and
-acknowledges the sequence. The unique key is `(gateway_id, seq)`, so a page repeated
-after a failed acknowledgement is ignored. A gateway that does not answer is backed
+acknowledges the sequence. The unique key is `(gateway_id, seq)`, and a sequence at
+or below the feed's cursor, or one a page carries twice, is skipped before anything is
+written, so a page repeated after a failed acknowledgement — or an old one replayed —
+adds no reading, changes no latest value, raises no fault and reaches no live feed. A gateway that does not answer is backed
 off from two seconds, doubling to the Storage tab's maximum, and the first failure in
 an outage is recorded as one fault.
 
@@ -546,6 +594,10 @@ gives another is recorded as a fault and kept as its own series. The schema is
 | Telemetry store | `~/.rho/mesh/telemetry.db` (`RHO_TELEMETRY_DB` or `ROBOHUB_MESH_TELEMETRY_DB`) |
 | Settings, alert channels | Mesh's app workspace (`~/.rho/keeper/workspaces/mesh` under the keeper) |
 | Alerts log | `~/.rho/mesh/alerts.log` |
+| A switch waiting for its device, an alert's last time | `switch-<n>.txt`, `alert-<key>.txt` beside the mesh's plan |
+
+Every folder may have a space in its path: Mesh hands each path to a program as one
+argument.
 
 **Logs.** Mesh logs to standard error, which its unit's journal keeps (the keeper's
 **Log** for Mesh, or `journalctl --user -u mesh`); the Logging tab adds a rotating
@@ -586,8 +638,18 @@ say what a board's image is built from. The smoke suite builds Mesh and walks it
 HTTP: a mesh planned in place, the bus plan and its conflicts, the plan's revisions,
 numbers kept across a delete, the old addresses, the fleet and its ports, stale saves
 refused, a native gateway started as a job and found online, and a Pico 2 W board
-built in the background with its flash waiting for BOOTSEL. The production smoke runs Mesh
+built in the background with its flash waiting for BOOTSEL. The access smoke checks
+the public routes, every other route class refused without a ticket, `/mesh/api`'s
+token scopes and a gateway's token, standalone mode, and the kept copy of the keeper's
+key (fetched, used while the keeper is down, replaced when it rotates). The
+telemetry-store suite runs the store's Go tests against a real SQLite database and a
+stand-in gateway. The production smoke runs Mesh
 with a stand-in `rho`, so nothing is built or burned: the toggle offered only where
 the platform has a plan, a production build refused without the signing key or with
 one others can read, and the flash waiting on the dry run's steps until the board's
-name is typed, then handed that name on its input.
+name is typed, then handed that name on its input. The devices smoke runs Mesh with
+its state folder's path holding a space, beside a stand-in Shelly plug: a switch
+confirmed only by what the plug reports, a stuck relay shown pending and then
+unconfirmed, a gateway outage and an unsent revocation raised as one alert each
+through the log provider, and a mesh deleted without touching a folder named like
+the path's first word.

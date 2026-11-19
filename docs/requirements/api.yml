@@ -1,0 +1,149 @@
+# Who may reach what, and what the API offers: the grants a person's ticket
+# carries, service tokens on /mesh/api, the sources an application binds, and the
+# application clients Mesh calls back (src/mesh/access.rho, telemetry.rho,
+# api.rho, clients.rho). Proposed until the maintainer approves them.
+level: SUB
+prefix: MESH-API
+title: Mesh access and API
+requirements:
+  - id: MESH-API-0001
+    title: Grants decide reading and changing a mesh
+    statement: >
+      A request shall read a mesh only with `*`, `mesh:*`, `mesh:read`,
+      `mesh:<mesh>` or `mesh:<mesh>:read`, change it only with `*`, `mesh:*` or
+      `mesh:<mesh>`, and create, copy, apply in every mesh or change Mesh's own
+      settings only with `*` or `mesh:*`; any other request shall be answered 403.
+    rationale: A person granted one mesh reaches that mesh alone.
+    satisfies: [MESH-0012]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, access]
+
+  - id: MESH-API-0002
+    title: A service token must name the mesh it reads
+    statement: >
+      Every `/mesh/api` handler for a mesh shall require a verified audience and a
+      scope `mesh:<mesh>`, `mesh:*` or `*`, and shall refuse with 403 a subject
+      revoked in that mesh's token records.
+    rationale: An application asks for a token for the one mesh it reads; it must open no other.
+    satisfies: [MESH-0013]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, api, least-privilege]
+
+  - id: MESH-API-0003
+    title: Each signal is a source with a stable id
+    statement: >
+      The sources of a mesh shall list each signal its boards, modules and devices
+      declare in their manifests' `signals:`, each with its id
+      `<node id>.<signal>`, the older `<kind>.<index>.<signal>` as `legacy_id`, its
+      direction, unit, the widget kinds it can feed, and its value and action
+      paths.
+    rationale: A dashboard binds a new part without knowing its type, and a node added later never takes another's history.
+    satisfies: [MESH-0013]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [api, sources]
+
+  - id: MESH-API-0004
+    title: A registered client gets a secret of its own
+    statement: >
+      An application registering as a client of a mesh shall be given a secret of
+      16 random bytes, kept for it in `clients.jsonl` (0600) in Mesh's state and
+      kept again when the same client registers anew.
+    rationale: Mesh's callbacks to an application carry a secret only that application knows.
+    satisfies: [MESH-0013, MESH-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [api, clients, secrets]
+
+  - id: MESH-API-0005
+    title: A publish reaches only the matching clients
+    statement: >
+      A publish shall be delivered, over http or https only and with the client's
+      secret read from an owner-only file rather than a command line, to the
+      clients of the same mesh one of whose topics equals the topic or is its
+      prefix followed by `.*`, and to no other.
+    rationale: One application's events are not every application's.
+    satisfies: [MESH-0013]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [api, clients]
+
+  - id: MESH-API-0006
+    title: A request nobody authenticated is refused by Mesh's own checks
+    statement: >
+      Every Mesh handler outside the auth middleware's skip_paths shall refuse a
+      request that carries no verified audience, whatever scopes it claims, so that
+      a path the middleware were to leave unguarded opens nothing; the public routes
+      shall be exactly /healthz, /auth/login, /auth/callback, /assets, /static,
+      /i18n, /mesh/docs and /mesh/api/nodes/key (which checks the node's own
+      credential).
+    rationale: Safety must not depend on the middleware guarding every path; a page the middleware lets through (the guide) must not show a mesh to someone nobody signed in.
+    satisfies: [MESH-0012, MESH-0013]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, access]
+
+  - id: MESH-API-0007
+    title: Started standalone, Mesh answers its own machine only
+    statement: >
+      Mesh started with RHO_AUTH_STANDALONE=1 shall serve a request without a ticket
+      only from the loopback and not forwarded by a proxy, and shall refuse every
+      other caller with 403.
+    rationale: A Mesh run by hand without a keeper must not be a Mesh anyone on the network can drive.
+    satisfies: [MESH-0012, MESH-0020]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, access]
+
+  - id: MESH-API-0008
+    title: Mesh keeps the keeper's public key and follows its rotation
+    statement: >
+      Without a key file, Mesh shall fetch the keeper's published public key, keep a
+      copy readable by its owner only, verify with that copy while the keeper is
+      unreachable, refuse a ticket another key signed, and fetch the key again when
+      a ticket names a key it does not hold.
+    rationale: A keeper that is briefly down must not lock everyone out, and a rotated key must take effect without restarting Mesh.
+    satisfies: [MESH-0020]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sign-in]
+
+  - id: MESH-API-0009
+    title: A part without signals is described by its functions
+    statement: A board or module whose manifest has no `signals:` block shall be given one signal per function it declares in `functions:` that Mesh knows — temperature, humidity, pressure, altitude, light, analog, button and pulse as inputs, and switch as an output with the field `state` feeding a toggle or a button — and a device without `signals:` one set by its device kind (plug, switch, actuator, inverter).
+    rationale: A driver that only names its functions, such as a GPIO switch or a relay board, must still be a source a dashboard can bind.
+    satisfies: [MESH-0013]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [api, signals]
+
+  - id: MESH-API-0010
+    title: An output is switched only by a POST that holds a control grant
+    statement: The action of a mesh's output source shall switch it only on a POST that holds a grant to change that mesh (`*`, `mesh:*` or `mesh:<mesh>`), names state on or off (anything else, or none, answered 400 with nothing sent) and, when it rides on a session cookie rather than a bearer ticket, carries the form token (forms_machine_ok); a GET of it shall be answered 405 and switch nothing, a read grant 403, and a switch taken shall be answered 200 confirmed once the device reports the state and 202 pending or unconfirmed while it has not.
+    rationale: Until 0.20.2 a GET with only a read grant switched an output, on when no state was given, so any page could switch a heater with an image link in a signed-in browser and a read-only token could drive outputs.
+    satisfies: [MESH-0012, MESH-0014, MESH-0016]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, api, outputs]

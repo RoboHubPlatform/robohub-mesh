@@ -1,0 +1,114 @@
+# The plan: how a mesh is kept and edited — plan.yml and its revisions, node
+# numbers and ids, revisions per node, modules and their bus plan, links and their
+# transports, and where boards and drivers come from (src/mesh/plan.rho,
+# store.rho, domain/plan_text.rho, domain/transport.rho, editor.rho,
+# catalog.rho). Proposed until the maintainer approves them.
+level: SUB
+prefix: MESH-PLAN
+title: Mesh plan
+requirements:
+  - id: MESH-PLAN-0001
+    title: A mesh is a folder with its plan and the plan's revisions
+    statement: >
+      Each mesh shall be a folder of its own under the projects directory holding
+      its plan as `plan.yml`; every save shall raise the plan's revision, and the
+      plan as it was before each burst of saves shall be kept under `revisions/`,
+      the last 20.
+    rationale: A plan edited by mistake can be taken back; a burst of saves from one form is one edit, not twenty copies.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, storage]
+
+  - id: MESH-PLAN-0002
+    title: A node's number and id are never reused
+    statement: >
+      Every node shall be given a number never given to another node of its mesh,
+      also after a node is removed, and every board, module and device an id made
+      once and kept; a parent shall be stored by its number, so removing a node
+      changes no other node's number or id, and the children of a removed node
+      move to the gateway.
+    rationale: A board already flashed reports with its number and its history is kept under its id; neither may become another node's.
+    satisfies: [MESH-0001, MESH-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, identity]
+
+  - id: MESH-PLAN-0003
+    title: A save from a stale form is refused
+    statement: >
+      Each node shall carry a revision that every save raises, and a form opened
+      before the node's last save shall be refused as changed elsewhere without
+      writing anything.
+    rationale: Two tabs, or two people, must not silently overwrite each other's edit.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, editing]
+
+  - id: MESH-PLAN-0004
+    title: Modules are nodes, and a board's bus plan places them
+    statement: >
+      A sensor module shall be a node of its own attached to a board or the
+      gateway; a board's bus plan shall put its 1-Wire modules on one instance and
+      its I2C modules on one instance at free addresses, give each SPI module its
+      own chip select and each ADC, PWM, GPIO and UART module its own instance, and
+      a module that conflicts shall be shown on the board and left out of its
+      image.
+    rationale: Several modules make one board; a conflict must not stop the rest of the board from building.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, modules, buses]
+
+  - id: MESH-PLAN-0005
+    title: A link uses only a transport both ends serve
+    statement: >
+      A link shall be offered and saved only with a transport the
+      `robohub-transport` module declares that both boards list in their
+      `capabilities.links`, and Console only when the parent is a host; any other
+      transport shall be refused with the reason.
+    rationale: A link neither board can carry builds firmware that never reports.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, links]
+
+  - id: MESH-PLAN-0006
+    title: Boards, modules and devices are read from their manifests at run time
+    statement: >
+      Mesh shall offer the boards, sensor modules and device integrations declared
+      by the platform modules of the local registry, `robohub-drivers` and
+      `robohub-devices`, read each time the editor loads, and shall name no board or
+      driver a manifest does not.
+    rationale: A board or driver added to its checkout is offered without rebuilding Mesh.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, catalog]
+
+  - id: MESH-PLAN-0007
+    title: A mesh written before plan.yml is imported once
+    statement: >
+      A mesh folder holding only an older `project.txt` shall be imported into
+      `plan.yml` with numbers and stored parents when Mesh first reads it, and the
+      old file renamed `project.txt.imported`.
+    rationale: An installation of an older Mesh keeps its meshes.
+    satisfies: [MESH-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, migration]

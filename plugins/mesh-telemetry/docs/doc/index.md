@@ -26,7 +26,7 @@ energy shows what this store holds.
 
 | Job | How |
 |---|---|
-| **Ingest a gateway** | Asks the gateway's outbox for the readings after the feed's cursor (`GET /api/v1/telemetry/outbox?after=<seq>&limit=500`, with the gateway's token), writes the page in one transaction, advances the cursor, then acknowledges (`POST /api/v1/telemetry/ack`). A failure leaves the page to be read again, and a repeated page is ignored by the reading's unique key |
+| **Ingest a gateway** | Asks the gateway's outbox for the readings after the feed's cursor (`GET /api/v1/telemetry/outbox?after=<seq>&limit=500`, with the gateway's token), writes the page in one transaction, advances the cursor, then acknowledges (`POST /api/v1/telemetry/ack`). A failure leaves the page to be read again. A sequence at or below the cursor, or one a page carries twice, is skipped before anything is written: a repeated or replayed page adds no reading, latest value, fault or feed line |
 | **Record a reading** | A reading Mesh takes itself (an HTTP or MQTT device it polls) goes into the same series |
 | **Live feed** | Each recorded reading is also appended as a JSON line to the feed file Mesh streams to its pages and relays to the broker |
 | **Latest** | The newest value of a signal, without scanning the series |
@@ -76,4 +76,13 @@ The database is `ROBOHUB_MESH_TELEMETRY_DB` when set, otherwise
 `sql_contract_test.go` declares what the port needs from the `sql` port
 (opening a database, applying the schema, a statement batch, the raw handle) so
 the port type-checks where it lives; the real definitions are the `sql` port's,
-merged in at build time.
+merged in at build time. Its bodies do what the `sql` port's do, over SQLite
+(the driver is a test-only requirement in `ports/go.mod`), so `store_test.go`
+runs the store against Mesh's own schema and a stand-in gateway: a page stored
+once and acknowledged, a replayed page adding nothing, sequences per gateway,
+series keyed by source, the roll-ups and the retention windows. Mesh's
+`telemetry-store` suite runs them:
+
+```sh
+go -C plugins/mesh-telemetry/ports test ./...
+```

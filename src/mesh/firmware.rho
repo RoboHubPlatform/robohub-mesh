@@ -317,6 +317,7 @@ fn mesh_gateway_key_file(project: string) string {
 
 // mesh_gateway_key is the project's gateway key as hex, made the first time it is
 // asked for, or "" when no random source could make one.
+// @req MESH-ACCESS-0001
 fn mesh_gateway_key(project: string) string {
     var key: string = str_trim(rho_read_text(mesh_gateway_key_file(project)))
     if rho_strlen(key) == 64 {
@@ -372,6 +373,7 @@ fn firmware_c_bytes(hex: string) string {
 
 // firmware_write_secret writes the board's id and key into its build. A board
 // whose key cannot be made is built without them, and its link stays plain.
+// @req MESH-0002, MESH-ACCESS-0002
 fn firmware_write_secret(target: string, project: string, node: u32) u32 {
     let key: string = mesh_gateway_key(project)
     let uid: string = mesh_node_uid(project, node)

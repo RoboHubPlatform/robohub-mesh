@@ -1,0 +1,181 @@
+# Building and applying: what a board's image is built from, what is out of date
+# and why, the jobs that build, flash and start, the gateway's start and stop, and
+# production builds (src/mesh/domain/deploy.rho, deployed.rho, jobs.rho,
+# build.rho, domain/production.rho, production.rho, agora.rho). Proposed until
+# the maintainer approves them.
+level: SUB
+prefix: MESH-BUILD
+title: Mesh builds and jobs
+requirements:
+  - id: MESH-BUILD-0001
+    title: A board's signature is what its image is built from
+    statement: >
+      A board's signature shall be made of its board, role, parent, link and the
+      link's settings, its modules, the links it serves, its production toggle
+      when on, and the gateway's address when it dials the gateway over a network;
+      a node's name or description and a device's address shall change no board's
+      signature and not the gateway's.
+    rationale: What does not reach the image must not make anyone rebuild it.
+    satisfies: [MESH-0003]
+    decided_by: [ADR-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, deploy]
+
+  - id: MESH-BUILD-0002
+    title: Out of date says why
+    statement: >
+      A board whose recorded signature differs from the plan's shall be shown out
+      of date with the reason — never programmed, board changed, modules changed,
+      link changed, gateway address changed or production build changed — and a
+      changed link shall also put the gateway or relay serving it out of date as a
+      link it serves changed.
+    rationale: The person decides what to apply from what changed; a new link needs both ends.
+    satisfies: [MESH-0003]
+    decided_by: [ADR-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, deploy]
+
+  - id: MESH-BUILD-0003
+    title: What runs is recorded only when it was put there
+    statement: >
+      Mesh shall record a board's or the gateway's signature as what it runs only
+      when the job that flashes, programs or starts it succeeds; a flash that is
+      cancelled or fails shall leave the board out of date.
+    rationale: A board that was never flashed must not be shown as running what is planned.
+    satisfies: [MESH-0003]
+    decided_by: [ADR-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, deploy]
+
+  - id: MESH-BUILD-0004
+    title: Applying queues jobs that one runner per mesh works through
+    statement: >
+      Applying shall queue a job per step and answer at once; one runner per mesh,
+      holding that mesh's lock, shall run its jobs in order, each with its own log,
+      end a cancelled job with exit 130 and skip, with exit 125, a job whose
+      prerequisite failed.
+    rationale: No page waits on a build, a long build in one mesh never holds up another, and a flash never follows a failed build.
+    satisfies: [MESH-0001, MESH-0003]
+    decided_by: [ADR-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, jobs]
+
+  - id: MESH-BUILD-0005
+    title: A flash waits for the board to be in programming mode
+    statement: >
+      A flash job shall wait, showing on the board's card and in its inspector the
+      board's programming instruction (for a Pico 2 W, BOOTSEL), until the person
+      says the board is ready, and shall be cancellable while it waits.
+    rationale: Only the person at the board can put it in its bootloader.
+    satisfies: [MESH-0001]
+    decided_by: [ADR-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, flash, jobs]
+
+  - id: MESH-BUILD-0006
+    title: A board is built from the node template and its modules
+    statement: >
+      A board's build job shall prepare `boards/node_<number>` beside the plan
+      from the telemetry node template, with its sensors source written from the
+      drivers' descriptors and the Kconfig its board and modules need, build it
+      with `rho build -target <board>`, and its flash job shall run
+      `rho flash -target <board> -project <dir> <image>`.
+    rationale: A board is built with the same commands the examples use, so a Mesh build and a hand build agree.
+    satisfies: [MESH-0001, MESH-0002]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, firmware]
+
+  - id: MESH-BUILD-0007
+    title: A native gateway is built every time it is started
+    statement: >
+      Starting or restarting a mesh's native gateway shall build robohub-gateway
+      from its sources first, start it with the mesh's REST port, key file and
+      node manifest, write its pid beside the plan, and stopping it shall end that
+      process and remove the pid file.
+    rationale: A restart that reused the last build left a changed gateway running as it was.
+    satisfies: [MESH-0001, MESH-0011]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, gateway]
+
+  - id: MESH-BUILD-0008
+    title: A gateway nobody started is not down
+    statement: >
+      A native gateway Mesh has not started shall be shown as not started with an
+      offer to build and start it, and shall be neither polled nor reported
+      unreachable.
+    rationale: A mesh being planned has no gateway yet; a fault about it is noise.
+    satisfies: [MESH-0017]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [gateway, health]
+
+  - id: MESH-BUILD-0009
+    title: Production is offered only where the platform has a plan
+    statement: >
+      Production shall be off for every board until turned on on that board, and
+      shall be offered, and accepted, only for a board whose platform carries a
+      production plan under `<platform>/production/`, looked up by the target's
+      name, its preset, its family and then `production.json`; turning it on shall
+      say that its steps cannot be undone.
+    rationale: An RP2040, an AVR board or a Linux host has no production mode; offering one would promise what rho flash cannot do.
+    satisfies: [MESH-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [production, build]
+
+  - id: MESH-BUILD-0010
+    title: A production build needs an owner-only signing key
+    statement: >
+      A production build whose plan names RH_SECURE_BOOT_SIGNING_KEY shall not be
+      queued unless the mesh's signing key is named by an absolute path to a file
+      the group and others cannot read; the path shall be kept in
+      `signing-key.txt` (0600) beside the plan, never in the plan, and given to the
+      build only as that path.
+    rationale: A signing key others can read signs their images too; Mesh never needs the key's contents.
+    satisfies: [MESH-0004, MESH-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [production, security, secrets]
+
+  - id: MESH-BUILD-0011
+    title: A production flash runs only on the board's typed name
+    statement: >
+      A production build shall end by writing `rho flash --production --dry-run`
+      to the board's folder, and its flash job shall wait showing those steps,
+      refuse any name but the board's, and run `rho flash --production` with the
+      typed name on its standard input (and RH_PICO_OTP_JSON naming the build's
+      OTP file on an RP2350).
+    rationale: The person sees every irreversible step before any is taken, and rho flash checks the name again.
+    satisfies: [MESH-0004]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [production, flash]

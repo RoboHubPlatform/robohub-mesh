@@ -15,7 +15,7 @@ module:
   name: mesh-telemetry
   id: robohub.mesh.telemetry
   type: plugin
-  version: 0.1.0
+  version: 0.1.1
   description: >
     Mesh's telemetry store — readings, roll-ups, faults and their queries — as
     the Go port Mesh is built with.

@@ -1,0 +1,376 @@
+#!/usr/bin/env python3
+"""Smoke test for Mesh's devices, its alerts and its paths.
+
+Builds Mesh and starts it against a temporary state directory whose path has a
+space in it, beside a stand-in Shelly plug on the loopback, and checks:
+
+- paths with a space (MESH-0024): a mesh is created, its plan saved and kept as
+  revisions, and deleting it removes that mesh only — not a folder that shares
+  the first word of the path;
+- a switch shows the state the device reports (MESH-0022): a plug that switches
+  is confirmed (200) from its status read back; one whose relay sticks is
+  pending (202) and never shown as switched, then unconfirmed once the wait is
+  over; a state that is neither on nor off is refused; a plug that does not
+  answer is 502 and nothing is recorded;
+- a source's action (MESH-API-0010) is a POST that needs a control grant: a GET
+  is 405 and switches nothing, a read-only token is refused, a cookie session
+  needs the form token, no state is 400, and the provider's request (a bearer
+  ticket for mesh:<project>) is answered confirmed (200) or pending (202);
+- alerts (MESH-0023), through the log provider: a gateway that stops answering
+  is one alert however many polls fail, and a board's revocation that cannot
+  be sent to its gateway is an alert too.
+
+    python3 tests/devices_smoke.py
+"""
+
+import http.server
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+MESH = HERE.parents[1]
+PROJECTS = MESH.parent
+RHO = PROJECTS / "rho" / "bin" / "rho"
+RHO_CMD = str(RHO) if RHO.exists() else "rho"
+TOKEN = ""
+failures = []
+
+
+def check(ok: bool, what: str) -> None:
+    print(("[PASS] " if ok else "[FAIL] ") + what)
+    if not ok:
+        failures.append(what)
+
+
+class Plug:
+    """A Shelly Plug's Gen2 RPC, as much of it as Mesh uses."""
+    output = False
+    stuck = False     # takes Switch.Set and answers, but the relay does not move
+    sets = 0
+
+
+class PlugHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        url = urllib.parse.urlparse(self.path)
+        query = urllib.parse.parse_qs(url.query)
+        if url.path == "/rpc/Switch.Set":
+            Plug.sets += 1
+            was = Plug.output
+            if not Plug.stuck:
+                Plug.output = query.get("on", ["false"])[0] == "true"
+            body = {"was_on": was}
+        elif url.path in ("/rpc/Shelly.GetStatus",):
+            body = {"switch:0": {"id": 0, "output": Plug.output, "apower": 12.5 if Plug.output else 0.0,
+                                 "voltage": 230.1, "current": 0.05, "aenergy": {"total": 1000.0}}}
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        data = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def wait_for(base: str, timeout: float = 30.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(base + "/healthz", timeout=1) as response:
+                if response.status == 200:
+                    return
+        except (urllib.error.URLError, ConnectionError):
+            time.sleep(0.2)
+    raise SystemExit(f"mesh did not start at {base}")
+
+
+def mint_token(home: str) -> str:
+    keys = os.path.join(home, ".rho", "auth")
+    os.makedirs(keys, exist_ok=True)
+    subprocess.run([RHO_CMD, "auth", "keygen", "--dir", keys, "--force"], check=True, capture_output=True, text=True)
+    return subprocess.run(
+        [RHO_CMD, "auth", "ticket", "--private", os.path.join(keys, "private.pem"), "--issuer", "keeper",
+         "--audience", "mesh", "--subject", "smoke", "--scopes", "*", "--ttl", "1h"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+
+def ticket(home: str, scopes: str, subject: str = "smoke") -> str:
+    """Another ticket from the key mint_token made, with the scopes given."""
+    keys = os.path.join(home, ".rho", "auth")
+    return subprocess.run(
+        [RHO_CMD, "auth", "ticket", "--private", os.path.join(keys, "private.pem"), "--issuer", "keeper",
+         "--audience", "mesh", "--subject", subject, "--scopes", scopes, "--ttl", "1h"],
+        check=True, capture_output=True, text=True).stdout.strip()
+
+
+def send(base: str, method: str, path: str, fields: dict = None, bearer: str = "", cookie: str = ""):
+    """A request with exactly the credential given: a bearer ticket, a session cookie, or none."""
+    data = urllib.parse.urlencode(fields).encode() if fields is not None else None
+    request = urllib.request.Request(base + path, data=data, method=method)
+    if bearer:
+        request.add_header("Authorization", f"Bearer {bearer}")
+    if cookie:
+        request.add_header("Cookie", f"rho_session_mesh={cookie}")
+    if data is not None:
+        request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as answer:
+        return answer.code, answer.read().decode("utf-8", "replace")
+
+
+def call(base: str, method: str, path: str, fields: dict = None, hx: bool = False):
+    data = urllib.parse.urlencode(fields).encode() if fields is not None else None
+    request = urllib.request.Request(base + path, data=data, method=method)
+    request.add_header("Authorization", f"Bearer {TOKEN}")
+    if data is not None:
+        request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    if hx:
+        request.add_header("HX-Request", "true")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as answer:
+        return answer.code, answer.read().decode("utf-8", "replace")
+
+
+def as_json(text: str):
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {}
+
+
+def device(base: str, index: int) -> dict:
+    _, body = call(base, "GET", "/mesh/api/devices")
+    for entry in as_json(body) or []:
+        if entry.get("id") == index:
+            return entry
+    return {}
+
+
+def main() -> int:
+    global TOKEN
+    result = subprocess.run([RHO_CMD, "build", "."], cwd=MESH, text=True, capture_output=True)
+    if result.returncode != 0:
+        raise SystemExit("mesh build failed:\n" + result.stdout + result.stderr)
+    binary = MESH / "build" / "mesh"
+
+    plug = http.server.ThreadingHTTPServer(("127.0.0.1", free_port()), PlugHandler)
+    threading.Thread(target=plug.serve_forever, daemon=True).start()
+    plug_url = f"http://127.0.0.1:{plug.server_address[1]}"
+    dead_gateway = f"http://127.0.0.1:{free_port()}"
+
+    port = free_port()
+    base = f"http://127.0.0.1:{port}"
+    root = Path(tempfile.mkdtemp(prefix="mesh-devices-"))
+    try:
+        # The state folder's path has a space; a folder named like its first
+        # word sits beside it, which a path split at the space would reach.
+        state = root / "mesh state"
+        projects = state / "projects"
+        decoy = root / "mesh"
+        decoy.mkdir()
+        (decoy / "keep.txt").write_text("not Mesh's\n")
+        # A mesh whose gateway is a board on another host that does not answer,
+        # with a board that can be revoked (the plan written as an older Mesh did).
+        silent = projects / "Silent"
+        silent.mkdir(parents=True)
+        (silent / "project.txt").write_text(
+            f"project.name=Silent\narea_id=6\ngateway=not-a-known-board\ngateway_url={dead_gateway}\n"
+            "node.count=1\nnode.1.name=Board\nnode.1.parent=gateway\nnode.1.role=node\nnode.1.id=0123456789abcdef\n")
+        home = root / "home"
+        TOKEN = mint_token(str(home))
+        alerts_log = home / ".rho" / "mesh" / "alerts.log"
+        env = dict(os.environ)
+        env.pop("RHO_CLIENT_ID", None)
+        env["ROBOHUB_WORKSPACE"] = str(PROJECTS)
+        env["RHO_MESH_STATE_DIR"] = str(state)
+        env["ROBOHUB_MESH_PROJECTS"] = str(projects)
+        env.setdefault("RHO_HOME", os.path.join(os.path.expanduser("~"), ".rho"))
+        env["HOME"] = str(home)
+        env["RHO_HTTP_ADDR"] = f"127.0.0.1:{port}"
+        log_path = root / "mesh.log"
+        log = open(log_path, "w")
+        process = subprocess.Popen([str(binary)], cwd=MESH, env=env, stdout=log, stderr=subprocess.STDOUT, text=True)
+        try:
+            wait_for(base)
+
+            # --- Paths with a space --------------------------------------
+            # @verifies MESH-0024
+            call(base, "POST", "/mesh/project/new", {"name": "Bench"})
+            bench = projects / "Bench"
+            check((bench / "plan.yml").exists(), "a mesh is created in a state folder whose path has a space")
+            status, _ = call(base, "POST", "/mesh/p/Bench/node",
+                             {"tab": "new", "kind": "device", "name": "Lamp", "device": "robohub-device-shelly-plug-m-gen3",
+                              "transport": "http", "address": plug_url, "device_id": "", "parent": "gateway"}, hx=True)
+            plan = (bench / "plan.yml").read_text() if (bench / "plan.yml").exists() else ""
+            check(status == 200 and plug_url in plan, f"its plan is saved there ({status})")
+            check(any((bench / "revisions").glob("*.yml")), "and kept as a revision there")
+
+            # --- A switch shows the state the device reports ---------------
+            # @verifies MESH-0022, MESH-0014
+            Plug.output, Plug.stuck = False, False
+            status, body = call(base, "POST", "/mesh/api/devices/1/switch", {"state": "on"})
+            answer = as_json(body)
+            check(status == 200 and answer.get("confirmed") is True and answer.get("state") == "on" and Plug.output,
+                  f"a plug that switches is confirmed from its status read back ({status} {body})")
+            check(device(base, 1).get("state") == "on", "and listed as on")
+
+            Plug.stuck = True
+            status, body = call(base, "POST", "/mesh/api/devices/1/switch", {"state": "off"})
+            answer = as_json(body)
+            check(status == 202 and answer.get("confirmed") is False and answer.get("state") == "pending"
+                  and answer.get("reported") == "on",
+                  f"a plug whose relay sticks is pending, not off ({status} {body})")
+            listed = device(base, 1)
+            check(listed.get("state") == "pending" and listed.get("reported") == "on" and listed.get("requested") == "off",
+                  f"the list says pending, what was asked and what the plug reports ({listed})")
+            # The wait runs out (the request is made to look 60 s old).
+            waiting = bench / "switch-1.txt"
+            line = waiting.read_text().strip().split("|") if waiting.exists() else []
+            if len(line) == 3:
+                waiting.write_text(f"{line[0]}|{int(line[1]) - 60}|{line[2]}\n")
+            listed = device(base, 1)
+            check(listed.get("state") == "unconfirmed" and listed.get("reported") == "on",
+                  f"once the wait is over it is unconfirmed, and still not shown off ({listed})")
+            ids = re.findall(r"[0-9a-f]{16}", (bench / "plan.yml").read_text())
+            _, page = call(base, "GET", f"/mesh/p/Bench/node/{ids[0] if ids else 'none'}?tab=data", hx=True)
+            check("off requested, unconfirmed" in page, "the device's page says the switch is unconfirmed")
+
+            Plug.stuck = False
+            status, body = call(base, "POST", "/mesh/api/devices/1/switch", {"state": "off"})
+            check(status == 200 and as_json(body).get("state") == "off" and device(base, 1).get("state") == "off",
+                  f"a new request the plug carries out is confirmed ({status} {body})")
+
+            # --- A source's action: a POST with a control grant -------------
+            # @verifies MESH-API-0010, MESH-0022
+            _, listing = call(base, "GET", "/mesh/api/projects/Bench/sources")
+            outputs = [e for e in (as_json(listing) or []) if e.get("direction") == "output"]
+            check(bool(outputs), f"the plug is listed as an output source ({listing[:300]})")
+            action = outputs[0].get("action_path", "") if outputs else "/mesh/api/projects/Bench/sources/none/action"
+            Plug.output, Plug.stuck = False, False
+            sets = Plug.sets
+            status, body = send(base, "GET", action + "?state=on", bearer=TOKEN)
+            check(status == 405 and Plug.sets == sets and not Plug.output,
+                  f"a GET of the action is refused with 405 and switches nothing ({status} {body[:120]})")
+            status, _ = send(base, "GET", action, bearer=TOKEN)
+            check(status == 405 and Plug.sets == sets and not Plug.output,
+                  f"a GET with no state, which used to switch on, switches nothing ({status})")
+            for scopes in ("mesh:Bench:read", "mesh:read"):
+                status, _ = send(base, "POST", action + "?state=on", bearer=ticket(str(home), scopes))
+                check(status == 403 and Plug.sets == sets,
+                      f"a read-only token ({scopes}) is refused and switches nothing ({status})")
+            status, _ = send(base, "POST", action, {"state": "on"}, cookie=TOKEN)
+            check(status == 403 and Plug.sets == sets,
+                  f"a cookie session without the form token is refused ({status})")
+            status, _ = send(base, "POST", action, {"state": "on", "csrf": "0" * 64}, cookie=TOKEN)
+            check(status == 403 and Plug.sets == sets, f"and with a wrong form token ({status})")
+            status, _ = send(base, "POST", action, None, bearer=TOKEN)
+            check(status == 400 and Plug.sets == sets, f"no state is 400, not on ({status})")
+            status, _ = send(base, "POST", action + "?state=banana", bearer=TOKEN)
+            check(status == 400 and Plug.sets == sets, f"a state neither on nor off is 400 ({status})")
+            # The provider's own request: POST ?state=, no body, a bearer
+            # ticket for audience mesh and scope mesh:<project>.
+            control = ticket(str(home), "mesh:Bench", "robohub-aquarium")
+            status, body = send(base, "POST", action + "?state=on", bearer=control)
+            answer = as_json(body)
+            check(status == 200 and answer.get("confirmed") is True and answer.get("outcome") == "confirmed" and Plug.output,
+                  f"a control token switches it and the answer is confirmed ({status} {body})")
+            Plug.stuck = True
+            status, body = send(base, "POST", action + "?state=off", bearer=control)
+            answer = as_json(body)
+            check(status == 202 and answer.get("confirmed") is False and answer.get("outcome") == "pending" and Plug.output,
+                  f"a relay that sticks is 202 pending, not off ({status} {body})")
+            Plug.stuck = False
+            settings = call(base, "GET", "/settings?tab=alerts")[1]
+            csrf = re.search(r'name="csrf" value="([^"]*)"', settings)
+            status, body = send(base, "POST", action, {"state": "off", "csrf": csrf.group(1) if csrf else ""}, cookie=TOKEN)
+            check(status == 200 and not Plug.output,
+                  f"a cookie session with the form token switches it ({status} {body})")
+            call(base, "POST", "/mesh/api/devices/1/switch", {"state": "off"})
+
+            sets = Plug.sets
+            status, _ = call(base, "POST", "/mesh/api/devices/1/switch", {"state": "banana"})
+            check(status == 400 and Plug.sets == sets, f"a state that is neither on nor off is refused, not sent ({status})")
+
+            plug.shutdown()
+            plug.server_close()
+            status, _ = call(base, "POST", "/mesh/api/devices/1/switch", {"state": "on"})
+            listed = device(base, 1)
+            check(status == 502 and listed.get("state") == "off" and listed.get("requested") == "",
+                  f"a plug that does not answer is 502 and nothing is recorded ({status} {listed})")
+
+            # --- Alerts --------------------------------------------------
+            # @verifies MESH-0023
+            def alerts(needle: str) -> list:
+                text = alerts_log.read_text() if alerts_log.exists() else ""
+                return [l for l in text.splitlines() if needle in l]
+            deadline = time.time() + 40
+            while time.time() < deadline and not alerts("the gateway does not answer"):
+                time.sleep(0.5)
+            # The poll backs off 2, 4, 8 s: several more failures in this time.
+            time.sleep(12)
+            down = alerts("the gateway does not answer")
+            check(len(down) == 1 and "[ERROR]" in down[0] and "Silent" in down[0],
+                  f"a gateway that stops answering is one alert, however many polls fail ({down})")
+            status, _ = call(base, "POST", "/mesh/p/Silent/node/0123456789abcdef/revoke", {"action": "revoke"}, hx=True)
+            unsent = alerts("board list could not be sent")
+            check(status == 200 and len(unsent) == 1 and "[ERROR]" in unsent[0],
+                  f"a revocation that cannot reach the gateway is an alert ({status} {unsent})")
+            call(base, "POST", "/mesh/p/Silent/node/0123456789abcdef/revoke", {"action": "restore"}, hx=True)
+            check(len(alerts("board list could not be sent")) == 1, "and the next one within the cooldown is not another")
+
+            # --- Deleting a mesh whose path has a space -------------------
+            # @verifies MESH-0024
+            call(base, "POST", "/mesh/project/delete", {"project": "Bench"})
+            check(not bench.exists(), "deleting a mesh removes its folder")
+            check((decoy / "keep.txt").exists() and silent.exists() and state.exists(),
+                  "and nothing else: not the folder named like the path's first word, nor another mesh")
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            log.close()
+            if failures:
+                print(log_path.read_text()[-3000:])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    if failures:
+        print("\nFAILURES:")
+        for f in failures:
+            print(" -", f)
+        return 1
+    print("mesh devices smoke ok")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

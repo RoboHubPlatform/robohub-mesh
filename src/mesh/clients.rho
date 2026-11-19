@@ -38,6 +38,7 @@ fn mesh_client_now() u32 {
 // mesh_client_secret is 16 random bytes as hex, or "" when there is no source
 // of randomness: a secret anyone could work out from the time is no secret.
 // The file openssl writes it to is emptied once it is read.
+// @req MESH-API-0004
 fn mesh_client_secret() string {
     let report: string = wizard_report("client-secret")
     var text: string = ""
@@ -100,6 +101,7 @@ fn mesh_client_rewrite(match_app: string, match_instance: string,
     ignore_bool(rho_write_secret(file, out))
 }
 
+// @req MESH-API-0004
 fn mesh_client_register(req: Request) Response {
     let body: string = request_body(req)
     let app_name: string = str_trim(json_str_field(body, "app_name"))
@@ -257,6 +259,7 @@ fn mesh_client_list(req: Request) Response {
     return json(status_ok(), out + "]")
 }
 
+// @req MESH-API-0005
 fn mesh_topic_matches(pattern: string, topic: string) bool {
     if rho_str_eq(pattern, "*") || rho_str_eq(pattern, topic) {
         return true
@@ -290,6 +293,7 @@ fn mesh_topics_match(topics: string, topic: string) bool {
     return false
 }
 
+// @req MESH-API-0005
 fn mesh_client_deliver(project: string, app_name: string, client_id: string,
     callback_url: string, secret: string, topic: string, payload: string) bool {
     if callback_url == "" {

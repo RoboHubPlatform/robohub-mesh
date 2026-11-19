@@ -125,6 +125,7 @@ fn manifest_u32_hex(value: u32) string {
 
 // manifest_key_message is what the gateway key is HMACed over for a board's key
 // at an epoch, in hex.
+// @req MESH-ACCESS-0002
 fn manifest_key_message(uid: string, epoch: u32) string {
     if epoch == 0 {
         return "72682d64657631" + uid
@@ -187,6 +188,7 @@ fn rekey_state(report: string, uid: string, epoch: u32) string {
 // rotate_refusal is why a board's key may not be rotated again now, or "": a
 // board still waiting to confirm the epoch it was given would be two epochs
 // behind and refused, and one that cannot store a key cannot be rotated.
+// @req MESH-ACCESS-0005
 fn rotate_refusal(report: string, uid: string, epoch: u32) string {
     let state: string = rekey_state(report, uid, epoch)
     if state == "waiting" {
@@ -246,6 +248,7 @@ fn rekey_from_json(body: string) string {
 }
 
 // manifest_nodes are the lines of every planned node of a plan (flat text).
+// @req MESH-ACCESS-0003
 fn manifest_nodes(plan: string, area: string) string {
     var count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
     if count > 64 {
@@ -262,6 +265,7 @@ fn manifest_nodes(plan: string, area: string) string {
 
 // manifest_relay_line is the line of a mesh linked below: its gateway's id as a
 // board of this mesh, its own area, and the areas it may speak for.
+// @req MESH-ACCESS-0003
 fn manifest_relay_line(uid: string, area: string, areas: string) string {
     if !manifest_uid_ok(uid) {
         return ""
@@ -317,6 +321,7 @@ fn manifest_find(manifest: string, uid: string) string {
 
 // node_auth_part is the device (0) or the credential (1) of an Authorization
 // header in the Node scheme, or "" when the header is not one.
+// @req MESH-ACCESS-0007
 fn node_auth_part(header: string, part: u32) string {
     let scheme: string = "Node "
     if str_index_of(header, scheme) != 0 {
@@ -417,6 +422,7 @@ fn nodekey_slot(client: string) string {
 }
 
 // nodekey_count is a counter (`count|window start`) after one more call.
+// @req MESH-ACCESS-0008
 fn nodekey_count(state: string, now: u32, window: u32) string {
     let bar: i32 = str_index_of(state, "|")
     if state == "" || bar < 0 {

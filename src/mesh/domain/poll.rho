@@ -1,0 +1,42 @@
+//
+// @file poll.rho
+// @brief How long Mesh waits before asking a gateway that did not answer again, and when that is a fault.
+//
+// @module mesh.domain.poll
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.poll
+
+// A gateway whose poll fails is asked again after 2 s, then 4, 8 and so on up to
+// the Storage tab's maximum, and the first failure of an outage — not every one —
+// is a fault. A successful poll starts over (telemetry.rho resets the wait and
+// clears the fault).
+
+// telemetry_backoff_next is the wait after a failure, given the wait before it
+// (0 when the last poll succeeded) and the longest wait allowed.
+// @req MESH-TEL-0003
+fn telemetry_backoff_next(previous: u32, maximum: u32) u32 {
+    var next: u32 = 2
+    if previous > 0 {
+        next = previous * 2
+        if next < previous {
+            next = maximum
+        }
+    }
+    if maximum > 0 && next > maximum {
+        next = maximum
+    }
+    return next
+}
+
+// telemetry_outage_fault_due is whether a failure is the first of its outage,
+// the one that is recorded as a fault: no fault is open for the gateway yet.
+// @req MESH-TEL-0003
+fn telemetry_outage_fault_due(fault_open: string) bool {
+    return !str_eq(fault_open, "true")
+}

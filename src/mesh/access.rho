@@ -13,17 +13,11 @@
 module mesh.access
 
 // What the person signed in may do in Mesh, from the grants the keeper put in
-// their ticket (the X-Rho-Scopes the auth middleware sets):
-//
-//   *, mesh:*              everything
-//   mesh:read              read every mesh
-//   mesh:<mesh>            read and change that mesh
-//   mesh:<mesh>:read       read that mesh
-//
-// Changing what is Mesh's as a whole — a new mesh, copying one, applying in every
-// mesh, Mesh's settings — needs `mesh:*`. The middleware already refuses a change
-// from someone whose grants all end in ":read"; this is the part only Mesh knows,
-// which mesh a request is about.
+// their ticket (the X-Rho-Scopes the auth middleware sets). The rule itself is
+// mesh_grant in domain/access.rho; this is the part only a request knows: the
+// verified audience and scopes, and whether its subject is revoked in the mesh
+// it is about. The middleware already refuses a change from someone whose grants
+// all end in ":read".
 
 import std.web.http
 
@@ -31,41 +25,27 @@ fn mesh_scopes(req: Request) string {
     return header_str(req, "X-Rho-Scopes")
 }
 
-// mesh_scope_held is whether a comma-separated list holds a scope.
-fn mesh_scope_held(scopes: string, wanted: string) bool {
-    return rho_str_index_of("," + scopes + ",", "," + wanted + ",") >= 0
+fn mesh_audience(req: Request) string {
+    return header_str(req, "X-Rho-Aud")
 }
 
 // mesh_may is whether a request may read (`write` false) or change (`write`
 // true) a mesh; the mesh "" is Mesh as a whole. A request the middleware did not
-// authenticate (no audience) came through a path it does not guard, which
-// answers for itself. One it did authenticate is held to its grants: no scopes
-// is no grant, and a subject revoked on a mesh may do nothing there.
+// authenticate (no audience) is refused like one with no grant: the routes that
+// are public on purpose are the middleware's skip_paths and do not ask, so a
+// path the middleware were to leave unguarded is not opened by it.
+// @req MESH-0012, MESH-API-0001, MESH-API-0006
 fn mesh_may(req: Request, project: string, write: bool) bool {
+    let audience: string = mesh_audience(req)
     let scopes: string = mesh_scopes(req)
-    let authenticated: bool = header_str(req, "X-Rho-Aud") != ""
-    if !authenticated && scopes == "" {
-        return true
-    }
-    if scopes == "" {
+    if audience == "" || scopes == "" {
         return false
     }
-    if project != "" && mesh_subject_revoked(project, header_str(req, "X-Rho-Subject")) {
-        return false
+    var revoked: bool = false
+    if project != "" {
+        revoked = mesh_subject_revoked(project, header_str(req, "X-Rho-Subject"))
     }
-    if mesh_scope_held(scopes, "*") || mesh_scope_held(scopes, "mesh:*") {
-        return true
-    }
-    if project == "" {
-        return !write && (mesh_scope_held(scopes, "mesh:read") || rho_str_index_of(scopes, "mesh:") >= 0)
-    }
-    if mesh_scope_held(scopes, "mesh:" + project) {
-        return true
-    }
-    if write {
-        return false
-    }
-    return mesh_scope_held(scopes, "mesh:read") || mesh_scope_held(scopes, "mesh:" + project + ":read")
+    return mesh_grant(audience, scopes, project, write, revoked)
 }
 
 fn mesh_denied(req: Request) Response {

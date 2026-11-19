@@ -18,6 +18,11 @@ include "../src/mesh/domain/impact.rho"
 include "../src/mesh/domain/deploy.rho"
 include "../src/mesh/domain/manifest.rho"
 include "../src/mesh/domain/production.rho"
+include "../src/mesh/domain/access.rho"
+include "../src/mesh/domain/poll.rho"
+include "../src/mesh/domain/switch.rho"
+include "../src/mesh/domain/alerting.rho"
+include "../src/mesh/domain/signals.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -36,6 +41,7 @@ fn check(condition: bool, what: string) void {
 /*  The plan as text                                                          */
 /* -------------------------------------------------------------------------- */
 
+// @verifies MESH-PLAN-0002
 test fn a_parent_is_stored_by_number_and_read_by_row() void {
     let view: string = "node.count=2\nnode.1.name=Relay\nnode.1.parent=gateway\nnode.2.name=Leaf\nnode.2.parent=node.1\n"
     let stored: string = plan_stored(view)
@@ -50,6 +56,7 @@ test fn a_parent_is_stored_by_number_and_read_by_row() void {
     print("[PASS] a_parent_is_stored_by_number_and_read_by_row\n")
 }
 
+// @verifies MESH-PLAN-0002
 test fn a_parent_follows_its_number_when_rows_move() void {
     // Node 2 is number 7 and its child names it; after node 1 goes, it is row 1.
     let stored: string = "node.count=3\nnode.1.number=1\nnode.2.number=7\nnode.3.number=8\nnode.3.parent_node=7\nnode.next_number=9\n"
@@ -61,6 +68,7 @@ test fn a_parent_follows_its_number_when_rows_move() void {
     print("[PASS] a_parent_follows_its_number_when_rows_move\n")
 }
 
+// @verifies MESH-PLAN-0002
 test fn removing_a_node_sends_its_children_to_the_gateway() void {
     let view: string = "node.count=3\nnode.1.number=1\nnode.2.number=2\nnode.2.parent=node.1\nnode.3.number=3\nnode.3.parent=node.2\nstatus.node.2=built\nstatus.node.3=flashed\n"
     let removed: string = plan_text_remove_node(view, 2)
@@ -71,6 +79,7 @@ test fn removing_a_node_sends_its_children_to_the_gateway() void {
     print("[PASS] removing_a_node_sends_its_children_to_the_gateway\n")
 }
 
+// @verifies MESH-PLAN-0002
 test fn a_new_node_never_takes_a_number_that_was_used() void {
     // Numbers 1 and 2 were given, node 2 was removed; the new row 2 gets 3.
     let view: string = "node.count=2\nnode.1.number=1\nnode.2.name=New\nnode.next_number=3\n"
@@ -91,6 +100,7 @@ test fn a_key_is_replaced_not_repeated() void {
 /*  Transports                                                                */
 /* -------------------------------------------------------------------------- */
 
+// @verifies MESH-PLAN-0005
 test fn a_transport_fits_what_both_boards_are() void {
     let pico: BoardCaps = BoardCaps{ "", false, true, false, "uart i2c spi" }
     let uno: BoardCaps = BoardCaps{ "", false, false, false, "uart i2c" }
@@ -105,6 +115,7 @@ test fn a_transport_fits_what_both_boards_are() void {
     print("[PASS] a_transport_fits_what_both_boards_are\n")
 }
 
+// @verifies MESH-PLAN-0005
 test fn declared_links_are_the_whole_answer() void {
     let gateway: BoardCaps = BoardCaps{ "uart console", true, true, false, "" }
     let relay: BoardCaps = BoardCaps{ "uart wifi", false, true, false, "" }
@@ -152,6 +163,7 @@ fn deploy_with(text: string, key: string, value: string) string {
     return plan_without(text, key) + key + "=" + value + "\n"
 }
 
+// @verifies MESH-BUILD-0001
 test fn a_name_or_a_device_builds_nothing() void {
     let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
     let renamed: string = deploy_with(DEPLOY_PLAN, "node.1.name", "Greenhouse relay")
@@ -163,6 +175,7 @@ test fn a_name_or_a_device_builds_nothing() void {
     print("[PASS] a_name_or_a_device_builds_nothing\n")
 }
 
+// @verifies MESH-BUILD-0001, MESH-BUILD-0002
 test fn a_module_or_a_board_rebuilds_that_board() void {
     let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
     let new_module: string = deploy_with(DEPLOY_PLAN, "node.2.module", "bme280")
@@ -174,6 +187,7 @@ test fn a_module_or_a_board_rebuilds_that_board() void {
     print("[PASS] a_module_or_a_board_rebuilds_that_board\n")
 }
 
+// @verifies MESH-BUILD-0002
 test fn a_link_rebuilds_the_board_and_restarts_its_parent() void {
     let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
     let baud: string = deploy_with(DEPLOY_PLAN, "node.1.baud", "57600")
@@ -183,6 +197,7 @@ test fn a_link_rebuilds_the_board_and_restarts_its_parent() void {
     print("[PASS] a_link_rebuilds_the_board_and_restarts_its_parent\n")
 }
 
+// @verifies MESH-BUILD-0001, MESH-BUILD-0002
 test fn a_board_on_wifi_follows_the_gateway_address() void {
     let wifi: string = deploy_with(DEPLOY_PLAN, "node.1.link", "wifi")
     let before: string = deploy_node_signature(wifi, 1)
@@ -195,6 +210,7 @@ test fn a_board_on_wifi_follows_the_gateway_address() void {
     print("[PASS] a_board_on_wifi_follows_the_gateway_address\n")
 }
 
+// @verifies MESH-BUILD-0002
 test fn a_board_never_programmed_says_so() void {
     check(str_eq(deploy_reason("", deploy_node_signature(DEPLOY_PLAN, 1)), "never programmed"), "nothing recorded")
     check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1), deploy_node_signature(DEPLOY_PLAN, 1)), ""),
@@ -204,6 +220,7 @@ test fn a_board_never_programmed_says_so() void {
     print("[PASS] a_board_never_programmed_says_so\n")
 }
 
+// @verifies MESH-BUILD-0002
 test fn the_diff_names_what_changed_and_how() void {
     let before: string = deploy_node_signature(DEPLOY_PLAN, 1)
     let after: string = deploy_node_signature(deploy_with(DEPLOY_PLAN, "node.1.board", "lolin32-lite"), 1)
@@ -224,6 +241,7 @@ const MANIFEST_PLAN: string = "node.count=5\n" +
     "node.4.id=5555666677778888\nnode.4.kind=device\n" +
     "node.5.number=12\nnode.5.role=node\n"
 
+// @verifies MESH-ACCESS-0003
 test fn the_manifest_lists_every_board_with_its_placement() void {
     let lines: string = manifest_nodes(MANIFEST_PLAN, "3")
     check(str_eq(manifest_find(lines, "0123456789abcdef"), "0123456789abcdef|3|4|relay|0|0|"),
@@ -243,6 +261,7 @@ test fn the_manifest_lists_every_board_with_its_placement() void {
     print("[PASS] the_manifest_lists_every_board_with_its_placement\n")
 }
 
+// @verifies MESH-ACCESS-0002, MESH-ACCESS-0003
 test fn a_rotated_board_is_listed_at_its_key_epoch() void {
     let plan: string = MANIFEST_PLAN + "node.1.epoch=3\nnode.5.epoch=junk\n"
     let lines: string = manifest_nodes(plan, "3")
@@ -257,6 +276,7 @@ test fn a_rotated_board_is_listed_at_its_key_epoch() void {
     print("[PASS] a_rotated_board_is_listed_at_its_key_epoch\n")
 }
 
+// @verifies MESH-ACCESS-0005
 test fn a_rotation_waits_for_the_board_to_confirm() void {
     let report: string = "# uid|epoch|status|time\n0123456789abcdef|2|confirmed|100\n1111222233334444|1|cannot|200\n"
     check(str_eq(rekey_state(report, "aaaabbbbccccdddd", 0), ""), "a board never rotated has no state")
@@ -279,6 +299,7 @@ test fn a_rotation_waits_for_the_board_to_confirm() void {
 /*  Production builds                                                         */
 /* -------------------------------------------------------------------------- */
 
+// @verifies MESH-BUILD-0009
 test fn the_production_toggle_shows_for_a_platform_with_a_plan() void {
     // The folders the platforms ship, as `ls <platform>/production` lists them.
     let esp32: string = "esp32.json\npartitions.production.csv\nproduction.conf\nsdkconfig.production\n"
@@ -306,6 +327,7 @@ test fn the_production_toggle_shows_for_a_platform_with_a_plan() void {
     print("[PASS] the_production_toggle_shows_for_a_platform_with_a_plan\n")
 }
 
+// @verifies MESH-BUILD-0010
 test fn a_production_build_needs_the_key_its_plan_names() void {
     let esp32: string = "{\"build\": \"CONFIG_RH_PRODUCTION=y ..., RH_SECURE_BOOT_SIGNING_KEY naming the RSA-3072 PEM key.\"}"
     let pico: string = "{\"build\": \"RH_SECURE_BOOT_SIGNING_KEY ...\", \"steps\": [{\"command\": \"picotool otp load {env:RH_PICO_OTP_JSON}\"}]}"
@@ -325,6 +347,7 @@ test fn a_production_build_needs_the_key_its_plan_names() void {
     print("[PASS] a_production_build_needs_the_key_its_plan_names\n")
 }
 
+// @verifies MESH-BUILD-0001, MESH-BUILD-0006, MESH-BUILD-0010, MESH-BUILD-0011
 test fn the_production_job_scripts() void {
     let dir: string = "/m/p/boards/node_3"
     let bin: string = dir + "/build/output/node_3.elf"
@@ -368,6 +391,7 @@ test fn the_production_job_scripts() void {
     print("[PASS] the_production_job_scripts\n")
 }
 
+// @verifies MESH-ACCESS-0007
 test fn a_node_credential_is_read_from_its_header() void {
     let header: string = "Node gateway-node-01:00ff00ff00ff"
     check(str_eq(node_auth_part(header, 0), "gateway-node-01"), "the device")
@@ -380,6 +404,7 @@ test fn a_node_credential_is_read_from_its_header() void {
     print("[PASS] a_node_credential_is_read_from_its_header\n")
 }
 
+// @verifies MESH-ACCESS-0008
 test fn a_node_key_client_has_a_budget() void {
     check(str_eq(nodekey_client(""), "direct"), "a request to Mesh's own port")
     check(str_eq(nodekey_client("203.0.113.9, 192.168.1.20"), "192.168.1.20"), "the keeper proxy's entry")
@@ -394,6 +419,171 @@ test fn a_node_key_client_has_a_budget() void {
     check(nodekey_over(nodekey_count(state, 530, 60), 10), "the eleventh is not")
     check(str_eq(nodekey_count(state, 560, 60), "1|560"), "a new window starts again")
     print("[PASS] a_node_key_client_has_a_budget\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Access                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// A request the middleware did not authenticate carries no audience: whatever
+// scopes it claims, Mesh's own checks refuse it on every class of route — a
+// mesh's pages and changes, Mesh as a whole, the fleet, the token page and the
+// API — as if the middleware had been bypassed.
+// @verifies MESH-API-0006, MESH-API-0001, MESH-API-0002
+test fn a_request_nobody_authenticated_is_refused_everywhere() void {
+    check(!mesh_grant("", "", "Sec", false, false), "reading a mesh with nothing")
+    check(!mesh_grant("", "", "Sec", true, false), "changing a mesh with nothing")
+    check(!mesh_grant("", "", "", false, false), "reading Mesh as a whole with nothing")
+    check(!mesh_grant("", "", "", true, false), "changing Mesh as a whole with nothing")
+    check(!mesh_grant("", "*", "Sec", true, false), "scopes without an audience are nobody's")
+    check(!mesh_grant("", "mesh:*", "", true, false), "mesh:* without an audience is nobody's")
+    check(!mesh_grant_every_mesh("", ""), "the whole fleet with nothing")
+    check(!mesh_grant_every_mesh("", "*"), "the whole fleet without an audience")
+    check(!mesh_grant_admin("", ""), "the token page with nothing")
+    check(!mesh_grant_admin("", "*"), "the token page without an audience")
+    check(!mesh_api_grant("", "", "Sec", false), "the API with nothing")
+    check(!mesh_api_grant("", "*", "Sec", false), "the API without an audience")
+    check(!mesh_grant("mesh", "", "Sec", false, false), "an authenticated request with no scopes has no grant")
+    print("[PASS] a_request_nobody_authenticated_is_refused_everywhere\n")
+}
+
+// @verifies MESH-API-0001
+test fn grants_decide_reading_and_changing_a_mesh() void {
+    check(mesh_grant("mesh", "*", "Sec", true, false), "* changes a mesh")
+    check(mesh_grant("mesh", "mesh:*", "", true, false), "mesh:* changes Mesh as a whole")
+    check(mesh_grant("mesh", "mesh:Sec", "Sec", true, false), "mesh:Sec changes Sec")
+    check(!mesh_grant("mesh", "mesh:Sec", "Other", false, false), "mesh:Sec does not read Other")
+    check(!mesh_grant("mesh", "mesh:Sec", "", true, false), "mesh:Sec does not change Mesh as a whole")
+    check(mesh_grant("mesh", "mesh:Sec", "", false, false), "mesh:Sec reads Mesh's overview")
+    check(mesh_grant("mesh", "mesh:Sec:read", "Sec", false, false), "mesh:Sec:read reads Sec")
+    check(!mesh_grant("mesh", "mesh:Sec:read", "Sec", true, false), "mesh:Sec:read does not change it")
+    check(mesh_grant("mesh", "mesh:read", "Other", false, false), "mesh:read reads every mesh")
+    check(!mesh_grant("mesh", "mesh:read", "Other", true, false), "mesh:read changes none")
+    check(!mesh_grant("mesh", "*", "Sec", false, true), "a revoked subject may do nothing in that mesh")
+    check(!mesh_grant("mesh", "mesh:Secret", "Sec", false, false), "a scope is matched whole, not by prefix")
+    check(!mesh_grant("mesh", "robohub-mesh:x", "", false, false), "a scope that only contains mesh: is not a mesh grant")
+    check(mesh_grant("mesh", "energy:read, mesh:Sec", "Sec", true, false), "a scope among others counts")
+    check(mesh_grant_every_mesh("mesh", "mesh:read") && !mesh_grant_every_mesh("mesh", "mesh:Sec"),
+        "only a grant over every mesh sees the whole fleet")
+    check(mesh_grant_admin("mesh", "mesh:*") && !mesh_grant_admin("mesh", "mesh:Sec"),
+        "only mesh:* or * holds Mesh as a whole")
+    print("[PASS] grants_decide_reading_and_changing_a_mesh\n")
+}
+
+// A token for /mesh/api names the mesh it reads: one for another mesh, a
+// read-only grant, or one with no mesh scope at all is refused.
+// @verifies MESH-API-0002
+test fn the_api_refuses_a_token_without_the_mesh_scope() void {
+    check(mesh_api_grant("mesh", "mesh:Sec", "Sec", false), "mesh:Sec reads Sec through the API")
+    check(mesh_api_grant("mesh", "mesh:*", "Sec", false), "mesh:* reads any mesh")
+    check(mesh_api_grant("mesh", "*", "Sec", false), "* reads any mesh")
+    check(!mesh_api_grant("mesh", "mesh:Other", "Sec", false), "a token for another mesh")
+    check(!mesh_api_grant("mesh", "energy:read,aquarium:*", "Sec", false), "a token with no mesh scope")
+    check(!mesh_api_grant("mesh", "mesh:Sec:read", "Sec", false), "a read grant is a person's, not a service token's")
+    check(!mesh_api_grant("mesh", "mesh:Sec", "", false), "no mesh is no grant")
+    check(!mesh_api_grant("mesh", "mesh:Sec", "Sec", true), "a revoked subject")
+    print("[PASS] the_api_refuses_a_token_without_the_mesh_scope\n")
+}
+
+// Mesh asks for a gateway token for one mesh's gateway alone, and a token
+// holding a gateway's scope opens none of Mesh's own routes.
+// @verifies MESH-0011, MESH-API-0001, MESH-API-0002
+test fn a_gateway_scope_is_for_its_own_gateway_only() void {
+    check(str_eq(mesh_gateway_scope("Sec"), "gateway:Sec:*"), "Sec's gateway is asked with gateway:Sec:*")
+    check(!str_eq(mesh_gateway_scope("Sec"), mesh_gateway_scope("Other")), "another mesh's gateway with another scope")
+    check(str_eq(mesh_gateway_scope(""), "gateway:*"), "with no mesh, the scope Mesh may be issued")
+    let held: string = mesh_gateway_scope("Sec")
+    check(!mesh_grant("mesh", held, "Sec", false, false), "a gateway scope does not read the mesh in Mesh")
+    check(!mesh_grant("mesh", held, "Sec", true, false), "nor change it")
+    check(!mesh_grant("mesh", held, "", false, false), "nor read Mesh's overview")
+    check(!mesh_grant_every_mesh("mesh", held) && !mesh_grant_admin("mesh", held), "nor the fleet or the tokens")
+    check(!mesh_api_grant("mesh", held, "Sec", false), "nor Sec through the API")
+    check(!mesh_api_grant("mesh", "gateway:*", "Other", false), "gateway:* opens no mesh's API")
+    check(!mesh_grant("mesh", "gateway:mesh:*", "", false, false), "a gateway of a mesh named mesh is not a mesh: grant")
+    print("[PASS] a_gateway_scope_is_for_its_own_gateway_only\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Polling a gateway                                                         */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-TEL-0003
+test fn a_gateway_that_does_not_answer_is_backed_off() void {
+    var wait: u32 = 0
+    var waits: string = ""
+    var i: u32 = 0
+    while i < 7 {
+        wait = telemetry_backoff_next(wait, 60)
+        waits = waits + int_to_str(i32(wait)) + " "
+        i = i + 1
+    }
+    check(str_eq(waits, "2 4 8 16 32 60 60 "), "2 s, doubling, up to the maximum: " + waits)
+    check(telemetry_backoff_next(0, 60) == 2, "a success starts over at 2 s")
+    check(telemetry_backoff_next(8, 10) == 10, "the Storage tab's maximum is the ceiling")
+    check(telemetry_backoff_next(3000000000, 60) == 60, "a wait never wraps around")
+    check(telemetry_outage_fault_due(""), "the first failure of an outage is a fault")
+    check(!telemetry_outage_fault_due("true"), "the next failures are not")
+    print("[PASS] a_gateway_that_does_not_answer_is_backed_off\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  A switch, as the device reports it                                        */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-0022
+test fn a_switch_is_shown_as_the_device_reports_it() void {
+    check(str_eq(switch_outcome("", "on", true, 0, 30), "idle"), "nothing requested is idle")
+    check(str_eq(switch_outcome("on", "", true, 0, 30), "pending"), "a command taken but not reported is pending")
+    check(str_eq(switch_outcome("on", "on", true, 1, 30), "confirmed"), "the requested state reported is confirmed")
+    check(str_eq(switch_outcome("on", "off", true, 5, 30), "pending"), "the other state reported does not end the wait early")
+    check(str_eq(switch_outcome("on", "off", true, 30, 30), "unconfirmed"), "the wait over without the report is unconfirmed")
+    check(str_eq(switch_outcome("on", "", true, 31, 30), "unconfirmed"), "and so is silence")
+    check(str_eq(switch_outcome("off", "off", false, 0, 30), "unconfirmed"),
+        "a device that cannot report its state is never confirmed, whatever was read")
+    check(str_eq(switch_shown("pending", "off"), "pending"), "a pending switch is not shown as the requested state")
+    check(str_eq(switch_shown("unconfirmed", "off"), "unconfirmed"), "nor an unconfirmed one")
+    check(str_eq(switch_shown("confirmed", "on"), "on"), "a confirmed one is shown as reported")
+    check(str_eq(switch_shown("idle", "off"), "off"), "with nothing waiting, the reported state")
+    check(str_eq(switch_state_word("true"), "on") && str_eq(switch_state_word("1"), "on") &&
+        str_eq(switch_state_word("false"), "off") && str_eq(switch_state_word("0"), "off"),
+        "JSON booleans and the store's 1 and 0 are states")
+    check(str_eq(switch_state_word(""), "") && str_eq(switch_state_word("banana"), ""),
+        "anything else is not a report")
+    print("[PASS] a_switch_is_shown_as_the_device_reports_it\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Alerts                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-0023
+test fn an_alert_is_raised_once_per_cooldown() void {
+    check(mesh_alert_due(0, 1000, 900), "an alert never raised is due")
+    check(!mesh_alert_due(1000, 1000, 900), "the same alert at once is not")
+    check(!mesh_alert_due(1000, 1899, 900), "nor within the cooldown")
+    check(mesh_alert_due(1000, 1900, 900), "after the cooldown it is due again")
+    check(mesh_alert_due(5000, 1000, 900), "a clock that went back does not silence it")
+    check(str_eq(mesh_alert_key("Sec", "gateway"), "Sec-gateway"), "the key is the mesh and the subject")
+    check(str_eq(mesh_alert_key("a/b", "job x"), "a_b-job_x"), "and is safe as a file name")
+    print("[PASS] an_alert_is_raised_once_per_cooldown\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Signals a part is given by its functions                                  */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-API-0009
+test fn a_switch_function_is_an_output_signal() void {
+    check(str_eq(signal_function_row("switch"), "switch|Switch|output||state|toggle button"),
+        "a board that names the function switch gets a switch output, as a plug's switch is")
+    check(str_eq(signal_function_row(" switch "), signal_function_row("switch")), "the name is read trimmed")
+    check(str_eq(signal_function_row("temperature"), "temperature|Temperature|input|°C|temperature_c|numeric chart table"),
+        "the inputs are as they were")
+    check(str_eq(signal_function_row("teleport"), ""), "a function Mesh does not know gives no signal")
+    check(str_eq(signal_device_rows("switch"), "switch|Switch|output||state|toggle button"),
+        "a device of the kind switch gets the same output")
+    check(str_eq(signal_device_rows("actuator"), signal_device_rows("switch")), "as an actuator does")
+    print("[PASS] a_switch_function_is_an_output_signal\n")
 }
 
 fn main() void {
@@ -420,5 +610,13 @@ fn main() void {
     the_production_job_scripts()
     a_node_credential_is_read_from_its_header()
     a_node_key_client_has_a_budget()
+    a_request_nobody_authenticated_is_refused_everywhere()
+    grants_decide_reading_and_changing_a_mesh()
+    the_api_refuses_a_token_without_the_mesh_scope()
+    a_gateway_scope_is_for_its_own_gateway_only()
+    a_gateway_that_does_not_answer_is_backed_off()
+    a_switch_is_shown_as_the_device_reports_it()
+    an_alert_is_raised_once_per_cooldown()
+    a_switch_function_is_an_output_signal()
     print("mesh domain tests ok\n")
 }

@@ -1,0 +1,149 @@
+//
+// @file access.rho
+// @brief What a principal's grants allow in Mesh, as a rule over the verified audience, scopes and revocation.
+//
+// @module mesh.domain.access
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.access
+
+// Who may do what in Mesh, as a rule over the facts a request carries once the
+// auth middleware has verified it: the audience its token or session was issued
+// for (X-Rho-Aud), its scopes (X-Rho-Scopes) and whether its subject is revoked
+// in the mesh it asks about. The middleware removes any identity header a client
+// sent and sets them only from what it verified, so an empty audience is a
+// request nobody vouched for.
+//
+// Every rule here refuses such a request. Mesh's public routes — /healthz, the
+// sign-in callback, static files and translations, the guide (/mesh/docs) and a
+// host node's key (/mesh/api/nodes/key, which checks the node's own credential
+// with the keeper) — are the auth middleware's `skip_paths` in project.yml, and
+// none of their handlers asks these rules. Everything else does, so a route the
+// middleware were ever to leave unguarded is still refused here rather than
+// served to anyone.
+//
+// The rules are kept apart from the request so they can be tested without one.
+
+// mesh_scope_listed is whether a comma-separated list of scopes holds a scope.
+fn mesh_scope_listed(scopes: string, wanted: string) bool {
+    var rest: string = scopes
+    while rest != "" {
+        let at: i32 = str_index_of(rest, ",")
+        var token: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            token = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        if str_eq(str_trim(token), wanted) {
+            return true
+        }
+    }
+    return false
+}
+
+// mesh_scope_prefixed is whether one of the scopes starts with a prefix.
+fn mesh_scope_prefixed(scopes: string, prefix: string) bool {
+    var rest: string = scopes
+    while rest != "" {
+        let at: i32 = str_index_of(rest, ",")
+        var token: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            token = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        if str_index_of(str_trim(token), prefix) == 0 {
+            return true
+        }
+    }
+    return false
+}
+
+// mesh_grant is whether a principal may read (`write` false) or change (`write`
+// true) a mesh; the mesh "" is Mesh as a whole:
+//
+//   *, mesh:*              everything
+//   mesh:read              read every mesh
+//   mesh:<mesh>            read and change that mesh
+//   mesh:<mesh>:read       read that mesh
+//
+// Changing Mesh as a whole — a new mesh, copying one, applying in every mesh,
+// Mesh's settings — needs `mesh:*`. No audience is nobody, no scopes is no
+// grant, and a subject revoked in a mesh may do nothing there.
+// @req MESH-0012, MESH-API-0001, MESH-API-0006
+fn mesh_grant(audience: string, scopes: string, project: string, write: bool, revoked: bool) bool {
+    if audience == "" || scopes == "" {
+        return false
+    }
+    if project != "" && revoked {
+        return false
+    }
+    if mesh_scope_listed(scopes, "*") || mesh_scope_listed(scopes, "mesh:*") {
+        return true
+    }
+    if project == "" {
+        return !write && mesh_scope_prefixed(scopes, "mesh:")
+    }
+    if mesh_scope_listed(scopes, "mesh:" + project) {
+        return true
+    }
+    if write {
+        return false
+    }
+    return mesh_scope_listed(scopes, "mesh:read") || mesh_scope_listed(scopes, "mesh:" + project + ":read")
+}
+
+// mesh_grant_every_mesh is whether a principal may see the whole fleet at once.
+// @req MESH-API-0006
+fn mesh_grant_every_mesh(audience: string, scopes: string) bool {
+    if audience == "" {
+        return false
+    }
+    return mesh_scope_listed(scopes, "*") || mesh_scope_listed(scopes, "mesh:*") || mesh_scope_listed(scopes, "mesh:read")
+}
+
+// mesh_grant_admin is whether a principal holds Mesh as a whole: `*` or `mesh:*`.
+// @req MESH-API-0006
+fn mesh_grant_admin(audience: string, scopes: string) bool {
+    if audience == "" {
+        return false
+    }
+    return mesh_scope_listed(scopes, "*") || mesh_scope_listed(scopes, "mesh:*")
+}
+
+// mesh_api_grant is whether a service token may read or act on one mesh through
+// /mesh/api: it must name that mesh (`mesh:<mesh>`), all of Mesh (`mesh:*`) or
+// everything (`*`). A gateway's scope (`gateway:<mesh>:*`) is the scope Mesh
+// presents to a gateway, never one Mesh accepts.
+// @req MESH-API-0002
+fn mesh_api_grant(audience: string, scopes: string, project: string, revoked: bool) bool {
+    if audience == "" || revoked {
+        return false
+    }
+    if mesh_scope_listed(scopes, "*") || mesh_scope_listed(scopes, "mesh:*") {
+        return true
+    }
+    return project != "" && mesh_scope_listed(scopes, "mesh:" + project)
+}
+
+// mesh_gateway_scope is what Mesh asks a token for when it speaks to one mesh's
+// gateway: that gateway's scopes only (its GATEWAY_ID is the mesh's). A token
+// taken from the network then opens that gateway and no other — a
+// robohub-gateway holds `gateway:<its id>:*` and nothing narrower or broader of
+// another mesh's — and none of Mesh's own routes; `gateway:*` is what Mesh may be
+// issued, not what it presents.
+// @req MESH-0011
+fn mesh_gateway_scope(project: string) string {
+    if project == "" {
+        return "gateway:*"
+    }
+    return "gateway:" + project + ":*"
+}

@@ -81,6 +81,7 @@ fn production_board_plan(board: string) string {
     return platform + "/production/" + name
 }
 
+// @req MESH-0004, MESH-BUILD-0009
 fn production_board_available(board: string) bool {
     return production_board_plan(board) != ""
 }
@@ -140,6 +141,7 @@ fn production_key_problem(id: string, plan: string) string {
 
 // production_refusal is why a board's production build cannot be queued, in
 // `loc`, or "" when it can.
+// @req MESH-BUILD-0010
 fn production_refusal(loc: string, id: string, index: u32, board: string) string {
     let name: string = editor_name(loc, index)
     let plan: string = production_board_plan_text(board)
@@ -257,6 +259,7 @@ fn production_waiting(loc: string, project: string, seq: string, action: string)
 // production_go lets a waiting production flash run once the board's name has
 // been typed exactly: the name is written beside the job for its script to hand
 // to rho flash, which asks for it again on its standard input.
+// @req MESH-0004, MESH-BUILD-0011
 fn production_go(req: Request, id: string, seq: string) Response {
     let selection: string = "job:" + seq
     if !production_job_ready(id, seq) {

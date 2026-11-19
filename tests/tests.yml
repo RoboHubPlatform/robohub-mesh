@@ -12,15 +12,48 @@ suites:
   - name: tests/domain_test.rho
     kind: rho
     tags: [unit, rho, domain]
+  # @verifies MESH-0001, MESH-0003, MESH-0008, MESH-0012, MESH-0013, MESH-0015, MESH-0016, MESH-0017, MESH-0018, MESH-0019, MESH-PLAN-0001, MESH-PLAN-0002, MESH-PLAN-0003, MESH-PLAN-0004, MESH-PLAN-0005, MESH-PLAN-0007, MESH-BUILD-0002, MESH-BUILD-0003, MESH-BUILD-0004, MESH-BUILD-0005, MESH-BUILD-0006, MESH-BUILD-0007, MESH-BUILD-0008, MESH-ACCESS-0002, MESH-API-0001, MESH-API-0003, MESH-API-0004, MESH-FLEET-0001, MESH-FLEET-0002, MESH-FLEET-0003, MESH-FLEET-0004, MESH-FLEET-0005, MESH-FLEET-0006, MESH-UI-0001, MESH-UI-0002, MESH-UI-0003, MESH-UI-0004, MESH-UI-0005
   - name: wizard-smoke
     kind: command
     tags: [smoke]
     command: [python3, tests/wizard_smoke.py]
+  # Owner-only folders, the node manifest, revoking, rotating, and host nodes
+  # fetching their key.
+  # @verifies MESH-0002, MESH-0005, MESH-0006, MESH-0007, MESH-0008, MESH-ACCESS-0001, MESH-ACCESS-0002, MESH-ACCESS-0003, MESH-ACCESS-0004, MESH-ACCESS-0005, MESH-ACCESS-0006, MESH-ACCESS-0008, MESH-ACCESS-0009
   - name: security-smoke
     kind: command
     tags: [smoke, security]
     command: [python3, tests/security_smoke.py]
+  # Production builds with a stand-in rho: nothing is built or burned.
+  # @verifies MESH-0004, MESH-0008, MESH-BUILD-0009, MESH-BUILD-0010, MESH-BUILD-0011
   - name: production-smoke
     kind: command
     tags: [smoke, security, production]
     command: [python3, tests/production_smoke.py]
+  # Who may reach what in a running Mesh: the public routes, every other route
+  # class refused without a ticket, /mesh/api's token scopes, a gateway's token,
+  # standalone mode and the kept copy of the keeper's public key.
+  # @verifies MESH-0011, MESH-0012, MESH-0013, MESH-0020, MESH-API-0001, MESH-API-0002, MESH-API-0006, MESH-API-0007, MESH-API-0008
+  - name: access-smoke
+    kind: command
+    tags: [smoke, security, access]
+    command: [python3, tests/access_smoke.py]
+  # Devices, alerts and paths, with the state folder's path holding a space and a
+  # stand-in Shelly plug: a switch confirmed only by what the plug reports
+  # (pending, then unconfirmed, when its relay sticks), a gateway outage and an
+  # unsent revocation raised as one alert each through the log provider, and a
+  # mesh created, saved and deleted without touching a folder named like the
+  # path's first word.
+  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010
+  - name: devices-smoke
+    kind: command
+    tags: [smoke, devices, alerts]
+    command: [python3, tests/devices_smoke.py]
+  # The telemetry store's own tests, against a real SQLite database with Mesh's
+  # schema and a stand-in gateway: ingest once per gateway and sequence, series
+  # keying, roll-up and retention.
+  # @verifies MESH-TEL-0001, MESH-TEL-0002, MESH-TEL-0004, MESH-TEL-0005, MESH-TEL-0006
+  - name: telemetry-store
+    kind: command
+    tags: [unit, go, telemetry]
+    command: [go, -C, plugins/mesh-telemetry/ports, test, -count=1, ./...]

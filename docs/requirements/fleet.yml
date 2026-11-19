@@ -1,0 +1,95 @@
+# The fleet: several meshes on one machine, meshes that report through another,
+# and the work across meshes — move, copy, search, apply everywhere — with each
+# gateway's health (src/mesh/fleet.rho, links.rho, cross.rho, agora.rho).
+# Proposed until the maintainer approves them.
+level: SUB
+prefix: MESH-FLEET
+title: Mesh fleet
+requirements:
+  - id: MESH-FLEET-0001
+    title: Each mesh has its own area and ports
+    statement: >
+      Each new mesh shall be given an area, a REST port and an uplink port no other
+      mesh on the machine has, and deleting a mesh shall stop its native gateway,
+      remove its folder and free its place; renaming one shall change its display
+      name, not its folder.
+    rationale: Two meshes on one machine never answer on each other's port or claim each other's boards.
+    satisfies: [MESH-0015]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [fleet]
+
+  - id: MESH-FLEET-0002
+    title: A linked mesh's gateway is a relay of its parent's
+    statement: >
+      A mesh set to report through another shall start its gateway with
+      GATEWAY_MODE=relay, PARENT_UPLINK the parent gateway's host and uplink port,
+      RELAY_UID an id of its own and RELAY_KEY_FILE a `relay.key` holding the key
+      the parent's gateway key derives for that id; both plans shall record the
+      link, and a mesh shall be refused as reporting through itself or through a
+      mesh that reports through it.
+    rationale: The parent's gateway authenticates the child like any of its boards, and a ring of meshes would report nowhere.
+    satisfies: [MESH-0015]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [fleet, relay, topology]
+
+  - id: MESH-FLEET-0003
+    title: A board moves to another mesh with its id and modules
+    statement: >
+      Moving a board or device to another mesh shall take its id and its modules
+      with it, leave what hangs from it under its old parent, remove it from the
+      old mesh and show it out of date, never programmed, in the new one.
+    rationale: The board keeps its identity and its history, but must be built with the other mesh's key.
+    satisfies: [MESH-0015, MESH-0003]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [fleet, cross]
+
+  - id: MESH-FLEET-0004
+    title: A mesh copied as a template has none of its deployment
+    statement: >
+      Copying a mesh as a template shall start a new mesh with its gateway, boards,
+      modules and links, and none of its node ids, links to other meshes or
+      deployment state.
+    rationale: A second site starts from the first one's plan without claiming its boards.
+    satisfies: [MESH-0015]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [fleet, cross]
+
+  - id: MESH-FLEET-0005
+    title: Search and apply reach every mesh
+    statement: >
+      The fleet's search shall find a node by its name, id, board, module or
+      device in every mesh the person may read, and while changes are waiting the
+      fleet shall offer to apply in all meshes, queueing each mesh's jobs.
+    rationale: A person running several meshes looks for a board, and updates them, in one place.
+    satisfies: [MESH-0015]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [fleet, cross]
+
+  - id: MESH-FLEET-0006
+    title: Gateway health is checked in the background
+    statement: >
+      Mesh shall check each mesh's gateway in the background, not when a page is
+      drawn, and keep the result beside the mesh as online, offline, stopped or
+      none, which the fleet and the mesh's page show.
+    rationale: A page must not wait on a gateway that does not answer.
+    satisfies: [MESH-0017]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [fleet, health]

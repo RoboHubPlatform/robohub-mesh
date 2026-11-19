@@ -181,9 +181,13 @@ fn mesh_settings_page_message(req: Request, message: string) Response {
 }
 
 fn mesh_settings_page(req: Request) Response {
+    if !mesh_may(req, "", false) {
+        return mesh_denied(req)
+    }
     return mesh_settings_page_message(req, "")
 }
 
+// @req MESH-0018, MESH-UI-0005
 fn mesh_settings_save(req: Request) Response {
     if !mesh_may(req, "", true) {
         return mesh_denied(req)

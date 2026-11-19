@@ -1,0 +1,51 @@
+//
+// @file alerting.rho
+// @brief When a fault Mesh detects is raised as an alert: once per outage, and not again within a cooldown.
+//
+// @module mesh.domain.alerting
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.alerting
+
+// Mesh raises an alert through robohub.alert for the faults that need a person:
+// a gateway that stops answering, a build or flash job that fails, and a board's
+// key change (a revocation or a rotation) that could not be sent to its gateway.
+// Each is keyed by its mesh and what it is about, so one outage — or one job
+// failing again and again — is one alert, not one per poll or per retry.
+
+/// The least time between two alerts with the same key (15 minutes).
+const MESH_ALERT_COOLDOWN_S: u32 = 900
+
+// mesh_alert_due is whether an alert keyed like one last raised at `last_s` may
+// be raised at `now_s`: never raised (0), its cooldown over, or a clock that went
+// back (which would otherwise silence the key until it caught up).
+// @req MESH-0023
+fn mesh_alert_due(last_s: u32, now_s: u32, cooldown_s: u32) bool {
+    if last_s == 0 || now_s < last_s {
+        return true
+    }
+    return now_s - last_s >= cooldown_s
+}
+
+// mesh_alert_key is the file-safe key of an alert: its mesh and its subject.
+// @req MESH-0023
+fn mesh_alert_key(project: string, subject: string) string {
+    var out: string = ""
+    let text: string = project + "-" + subject
+    var i: u32 = 0
+    while i < strlen(text) {
+        let c: string = str_slice(text, i, 1)
+        if (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || str_eq(c, "-") || str_eq(c, "_") {
+            out = out + c
+        } else {
+            out = out + "_"
+        }
+        i = i + 1
+    }
+    return out
+}

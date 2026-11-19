@@ -51,6 +51,7 @@ fn plan_text(path: string) string {
 }
 
 // plan_import writes plan.yml from a project's project.txt, once.
+// @req MESH-PLAN-0007
 fn plan_import(path: string) void {
     if rho_path_exists(path) || !rho_str_ends_with_plan(path) {
         return
@@ -62,7 +63,7 @@ fn plan_import(path: string) void {
     }
     rho_lock("mesh.plan:" + path)
     if !rho_path_exists(path) && plan_write_held(path, rho_read_text(legacy)) {
-        rho_exec("mv", "-f " + legacy + " " + legacy + ".imported", wizard_report("plan-import"))
+        rho_exec_args("mv", "-f\n" + legacy + "\n" + legacy + ".imported\n", wizard_report("plan-import"))
         info("mesh", "imported " + legacy + " into " + path)
     }
     rho_unlock("mesh.plan:" + path)
@@ -97,6 +98,7 @@ fn plan_revision(path: string) u32 {
 
 
 // plan_write replaces a plan with flat text, as the next revision.
+// @req MESH-PLAN-0001
 fn plan_write(path: string, text: string) bool {
     if path == "" {
         return false
@@ -140,6 +142,7 @@ fn plan_write_held(path: string, text: string) bool {
 // the oldest beyond PLAN_REVISIONS_KEPT. One form is several writes in a burst;
 // a copy is kept only when the last one is PLAN_SNAPSHOT_SECONDS old, so what is
 // kept is the plan before each edit rather than each key of it.
+// @req MESH-PLAN-0001
 fn plan_keep_revision(path: string, revision: u32) void {
     let dir: string = plan_dir(path) + "/revisions"
     let marker: string = dir + "/last-kept.txt"
@@ -149,13 +152,13 @@ fn plan_keep_revision(path: string, revision: u32) void {
         return
     }
     let report: string = wizard_report("plan-revisions")
-    rho_exec("mkdir", "-p " + dir, report)
-    rho_exec("cp", "-f " + path + " " + dir + "/" + rho_int_to_str(revision) + ".yml", report)
+    rho_exec_args("mkdir", "-p\n" + dir + "\n", report)
+    rho_exec_args("cp", "-f\n" + path + "\n" + dir + "/" + rho_int_to_str(revision) + ".yml\n", report)
     rho_write_text(marker, rho_int_to_str(now))
     // The oldest copies beyond the kept number go; the copies are numbered by
     // revision, and `ls -v` lists them in that order.
     let listing: string = wizard_report("plan-revisions-list")
-    rho_exec("sh", "-c \"ls -1v " + dir + " | grep '\\.yml$' | head -n -" + rho_int_to_str(PLAN_REVISIONS_KEPT) + "\"", listing)
+    rho_exec_args("sh", "-c\nls -1v " + shell_quote(dir) + " | grep '\\.yml$' | head -n -" + rho_int_to_str(PLAN_REVISIONS_KEPT) + "\n", listing)
     var rest: string = rho_read_text(listing)
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
@@ -167,7 +170,7 @@ fn plan_keep_revision(path: string, revision: u32) void {
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if name != "" && rho_str_index_of(name, "/") < 0 {
-            rho_exec("rm", "-f " + dir + "/" + name, report)
+            rho_exec_args("rm", "-f\n" + dir + "/" + name + "\n", report)
         }
     }
 }
@@ -179,6 +182,7 @@ fn plan_keep_revision(path: string, revision: u32) void {
 // move with them (a child of the removed node goes to the gateway), and the
 // count falls by one. A node keeps its stable number, so a board that is already
 // flashed still reports as itself.
+// @req MESH-PLAN-0002
 fn plan_remove_node(path: string, index: u32) bool {
     if path == "" || index == 0 {
         return false

@@ -1,0 +1,361 @@
+# What Mesh does towards the system requirements: it plans every mesh — a
+# gateway, its boards, their sensor modules, the network devices and the links —
+# builds each board's firmware and starts each gateway from that plan, keeps the
+# keys and the node manifest every gateway trusts, and is the one telemetry store
+# the applications read. Written in the R5 backfill from the documentation, the
+# changelog, the code and the tests; proposed until the maintainer approves them.
+level: NODE
+prefix: MESH
+title: Mesh
+requirements:
+  # Planning and building
+  - id: MESH-0001
+    title: Firmware and gateways are built from the plan
+    statement: >
+      Mesh shall keep each mesh as a plan — a gateway, the boards under it, the
+      sensor modules fitted to them, the network devices beside them and the link
+      each board reaches its parent over — and shall build each board's firmware
+      and start or program the mesh's gateway from that plan alone.
+    rationale: What runs on a board must follow from what the person planned, not from what someone typed into a build.
+    satisfies: [SYS-0019, SYS-0042]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, build]
+
+  - id: MESH-0002
+    title: Every board is built with its own key
+    statement: >
+      Mesh shall write into every board's build the board's id and the key derived
+      for it from its mesh's gateway key and its key epoch, so that the board's
+      gateway accepts it with no credential entered by a person.
+    rationale: A board is enrolled by being built; typing keys into boards does not scale and leaks them.
+    satisfies: [SYS-0019]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, enrollment, build]
+
+  - id: MESH-0003
+    title: Only what an edit changes is out of date
+    statement: >
+      Mesh shall record what each board's image and the gateway were last built
+      from, show a board or the gateway as out of date, with the reason, only when
+      what it is built from differs from the plan, and change nothing that runs
+      until a person applies the change.
+    rationale: Renaming a board must not cost a reflash, and an edit must never reset a running mesh by itself.
+    satisfies: [SYS-0042]
+    decided_by: [ADR-0001]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [plan, build, deploy]
+
+  - id: MESH-0004
+    title: A board is hardened only when asked and confirmed
+    statement: >
+      Mesh shall build a board for production — secure boot, flash encryption or
+      read-out protection, steps that cannot be undone — only when production is
+      turned on for that board, and shall run its production flash only after the
+      person has typed the board's name against the printed list of steps.
+    rationale: Burning eFuses or OTP by mistake bricks a board for good; it must take two deliberate acts.
+    satisfies: [SYS-0043, SYS-0044]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, production, security]
+
+  # Keys and the node manifest
+  - id: MESH-0005
+    title: The node manifest says which boards a gateway admits
+    statement: >
+      Mesh shall give each gateway a node manifest listing every planned board
+      with its placement, key epoch and whether it is revoked, rewritten whenever
+      the plan changes, so that revoking a board in Mesh shuts it out without
+      changing any other board's key or reflashing any board.
+    rationale: A derived key proves a board was keyed for a mesh, not that it still belongs to it or where it sits.
+    satisfies: [SYS-0020, SYS-0021]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, manifest, revocation]
+
+  - id: MESH-0006
+    title: A board's key is rotated from Mesh
+    statement: >
+      Mesh shall rotate a board's key by raising its key epoch in the plan and the
+      node manifest, without flashing the board, and shall not rotate a board
+      again before its gateway reports that the board confirmed the last rotation.
+    rationale: A key that may have been copied is retired without a cable; the gateway accepts only the current epoch and the one before it.
+    satisfies: [SYS-0022]
+    decided_by: [robohub:ADR-0010]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, key-rotation]
+
+  - id: MESH-0007
+    title: A host node fetches its key with its keeper credential
+    statement: >
+      Mesh shall give a Linux host node the id and current key of the board planned
+      at its placement only for a node credential the keeper verifies, and nothing
+      for a revoked board.
+    rationale: A host enrolled with a one-time token proves who it is to the keeper; Mesh only answers what was planned there.
+    satisfies: [SYS-0027]
+    decided_by: [robohub:ADR-0011]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, enrollment]
+
+  - id: MESH-0008
+    title: Mesh's keys and secrets are its user's alone and never logged
+    statement: >
+      Every folder of Mesh's tree shall be readable by Mesh's user alone, every file
+      that holds a key, a password or an image built with one shall be 0600, and no
+      key, node credential or signing key shall be written to Mesh's log.
+    rationale: A gateway key is what every board's key derives from; anyone who reads it speaks for every board.
+    satisfies: [SYS-0033]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, secrets]
+
+  # Telemetry
+  - id: MESH-0009
+    title: Every gateway's readings are collected once
+    statement: >
+      Mesh shall collect the outbox of every gateway it started, store each
+      reading once however often its page is read, and acknowledge a page to the
+      gateway only after it is stored.
+    rationale: Mesh being restarted or a gateway being away must leave neither a hole nor a duplicate in the history.
+    satisfies: [SYS-0024]
+    decided_by: [robohub:ADR-0008, robohub-gateway:ADR-0004, ADR-0003]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, recovery]
+
+  - id: MESH-0010
+    title: Readings are kept as history under a stable source
+    statement: >
+      Mesh shall keep every reading under its board's or device's source identity,
+      which no reordering of the plan changes, as raw readings, minute roll-ups and
+      hourly roll-ups kept 14, 90 and 1825 days unless the Storage settings say
+      otherwise.
+    rationale: A chart of last winter is part of what the system is for, and must not change owner when rows move.
+    satisfies: [SYS-0037]
+    decided_by: [robohub:ADR-0008, ADR-0003]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [telemetry, history, retention]
+
+  # Access
+  - id: MESH-0011
+    title: Each gateway is called with a token for it alone
+    statement: >
+      Mesh shall call a mesh's gateway with a short-lived service token for the
+      audience `gateway` and the scope `gateway:<mesh>:*` alone, asked for with
+      Mesh's own client credential, and shall start each gateway with GATEWAY_ID
+      set to its mesh.
+    rationale: A token taken from the network then opens one gateway, for minutes.
+    satisfies: [SYS-0030]
+    decided_by: [robohub:ADR-0003]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, least-privilege]
+
+  - id: MESH-0012
+    title: A person's grants decide which meshes they reach
+    statement: >
+      Mesh shall let a person read a mesh, change it, or change Mesh as a whole only
+      as far as the `mesh:` grants in their keeper ticket allow, and shall refuse
+      anything else with 403.
+    rationale: Access to one mesh must not be access to every mesh.
+    satisfies: [SYS-0008]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, access]
+
+  - id: MESH-0013
+    title: Applications read a mesh only through its API, scoped to it
+    statement: >
+      Mesh shall be the only store of telemetry, read by applications only through
+      `/mesh/api` with a service token whose scopes name the mesh it reads, and
+      shall describe each signal as a source an application can bind without
+      knowing the part's type.
+    rationale: One owner of the history; a token for one mesh opens no other; a new device is visible to a dashboard without code.
+    satisfies: [SYS-0030, SYS-0008]
+    decided_by: [robohub:ADR-0008, robohub:ADR-0012]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [api, telemetry, least-privilege]
+
+  - id: MESH-0014
+    title: Network devices are polled and switched by Mesh
+    statement: >
+      Mesh shall poll each planned HTTP device, read each MQTT device through the
+      keeper's broker, and switch a plug, switch or actuator when asked, recording
+      the requested state as pending and the device's state only from what the
+      device reports (MESH-0022).
+    rationale: Outputs on network devices must be driven from one place that knows whether the device did it.
+    satisfies: [SYS-0025, SYS-0028, SYS-0051]
+    status: proposed
+    verification: demonstration
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [devices, outputs]
+
+  # Topology
+  - id: MESH-0015
+    title: Meshes run side by side and report through each other
+    statement: >
+      Mesh shall run several meshes on one machine, each with an area, REST port
+      and uplink port no other has, and shall run the gateway of a mesh that
+      reports through another as a relay of that mesh's gateway, authenticated with
+      a key of its own.
+    rationale: One machine runs several linked meshes; a far shed reports through the house.
+    satisfies: [SYS-0026]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [topology, relay, fleet]
+
+  # The web application
+  - id: MESH-0016
+    title: Forms from another origin are refused
+    statement: >
+      Mesh shall refuse with 403, before any handler acts, a form posted from
+      another origin.
+    rationale: Mesh shares the keeper's host with the other applications, which a SameSite cookie does not tell apart.
+    satisfies: [SYS-0034]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, web]
+
+  - id: MESH-0017
+    title: Mesh reports its own health and each gateway's
+    statement: >
+      Mesh shall answer `/healthz` without sign-in, and shall check each mesh's
+      gateway health in the background and show it on the fleet and the mesh's
+      page.
+    rationale: A person must tell what is down without a shell, and a page must not wait on a dead gateway.
+    satisfies: [SYS-0039]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [observability]
+
+  - id: MESH-0018
+    title: Mesh's alert channels are set on its Settings page
+    statement: >
+      Mesh shall bind `robohub.alert` to the log, e-mail and Telegram providers,
+      each with its own threshold, and its Settings page shall change and read back
+      each channel's setting.
+    rationale: The person chooses where Mesh's alerts reach them.
+    satisfies: [SYS-0036, SYS-0066]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [alerts, settings]
+
+  - id: MESH-0019
+    title: Mesh's guide is in the program
+    statement: >
+      Mesh shall serve its own guide at `/mesh/docs` from a copy embedded in the
+      program, and shall publish the same page in its `docs:` section for the
+      ecosystem's documentation.
+    rationale: The manual must be there when the network is not.
+    satisfies: [SYS-0038]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [documentation, offline]
+
+  - id: MESH-0020
+    title: Mesh trusts the keeper's credentials and issues none
+    statement: >
+      Mesh shall accept a person or a program only with a ticket, session or
+      service token verified with the keeper's public key, and shall hold no key
+      that signs one.
+    rationale: One issuer in one place; Mesh only verifies.
+    satisfies: [SYS-0006, SYS-0029]
+    decided_by: [robohub:ADR-0003]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [security, sign-in]
+
+  - id: MESH-0021
+    title: Mesh and its telemetry store are released together
+    statement: >
+      Mesh shall carry its version and a changelog section for every release, and
+      its telemetry store, `plugins/mesh-telemetry`, shall be part of Mesh's
+      repository and released with it.
+    rationale: A change to the store is a change to Mesh; it must not be released, or broken, on its own.
+    satisfies: [SYS-0040]
+    decided_by: [ADR-0003]
+    status: proposed
+    verification: inspection
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [releases]
+
+  - id: MESH-0022
+    title: A switch shows the state the device reports
+    statement: When Mesh switches a network device it shall record the requested state as pending and show the device's state only from what the device reports after the request (its HTTP status, or a status message on the broker newer than the request); a request the device has not confirmed within 30 seconds, or one to a device whose manifest names no state field for its transport, shall be shown as requested and unconfirmed, never as the device's state, and the API shall answer 200 with the reported state when it is confirmed and 202 with state "pending" while it waits.
+    rationale: A page must never claim a heater is off when it is not; a command that was taken is not a command that was carried out.
+    satisfies: [SYS-0025, SYS-0059]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [devices, outputs]
+
+  - id: MESH-0023
+    title: Faults that need a person are raised as alerts
+    statement: Mesh shall raise an alert through every channel bound to robohub.alert when a mesh's gateway stops answering (ERROR, once per outage, and INFO when it answers again), when a build or flash job fails (ERROR), and when a board's revocation or key rotation cannot be sent to its gateway (ERROR); an alert with the same mesh and subject shall not be raised again within 15 minutes.
+    rationale: A gateway that goes silent at night must reach the person on the channel they read, not wait in an inbox; and one outage must be one message.
+    satisfies: [SYS-0036]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [alerts]
+
+  - id: MESH-0024
+    title: Mesh works in folders whose path has a space
+    statement: Mesh shall pass every path it gives a program as one argument, so its state folder, its meshes and their jobs, revisions and builds work, and deleting a mesh removes only that mesh, when a path contains a space.
+    rationale: A home folder or a workspace named with a space must not lose a plan, nor make deleting one mesh remove something else.
+    satisfies: [SYS-0053]
+    status: proposed
+    verification: test
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [storage, robustness]

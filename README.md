@@ -20,7 +20,7 @@ rho test .                   # the unit suite and the HTTP smoke test
 
 `plugins/mesh-telemetry` is Mesh's telemetry store, the Go port it is built with.
 
-Its guide is [docs/index.md](docs/index.md); the running application serves it
+Its guide is [docs/doc/index.md](docs/doc/index.md); the running application serves it
 under Documentation.
 
 ## License

@@ -105,6 +105,8 @@
   "device.carried": "This device is carried by the node it is attached to; that node performs the read and publishes it.",
   "device.choose": "Choose a device",
   "device.last": "Last: state {state}, power {power} W at {time}",
+  "device.state_pending": "{state} requested, waiting for the device to report it (it reports {reported})",
+  "device.state_unconfirmed": "{state} requested, unconfirmed: the device has not reported it (it reports {reported})",
   "device.poll": "Poll device",
   "device.switch_off": "Switch off",
   "device.switch_on": "Switch on",

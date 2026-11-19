@@ -72,6 +72,7 @@ fn agora_gateway_kind(id: string) string {
 // agora_gateway_started is whether a mesh's gateway is one anything should
 // expect to answer. A native gateway runs only when Mesh started it, which the
 // process id beside the project says; a board's runs on the board.
+// @req MESH-BUILD-0008
 fn agora_gateway_started(id: string) bool {
     if agora_gateway_kind(id) != "native" {
         return true
@@ -97,6 +98,7 @@ fn agora_gateway_port(id: string) string {
 
 // agora_check_health asks a mesh's gateway whether it answers, and keeps the
 // answer with the time the state began: "online|<since>|<checked>".
+// @req MESH-0017, MESH-FLEET-0006
 fn agora_check_health(id: string) void {
     let kind: string = agora_gateway_kind(id)
     var state: string = "none"
@@ -592,6 +594,7 @@ fn agora_linked_items(loc: string, id: string) string {
 // agora_first_run is a new mesh's guide, on the canvas it will be used on:
 // where the gateway runs, the first node, and applying. Each points at the
 // control that does it, and the guide goes once the mesh has a node.
+// @req MESH-UI-0004
 fn agora_first_run(loc: string, id: string) string {
     var gateway: string = "agora-step"
     if state_value_in(project_file(id), "gateway") != "" {
@@ -866,6 +869,9 @@ fn mesh_agora_events(req: Request) Response {
     let id: string = request_query_param(req, "project")
     if id == "" || id != current_project() {
         return text(status_not_found(), "no such mesh is open\n")
+    }
+    if !mesh_may(req, id, false) {
+        return mesh_denied(req)
     }
     let loc: string = i18n_locale(req)
     let snapshot: string = project_location(id) + "/agora-snapshot-" + loc + ".jsonl"
@@ -1345,8 +1351,7 @@ const FLEET_STYLE: string = "<style>.fleet-panel{display:grid;grid-template-rows
 // mesh_reads_every_mesh is whether a person may see the whole fleet: the live
 // fleet is the same stream for everyone who opens it, so it is only for those.
 fn mesh_reads_every_mesh(req: Request) bool {
-    let scopes: string = mesh_scopes(req)
-    return scopes == "" || mesh_scope_held(scopes, "*") || mesh_scope_held(scopes, "mesh:*") || mesh_scope_held(scopes, "mesh:read")
+    return mesh_grant_every_mesh(mesh_audience(req), mesh_scopes(req))
 }
 
 // mesh_fleet_limited is the fleet of someone granted particular meshes: their
@@ -1406,6 +1411,7 @@ fn mesh_fleet_events(req: Request) Response {
 
 // agora_publish appends a stream's regions to its events file when they differ
 // from what it last sent, keeping the file short.
+// @req MESH-UI-0001
 fn agora_publish(events: string, last_file: string, regions: string) void {
     if rho_str_eq(rho_read_text(last_file), regions) {
         return

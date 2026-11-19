@@ -38,6 +38,7 @@ fn nodekey_refused(status: u32, error: string) Response {
 
 // nodekey_take counts one call against the client's budget and the budget of
 // every client together; false when either is spent.
+// @req MESH-ACCESS-0008
 fn nodekey_take(req: Request) bool {
     let dir: string = wizard_dir() + "/rate"
     // The keeper's proxy reaches Mesh over loopback and appends the caller's
@@ -132,6 +133,7 @@ fn nodekey_node(file: string, number: u32) u32 {
     return 0
 }
 
+// @req MESH-0007, MESH-ACCESS-0006
 fn mesh_api_node_key(req: Request) Response {
     if !nodekey_take(req) {
         return Response{ 429, "{\"ok\":false,\"error\":\"too many requests\"}", "application/json",

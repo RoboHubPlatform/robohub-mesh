@@ -86,6 +86,7 @@ fn link_relay_key_file(project: string) string {
 
 // link_relay_key writes the key the parent derives for the child's id, and
 // answers the file, or "" when either half is missing.
+// @req MESH-FLEET-0002
 fn link_relay_key(project: string) string {
     let parent: string = link_parent(project)
     let uid: string = link_relay_uid(project)
@@ -124,6 +125,7 @@ fn link_parent_uplink(project: string) string {
 
 // link_env is what the child's gateway is started with to report through its
 // parent; key_path is the relay key where the gateway will read it.
+// @req MESH-0015, MESH-FLEET-0002
 fn link_env(project: string, key_path: string) string {
     if link_parent(project) == "" || key_path == "" {
         return ""
@@ -140,6 +142,7 @@ fn link_listens(project: string) bool {
 
 // link_set makes `project` report through `parent` ("" for nobody), in both
 // plans, and answers why it could not.
+// @req MESH-FLEET-0002
 fn link_set(loc: string, project: string, parent: string) string {
     let previous: string = link_parent(project)
     if rho_str_eq(previous, parent) {

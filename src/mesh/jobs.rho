@@ -153,9 +153,10 @@ fn jobs_next_seq(project: string) string {
 }
 
 // jobs_add writes a job: its script, what it is, and what it waits on.
+// @req MESH-BUILD-0004
 fn jobs_add(project: string, kind: string, target: string, label: string, script: string,
     signature: string, after: string, wait: string) string {
-    ignore_u32(rho_exec("mkdir", "-p " + jobs_dir(project), jobs_report("mkdir")))
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + jobs_dir(project) + "\n", jobs_report("mkdir")))
     rho_lock("mesh.jobs:" + project)
     let seq: string = jobs_next_seq(project)
     rho_unlock("mesh.jobs:" + project)
@@ -187,6 +188,7 @@ fn jobs_add(project: string, kind: string, target: string, label: string, script
 const JOB_LOCK: string = "runner.flock"
 
 // jobs_start makes sure the mesh's runner is working; one at a time runs.
+// @req MESH-BUILD-0004
 fn jobs_start(project: string) void {
     let dir: string = jobs_dir(project)
     ignore_bool(rho_write_text(dir + "/runner.sh", JOB_RUNNER))
@@ -285,6 +287,7 @@ fn jobs_board_dir(index: u32) string {
 // board's sources are prepared now, from the plan as it is; the build and the
 // flash run in the background, the flash once the person says the board is in
 // its programming mode.
+// @req MESH-BUILD-0005, MESH-BUILD-0006
 fn jobs_queue_board(loc: string, index: u32) string {
     let id: string = current_project()
     let nid: string = project_node_id(wizard_file(), index)
@@ -360,7 +363,7 @@ fn jobs_queue_gateway(loc: string) string {
     if jobs_open_for(id, "gateway", "") != "" {
         return mesh_t(loc, "jobs.gateway_busy")
     }
-    ignore_u32(rho_exec("mkdir", "-p " + jobs_dir(id), jobs_report("mkdir")))
+    ignore_u32(rho_exec_args("mkdir", "-p\n" + jobs_dir(id) + "\n", jobs_report("mkdir")))
     let script: string = jobs_dir(id) + "/recording.sh"
     ignore_bool(rho_write_text(script, ""))
     jobs_set_recording(script)
@@ -405,6 +408,7 @@ fn jobs_record_shell(command: string, label: string) u32 {
 // jobs_finish settles the jobs a project's runner has finished: a board that
 // was flashed runs what its job was made from, a gateway that started runs its
 // plan, and anything that failed says so on its card.
+// @req MESH-BUILD-0003
 fn jobs_finish(project: string) bool {
     var changed: bool = false
     var pending: bool = false
@@ -473,6 +477,11 @@ fn jobs_finish(project: string) bool {
         } else if jobs_state(project, seq) == "failed" {
             warn("mesh", project + ": " + jobs_meta(project, seq, "label") + " failed")
             notification_live_event("err", said + " failed")
+            // A build or flash that failed leaves a board without what it was
+            // meant to run: the person hears it on their alert channels too,
+            // once per board and kind of job within the cooldown.
+            ignore_bool(mesh_alert(project, "job-" + kind + "-" + target, "ERROR",
+                jobs_meta(project, seq, "label") + " failed"))
         }
         ignore_bool(rho_write_text(jobs_path(project, seq, "done"), "\n"))
         changed = true
