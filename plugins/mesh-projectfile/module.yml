@@ -1,0 +1,41 @@
+#
+# mesh-projectfile — what a Mesh project file needs that the Rho runtime does not
+# have, as the Go port Mesh is built with (ADR-0007).
+#
+# A project file carries a mesh's definition as YAML or JSON, its secrets left
+# out or sealed under a passphrase (ADR-0004, ADR-0005). Mesh writes and reads the
+# YAML with the runtime's own functions; this port reads and writes the JSON form,
+# seals and opens the secrets (AES-256-GCM under PBKDF2-HMAC-SHA256) and names a
+# file by its SHA-256. It holds no state and touches no file.
+#
+# It lives here, in Mesh's repository and versioned with Mesh, as mesh-telemetry
+# does: its changes are recorded in Mesh's CHANGELOG. The toolchain finds it as a
+# plugin of the project's own tree that integrates the robohub platform and
+# provides ports.
+module:
+  name: mesh-projectfile
+  id: robohub.mesh.projectfile
+  type: plugin
+  version: 0.1.0
+  description: >
+    Mesh's project files — JSON read and written as flat lines, secrets sealed
+    and opened under a passphrase, a file named by its SHA-256 — as the Go port
+    Mesh is built with.
+  maintainer: "Aurel Miron"
+  license: "MIT"
+  created: "2026-11-19"
+
+# A plugin names its main file; this one is data, so it names its port.
+main: ports/projectfile.go
+
+serves:
+  - robohub
+
+integration:
+  ecosystem: robohub
+  provides:
+    ports: ports/
+
+package:
+  include:
+    - ports/
