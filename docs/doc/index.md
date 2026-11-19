@@ -16,8 +16,8 @@ about modules.
 
 | | |
 | --- | --- |
-| Through the keeper | `http://127.0.0.1:19090/app/mesh/mesh` |
 | Its own loopback port | `http://127.0.0.1:8478/mesh` |
+| The keeper's old address | `http://127.0.0.1:19090/app/mesh/mesh` redirects to the port above (robohub:ADR-0016) |
 | Unit | `mesh` (systemd user unit the keeper writes) |
 
 Mesh is a keeper-hosted application: the keeper installs it, runs it and serves it
