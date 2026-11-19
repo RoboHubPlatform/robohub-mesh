@@ -1,0 +1,1503 @@
+//
+// @file project_file.rho
+// @brief A mesh as a project file: what it carries, the rules it is checked by, and the decisions an import makes.
+//
+// @module mesh.domain.project_file
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.project_file
+
+// A project file is one mesh's definition, exported to be imported again — over
+// the same mesh, as a new one or a copy, here or on another Mesh (ADR-0004 to
+// ADR-0006). Its shape is the plan's own tree: the plan's definition keys under
+// `plan.`, beside `format`, `schema`, `exported.*`, `mesh.*`, `omitted.*` and,
+// when the person asked for the secrets, `sealed.*`.
+//
+// This module is the file's rules, written out once: the list of keys the file
+// may hold and the class of value each takes, the line check a YAML file passes
+// before the runtime's reader sees it, every problem a file can have, the
+// migration of an older schema, and the pure decisions an import makes. Nothing
+// here reads or writes a file, so all of it is tested on its own
+// (tests/domain_test.rho), and schemas/mesh-project.v1.json publishes the same
+// keys and classes, held to these by tests/project_schema_test.py.
+
+const PROJECT_FORMAT: string = "robohub-mesh-project"
+const PROJECT_SCHEMA: u32 = 1
+const PROJECT_SECRETS_FORMAT: string = "robohub-mesh-secrets"
+// The largest file an import reads, and the most nodes a mesh has.
+const PROJECT_MAX_BYTES: u32 = 1048576
+const PROJECT_MAX_NODES: u32 = 64
+// How many problems are listed one by one; the rest are counted.
+const PROJECT_PROBLEMS_SHOWN: u32 = 100
+const PROJECT_MIN_PASSPHRASE: u32 = 12
+
+// The file's own keys, each with the class of value it takes.
+const PROJECT_FILE_KEYS: string = "format:format schema:schema exported.by:text exported.at:time mesh.id:meshid mesh.name:text mesh.description:text mesh.area:area mesh.rest_port:port mesh.uplink_port:port sealed.cipher:cipher sealed.kdf:kdf sealed.iterations:iterations sealed.salt:salt sealed.nonce:nonce sealed.data:hex"
+
+// The plan's definition keys outside its nodes (MESH-XFER-0002): the gateway,
+// the defaults a board's link falls back to, the telemetry retention, the relay
+// id and the linked meshes, and the node count and counter. A plan key in no
+// list here is not exported.
+const PROJECT_PLAN_KEYS: string = "baud:text bus_address:text child_endpoint:text child_host:text driver:text gateway:text gateway_description:text gateway_driver:text gateway_host:text gateway_name:text gateway_sensors:text gateway_serial:text gateway_tls_cert:text gateway_tls_key:text gateway_url:text link:text mesh_children:meshids mesh_parent:meshidopt node.count:count node.next_number:digits parent_endpoint:text parent_host:text port:text relay:text relay_uid:uid sensors:text serial_port:text ssid:text telemetry_retention_days:digits"
+
+// A node's definition fields: what it is, where it hangs, its link and the
+// link's settings except the password, its module or device, and its key epoch,
+// revocation and production setting.
+const PROJECT_NODE_FIELDS: string = "address:text baud:text board:text bus_address:text child_endpoint:text child_host:text description:text device:text device_id:text driver:text epoch:digits gateway_host:text id:uid kind:kind link:text module:text name:text number:number parent:parent parent_endpoint:text parent_host:text parent_node:number port:text production:onoff revoked:flag role:text sensors:text serial_port:text ssid:text transport:text uid:uid"
+
+// What else a plan holds, by kind, so that every key of a plan is accounted for:
+// a key in none of these lists is one this module has not been told about.
+const PROJECT_SECRET_KEYS: string = "password gateway_token"
+const PROJECT_SECRET_NODE_FIELDS: string = "password"
+const PROJECT_PLACEMENT_KEYS: string = "area_id rest_port uplink_port"
+const PROJECT_IDENTITY_KEYS: string = "project.name project.description"
+const PROJECT_RUNTIME_KEYS: string = "revision updated current_step mesh_message build build_message build_node run_token import.wifi_needed import.catalog_missing"
+const PROJECT_RUNTIME_PREFIXES: string = "status. message. fault. step_"
+const PROJECT_RUNTIME_NODE_FIELDS: string = "rev state last_value last_checked"
+
+// The names `omitted.` may list (and `omitted.node.<row>.password`).
+const PROJECT_OMITTED_KEYS: string = "gateway_key relay_key signing_key gateway_token password"
+
+// The renames that carry a file from one schema to the next, as
+// `<from>:<old key>><new key>` words (an empty new key drops the old one). Schema
+// 1 is the first Mesh has written, so there are none yet.
+const PROJECT_MIGRATIONS: string = ""
+
+// Values of each class, and whether the class takes them, as `class;value;1|0`
+// lines. The domain tests hold project_value_ok to them and the schema test
+// holds the published patterns to the same lines.
+const PROJECT_CLASS_SAMPLES: string = "text;Garden pump;1\ntext;;1\ntext;tab\there;0\nschema;1;1\nschema;one;0\nschema;;0\ntime;2026-11-19T10:00:00Z;1\ntime;2026-11-19 10:00;0\nmeshid;garden;1\nmeshid;Garden_2.b-c;1\nmeshid;.hidden;0\nmeshid;a..b;0\nmeshid;a/b;0\nmeshid;;0\nmeshidopt;;1\nmeshidopt;north;1\nmeshidopt;../x;0\nmeshids;;1\nmeshids;north south-2;1\nmeshids;north ../x;0\narea;7;1\narea;;1\narea;0;0\narea;65536;0\narea;07;0\nport;8080;1\nport;65535;1\nport;70000;0\nport;80a;0\nuid;0123456789abcdef;1\nuid;;1\nuid;0123456789ABCDEF;0\nuid;0123;0\nnumber;12;1\nnumber;;1\nnumber;0;0\ncount;0;1\ncount;64;1\ncount;65;0\ncount;;0\ndigits;30;1\ndigits;;1\ndigits;-1;0\nkind;compute;1\nkind;module;1\nkind;device;1\nkind;;1\nkind;robot;0\nonoff;on;1\nonoff;off;1\nonoff;yes;0\nflag;1;1\nflag;0;1\nflag;2;0\nparent;gateway;1\nparent;node.3;1\nparent;node.0;0\nparent;board;0\ncipher;aes-256-gcm;1\ncipher;aes-128-cbc;0\nkdf;pbkdf2-hmac-sha256;1\nkdf;scrypt;0\niterations;600000;1\niterations;1000;0\nsalt;00112233445566778899aabbccddeeff;1\nsalt;0011;0\nnonce;00112233445566778899aabb;1\nnonce;00112233445566778899aabbcc;0\nhex;00ff;1\nhex;0f0;0\nhex;;0\nformat;robohub-mesh-project;1\nformat;robohub-mesh;0\n"
+
+/* -------------------------------------------------------------------------- */
+/*  Words and lines                                                           */
+/* -------------------------------------------------------------------------- */
+
+// project_word_class is the class a `key:class` table gives a key, or "".
+fn project_word_class(table: string, key: string) string {
+    let padded: string = " " + table + " "
+    let at: i32 = str_index_of(padded, " " + key + ":")
+    if at < 0 {
+        return ""
+    }
+    let start: u32 = u32(at) + strlen(key) + 2
+    let rest: string = str_slice(padded, start, strlen(padded) - start)
+    let end: i32 = str_index_of(rest, " ")
+    if end < 0 {
+        return rest
+    }
+    return str_slice(rest, 0, u32(end))
+}
+
+// project_word_listed is whether a space-separated list holds a word.
+fn project_word_listed(list: string, word: string) bool {
+    return word != "" && str_index_of(" " + list + " ", " " + word + " ") >= 0
+}
+
+// project_line_at is the line of a text that starts at `start`, without its
+// line break; project_line_next is where the line after it starts.
+fn project_line_at(text: string, start: u32) string {
+    let rest: string = str_slice(text, start, strlen(text) - start)
+    let at: i32 = str_index_of(rest, "\n")
+    if at < 0 {
+        return rest
+    }
+    return str_slice(rest, 0, u32(at))
+}
+
+fn project_line_next(text: string, start: u32) u32 {
+    let rest: string = str_slice(text, start, strlen(text) - start)
+    let at: i32 = str_index_of(rest, "\n")
+    if at < 0 {
+        return strlen(text)
+    }
+    return start + u32(at) + 1
+}
+
+fn project_digits(value: string) bool {
+    if value == "" {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(value) {
+        let c: string = str_slice(value, i, 1)
+        if c < "0" || c > "9" {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn project_lower_hex(value: string) bool {
+    var i: u32 = 0
+    while i < strlen(value) {
+        let c: string = str_slice(value, i, 1)
+        if !((c >= "0" && c <= "9") || (c >= "a" && c <= "f")) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// project_whole is a whole number written without a leading zero, between low
+// and high; false for anything else.
+fn project_whole(value: string, low: u32, high: u32) bool {
+    if !project_digits(value) || strlen(value) > 5 {
+        return false
+    }
+    if strlen(value) > 1 && str_slice(value, 0, 1) == "0" {
+        return false
+    }
+    let number: u32 = u32(int_from_str(value))
+    return number >= low && number <= high
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Classes of values                                                         */
+/* -------------------------------------------------------------------------- */
+
+// project_mesh_id_ok is whether a value can be a mesh id, and so a folder name
+// and a header value: letters, digits, `-`, `_` and `.`, at most 64, neither
+// starting with `.` nor holding `..` (MESH-XFER-0026).
+// @req MESH-XFER-0026
+fn project_mesh_id_ok(id: string) bool {
+    if id == "" || strlen(id) > 64 || str_slice(id, 0, 1) == "." || str_index_of(id, "..") >= 0 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(id) {
+        let c: string = str_slice(id, i, 1)
+        if !((c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "-" || c == "_" || c == ".") {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// project_text_ok is whether a value is one line of text: no control
+// character, at most 1024 bytes.
+fn project_text_ok(value: string) bool {
+    if strlen(value) > 1024 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(value) {
+        let b: u8 = str_at(value, i)
+        if b < 32 || b == 127 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn project_time_ok(value: string) bool {
+    if strlen(value) != 20 {
+        return false
+    }
+    let shape: string = "dddd-dd-ddTdd:dd:ddZ"
+    var i: u32 = 0
+    while i < 20 {
+        let want: string = str_slice(shape, i, 1)
+        let c: string = str_slice(value, i, 1)
+        if want == "d" {
+            if c < "0" || c > "9" {
+                return false
+            }
+        } else if c != want {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// project_value_ok is whether a value is of a class.
+// @req MESH-XFER-0006, MESH-XFER-0008
+fn project_value_ok(class: string, value: string) bool {
+    if class == "text" {
+        return project_text_ok(value)
+    }
+    if class == "format" {
+        return value == PROJECT_FORMAT
+    }
+    if class == "schema" {
+        return project_digits(value) && strlen(value) <= 9
+    }
+    if class == "time" {
+        return project_time_ok(value)
+    }
+    if class == "meshid" {
+        return project_mesh_id_ok(value)
+    }
+    if class == "meshidopt" {
+        return value == "" || project_mesh_id_ok(value)
+    }
+    if class == "meshids" {
+        if value == "" {
+            return true
+        }
+        var rest: string = value
+        while true {
+            let at: i32 = str_index_of(rest, " ")
+            var word: string = rest
+            if at >= 0 {
+                word = str_slice(rest, 0, u32(at))
+            }
+            if !project_mesh_id_ok(word) {
+                return false
+            }
+            if at < 0 {
+                return true
+            }
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+    }
+    if class == "area" || class == "port" || class == "number" {
+        return value == "" || project_whole(value, 1, 65535)
+    }
+    if class == "uid" {
+        return value == "" || (strlen(value) == 16 && project_lower_hex(value))
+    }
+    if class == "count" {
+        return project_whole(value, 0, PROJECT_MAX_NODES)
+    }
+    if class == "digits" {
+        return value == "" || (project_digits(value) && strlen(value) <= 9)
+    }
+    if class == "kind" {
+        return value == "" || value == "compute" || value == "module" || value == "device"
+    }
+    if class == "onoff" {
+        return value == "" || value == "on" || value == "off"
+    }
+    if class == "flag" {
+        return value == "" || value == "0" || value == "1"
+    }
+    if class == "parent" {
+        if value == "" || value == "gateway" {
+            return true
+        }
+        return str_index_of(value, "node.") == 0 && project_whole(str_slice(value, 5, strlen(value) - 5), 1, 99)
+    }
+    if class == "cipher" {
+        return value == "aes-256-gcm"
+    }
+    if class == "kdf" {
+        return value == "pbkdf2-hmac-sha256"
+    }
+    if class == "iterations" {
+        return value == "600000"
+    }
+    if class == "salt" {
+        return strlen(value) == 32 && project_lower_hex(value)
+    }
+    if class == "nonce" {
+        return strlen(value) == 24 && project_lower_hex(value)
+    }
+    if class == "hex" {
+        return value != "" && strlen(value) % 2 == 0 && project_lower_hex(value)
+    }
+    return false
+}
+
+// project_class_message says what a class takes, for a problem.
+fn project_class_message(class: string) string {
+    if class == "text" { return "must be one line of text, at most 1024 bytes, without control characters" }
+    if class == "format" { return "must be " + PROJECT_FORMAT }
+    if class == "schema" { return "must be a whole number" }
+    if class == "time" { return "must be a UTC time like 2026-11-19T10:00:00Z" }
+    if class == "meshid" || class == "meshidopt" { return "must be a mesh id: letters, digits, -, _ and ., not starting with . nor holding .." }
+    if class == "meshids" { return "must be mesh ids separated by spaces" }
+    if class == "area" { return "must be an area from 1 to 65535" }
+    if class == "port" { return "must be a port from 1 to 65535" }
+    if class == "number" { return "must be a node number from 1 to 65535" }
+    if class == "uid" { return "must be 16 lowercase hex digits" }
+    if class == "count" { return "must be a whole number from 0 to 64" }
+    if class == "digits" { return "must be a whole number" }
+    if class == "kind" { return "must be compute, module or device" }
+    if class == "onoff" { return "must be on or off" }
+    if class == "flag" { return "must be 0 or 1" }
+    if class == "parent" { return "must be gateway or node.<row>" }
+    if class == "salt" { return "must be 32 hex digits" }
+    if class == "nonce" { return "must be 24 hex digits" }
+    if class == "hex" { return "must be hex digits" }
+    return "is not what schema 1 takes there (" + class + ")"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Keys                                                                      */
+/* -------------------------------------------------------------------------- */
+
+// project_node_field is the field of a node key written with its row as a
+// number (`node.3.board` is "board"), or "" for any other key.
+fn project_node_field(key: string) string {
+    let row: u32 = plan_node_row(key)
+    if row == 0 || str_index_of(key, "node." + int_to_str(row) + ".") != 0 {
+        return ""
+    }
+    return plan_row_field(key)
+}
+
+// project_plan_class is the class of a key of the plan's definition, or "" for a
+// key that is not one (MESH-XFER-0002).
+// @req MESH-XFER-0002
+fn project_plan_class(key: string) string {
+    let field: string = project_node_field(key)
+    if field != "" {
+        return project_word_class(PROJECT_NODE_FIELDS, field)
+    }
+    if plan_node_row(key) > 0 {
+        return ""
+    }
+    return project_word_class(PROJECT_PLAN_KEYS, key)
+}
+
+// project_key_kind is what a key of a plan is: definition, secret, placement,
+// identity or runtime; "" for a key none of the lists names.
+// @req MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009
+fn project_key_kind(key: string) string {
+    if project_plan_class(key) != "" {
+        return "definition"
+    }
+    let field: string = project_node_field(key)
+    if field != "" {
+        if project_word_listed(PROJECT_SECRET_NODE_FIELDS, field) {
+            return "secret"
+        }
+        if project_word_listed(PROJECT_RUNTIME_NODE_FIELDS, field) {
+            return "runtime"
+        }
+        return ""
+    }
+    if project_word_listed(PROJECT_SECRET_KEYS, key) {
+        return "secret"
+    }
+    if project_word_listed(PROJECT_PLACEMENT_KEYS, key) {
+        return "placement"
+    }
+    if project_word_listed(PROJECT_IDENTITY_KEYS, key) {
+        return "identity"
+    }
+    if project_word_listed(PROJECT_RUNTIME_KEYS, key) {
+        return "runtime"
+    }
+    var rest: string = PROJECT_RUNTIME_PREFIXES
+    while rest != "" {
+        let at: i32 = str_index_of(rest, " ")
+        var prefix: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            prefix = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if str_index_of(key, prefix) == 0 {
+            return "runtime"
+        }
+    }
+    return ""
+}
+
+// project_omitted_ok is whether a name may be listed under `omitted.`.
+fn project_omitted_ok(name: string) bool {
+    if project_word_listed(PROJECT_OMITTED_KEYS, name) {
+        return true
+    }
+    return str_eq(project_node_field(name), "password") && plan_node_row(name) <= PROJECT_MAX_NODES
+}
+
+// project_key_class is the class of a key of a project file, or "" for a key
+// schema 1 does not have.
+// @req MESH-XFER-0001, MESH-XFER-0006
+fn project_key_class(key: string) string {
+    let own: string = project_word_class(PROJECT_FILE_KEYS, key)
+    if own != "" {
+        return own
+    }
+    if str_index_of(key, "plan.") == 0 {
+        return project_plan_class(str_slice(key, 5, strlen(key) - 5))
+    }
+    if str_index_of(key, "omitted.") == 0 && project_omitted_ok(str_slice(key, 8, strlen(key) - 8)) {
+        return "text"
+    }
+    return ""
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Export                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// project_definition_lines are a stored plan's definition keys, under `plan.`:
+// the allow-list (MESH-XFER-0002), so a runtime key, a secret or a key nobody
+// listed is never exported (MESH-XFER-0003, MESH-XFER-0009).
+// @req MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009
+fn project_definition_lines(stored: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(stored) {
+        let line: string = project_line_at(stored, at)
+        at = project_line_next(stored, at)
+        let key: string = plan_line_key(line)
+        if key != "" && project_plan_class(key) != "" {
+            out = out + "plan." + line + "\n"
+        }
+    }
+    return out
+}
+
+// project_password_lines are a stored plan's Wi-Fi passwords, under `plan.`:
+// what a sealed export seals beside the gateway key.
+// @req MESH-XFER-0010
+fn project_password_lines(stored: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(stored) {
+        let line: string = project_line_at(stored, at)
+        at = project_line_next(stored, at)
+        let key: string = plan_line_key(line)
+        if plan_line_value(line) != "" && (key == "password" || str_eq(project_node_field(key), "password")) {
+            out = out + "plan." + line + "\n"
+        }
+    }
+    return out
+}
+
+// project_omitted_lines name each secret an export leaves out, never its value
+// (MESH-XFER-0009): what the mesh has of a gateway key, relay key and signing key
+// (as the caller found them), its legacy token, and the Wi-Fi passwords, which a
+// sealed export carries instead.
+// @req MESH-XFER-0009
+fn project_omitted_lines(stored: string, has_key: bool, has_relay: bool, has_signing: bool, sealed: bool) string {
+    var out: string = ""
+    if has_key && !sealed {
+        out = out + "omitted.gateway_key=the gateway key every board's key derives from\n"
+    }
+    if has_relay {
+        out = out + "omitted.relay_key=the relay key, derived again from the parent mesh's key\n"
+    }
+    if has_signing {
+        out = out + "omitted.signing_key=the production signing key, a file of the machine\n"
+    }
+    if plan_value(stored, "gateway_token") != "" {
+        out = out + "omitted.gateway_token=the legacy gateway token\n"
+    }
+    if sealed {
+        return out
+    }
+    if plan_value(stored, "password") != "" {
+        out = out + "omitted.password=the Wi-Fi password of network " + plan_value(stored, "ssid") + "\n"
+    }
+    var at: u32 = 0
+    while at < strlen(stored) {
+        let line: string = project_line_at(stored, at)
+        at = project_line_next(stored, at)
+        let key: string = plan_line_key(line)
+        if plan_line_value(line) != "" && str_eq(project_node_field(key), "password") {
+            let row: string = int_to_str(plan_node_row(key))
+            var ssid: string = plan_value(stored, "node." + row + ".ssid")
+            if ssid == "" {
+                ssid = plan_value(stored, "ssid")
+            }
+            out = out + "omitted.node." + row + ".password=the Wi-Fi password of network " + ssid + "\n"
+        }
+    }
+    return out
+}
+
+// project_aad is what a sealed block is bound to: the file's format, schema,
+// mesh id and export time, so it cannot be moved into another file.
+// @req MESH-XFER-0010
+fn project_aad(schema: string, id: string, at: string) string {
+    return PROJECT_FORMAT + "|" + schema + "|" + id + "|" + at
+}
+
+fn project_two(value: u32) string {
+    if value < 10 {
+        return "0" + int_to_str(value)
+    }
+    return int_to_str(value)
+}
+
+// project_utc is a Unix time as a UTC time, `2026-11-19T10:00:00Z`.
+// @req MESH-XFER-0001
+fn project_utc(epoch: u32) string {
+    let days: u32 = epoch / 86400
+    let seconds: u32 = epoch % 86400
+    // Days to a civil date (Howard Hinnant's algorithm, for days since 1970).
+    let z: u32 = days + 719468
+    let era: u32 = z / 146097
+    let doe: u32 = z - era * 146097
+    let yoe: u32 = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    var year: u32 = yoe + era * 400
+    let doy: u32 = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp: u32 = (5 * doy + 2) / 153
+    let day: u32 = doy - (153 * mp + 2) / 5 + 1
+    var month: u32 = mp + 3
+    if mp >= 10 {
+        month = mp - 9
+    }
+    if month <= 2 {
+        year = year + 1
+    }
+    return int_to_str(year) + "-" + project_two(month) + "-" + project_two(day) + "T" +
+        project_two(seconds / 3600) + ":" + project_two((seconds % 3600) / 60) + ":" + project_two(seconds % 60) + "Z"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The YAML a file may be                                                    */
+/* -------------------------------------------------------------------------- */
+
+// project_is_json is whether a file is JSON: its first character that is not
+// white space is `{` (MESH-XFER-0004).
+// @req MESH-XFER-0004
+fn project_is_json(text: string) bool {
+    var i: u32 = 0
+    while i < strlen(text) {
+        let c: string = str_slice(text, i, 1)
+        if c != " " && c != "\t" && c != "\r" && c != "\n" {
+            return c == "{"
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// project_key_char is whether a character may be in a plain key.
+fn project_key_char(c: string) bool {
+    return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "-" || c == "_"
+}
+
+fn project_hex_char(c: string) bool {
+    return (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F")
+}
+
+// project_after_scalar is why what follows a quoted value is wrong, or "": it
+// may be nothing, or a comment after a space.
+fn project_after_scalar(rest: string) string {
+    let trimmed: string = str_trim(rest)
+    if trimmed == "" {
+        return ""
+    }
+    if str_slice(trimmed, 0, 1) == "#" && strlen(rest) > strlen(trimmed) {
+        return ""
+    }
+    return "text after the quoted value"
+}
+
+// project_value_problem is why a YAML value is not a scalar Mesh reads, or "".
+fn project_value_problem(value: string) string {
+    let first: string = str_slice(value, 0, 1)
+    if first == "\"" {
+        var i: u32 = 1
+        while i < strlen(value) {
+            let c: string = str_slice(value, i, 1)
+            if c == "\"" {
+                return project_after_scalar(str_slice(value, i + 1, strlen(value) - i - 1))
+            }
+            if c == "\\" {
+                let e: string = str_slice(value, i + 1, 1)
+                var digits: u32 = 0
+                if e == "x" {
+                    digits = 2
+                } else if e == "u" {
+                    digits = 4
+                } else if e == "U" {
+                    digits = 8
+                } else if str_index_of("\"\\abfnrtv", e) < 0 || e == "" {
+                    return "an escape in a quoted value that is not \\\" \\\\ \\n \\t \\r \\x \\u or \\U"
+                }
+                var d: u32 = 0
+                while d < digits {
+                    if !project_hex_char(str_slice(value, i + 2 + d, 1)) {
+                        return "an escape in a quoted value with too few hex digits"
+                    }
+                    d = d + 1
+                }
+                i = i + 2 + digits
+                continue
+            }
+            i = i + 1
+        }
+        return "a quoted value that is not closed on its line"
+    }
+    if first == "'" {
+        var i: u32 = 1
+        while i < strlen(value) {
+            if str_slice(value, i, 1) == "'" {
+                if str_slice(value, i + 1, 1) == "'" {
+                    i = i + 2
+                    continue
+                }
+                return project_after_scalar(str_slice(value, i + 1, strlen(value) - i - 1))
+            }
+            i = i + 1
+        }
+        return "a quoted value that is not closed on its line"
+    }
+    if first == "[" || first == "{" {
+        return "a list or map written inline is not allowed"
+    }
+    if first == "&" || first == "*" {
+        return "an anchor or alias is not allowed"
+    }
+    if first == "!" {
+        return "a tag is not allowed"
+    }
+    if first == "|" || first == ">" {
+        return "a value over several lines is not allowed"
+    }
+    if first == "%" || first == "@" || first == "`" {
+        return "a value may not start with " + first + " unless it is quoted"
+    }
+    if str_index_of(value, ": ") >= 0 || str_slice(value, strlen(value) - 1, 1) == ":" {
+        return "a value holds ': '; quote it"
+    }
+    if str_index_of(value, "\t") >= 0 {
+        return "a tab in a value; quote it"
+    }
+    return ""
+}
+
+// project_yaml_key is the key a YAML line starts with and what follows its
+// colon, as `key\nrest`, or `!why` for a line that is not a key.
+fn project_yaml_key(trimmed: string) string {
+    var key: string = ""
+    var after: u32 = 0
+    if str_slice(trimmed, 0, 1) == "\"" {
+        let close: i32 = str_index_of(str_slice(trimmed, 1, strlen(trimmed) - 1), "\"")
+        if close < 0 {
+            return "!a quoted key that is not closed"
+        }
+        key = str_slice(trimmed, 1, u32(close))
+        if str_index_of(key, "\\") >= 0 || key == "" || str_index_of(key, ".") >= 0 {
+            return "!a quoted key holds an escape, a dot or nothing"
+        }
+        after = u32(close) + 2
+        if str_slice(trimmed, after, 1) != ":" {
+            return "!a key is followed by ':'"
+        }
+    } else {
+        var i: u32 = 0
+        while i < strlen(trimmed) && project_key_char(str_slice(trimmed, i, 1)) {
+            i = i + 1
+        }
+        if i == 0 {
+            return "!not a key: a line is a key, a key and a value, a comment or blank"
+        }
+        if str_slice(trimmed, i, 1) != ":" {
+            if i < strlen(trimmed) && str_slice(trimmed, i, 1) != " " {
+                return "!a key holds only letters, digits, - and _ (or is quoted)"
+            }
+            return "!not a key: a line is a key, a key and a value, a comment or blank"
+        }
+        key = str_slice(trimmed, 0, i)
+        after = i
+    }
+    let rest: string = str_slice(trimmed, after + 1, strlen(trimmed) - after - 1)
+    if rest != "" && str_slice(rest, 0, 1) != " " {
+        return "!a key's colon is followed by a space before its value"
+    }
+    return key + "\n" + rest
+}
+
+// project_yaml_problems checks every line of a YAML project file against what
+// Mesh reads — nested maps of scalars — before the runtime's reader, which skips
+// a line it cannot place, sees it: each line is a key, a key and a value, a
+// comment or blank, or it is answered as `<line>|<why>` (MESH-XFER-0004).
+// @req MESH-XFER-0004, MESH-XFER-0008
+fn project_yaml_problems(text: string) string {
+    var out: string = ""
+    var found: u32 = 0
+    var levels: string = "0"
+    var opened: bool = false
+    var number: u32 = 0
+    var at: u32 = 0
+    while at < strlen(text) {
+        var line: string = project_line_at(text, at)
+        at = project_line_next(text, at)
+        number = number + 1
+        if strlen(line) > 0 && str_slice(line, strlen(line) - 1, 1) == "\r" {
+            line = str_slice(line, 0, strlen(line) - 1)
+        }
+        var indent: u32 = 0
+        while indent < strlen(line) && str_slice(line, indent, 1) == " " {
+            indent = indent + 1
+        }
+        let trimmed: string = str_slice(line, indent, strlen(line) - indent)
+        var why: string = ""
+        if str_trim(trimmed) == "" {
+            if str_index_of(line, "\t") >= 0 && str_trim(line) != "" {
+                why = "a tab where spaces indent"
+            } else {
+                continue
+            }
+        }
+        if why == "" && str_slice(trimmed, 0, 1) == "#" {
+            continue
+        }
+        if why == "" && str_slice(trimmed, 0, 1) == "\t" {
+            why = "a tab where spaces indent"
+        }
+        if why == "" && (trimmed == "-" || str_index_of(trimmed, "- ") == 0) {
+            why = "a list is not allowed; a project file holds maps of values"
+        }
+        if why == "" && (trimmed == "---" || trimmed == "...") {
+            why = "a document marker is not allowed"
+        }
+        var key_rest: string = ""
+        if why == "" {
+            key_rest = project_yaml_key(trimmed)
+            if str_slice(key_rest, 0, 1) == "!" {
+                why = str_slice(key_rest, 1, strlen(key_rest) - 1)
+            }
+        }
+        if why == "" {
+            // The indentation: a line deeper than its level is a child of the
+            // key just above it, and only of one that opened a map.
+            var top: u32 = project_level_top(levels)
+            if opened && indent > top {
+                levels = levels + "," + int_to_str(indent)
+                top = indent
+            }
+            var popped: bool = false
+            while indent < top && str_index_of(levels, ",") >= 0 {
+                levels = project_level_pop(levels)
+                top = project_level_top(levels)
+                popped = true
+            }
+            if indent != top {
+                if indent > top && !popped {
+                    why = "indented under a value; only a key without a value opens a map"
+                } else {
+                    why = "the indentation matches no key above it"
+                }
+            }
+        }
+        if why == "" {
+            let rest: string = str_trim(str_slice(key_rest, u32(str_index_of(key_rest, "\n")) + 1,
+                strlen(key_rest) - u32(str_index_of(key_rest, "\n")) - 1))
+            opened = rest == "" || str_slice(rest, 0, 1) == "#"
+            if !opened {
+                why = project_value_problem(rest)
+            }
+        } else {
+            opened = false
+        }
+        if why != "" {
+            found = found + 1
+            if found <= PROJECT_PROBLEMS_SHOWN {
+                out = out + int_to_str(number) + "|" + why + "\n"
+            }
+        }
+    }
+    if found > PROJECT_PROBLEMS_SHOWN {
+        out = out + "0|and " + int_to_str(found - PROJECT_PROBLEMS_SHOWN) + " more lines like these\n"
+    }
+    return out
+}
+
+fn project_level_top(levels: string) u32 {
+    var last: u32 = 0
+    var i: u32 = 0
+    while i < strlen(levels) {
+        if str_slice(levels, i, 1) == "," {
+            last = i + 1
+        }
+        i = i + 1
+    }
+    return u32(int_from_str(str_slice(levels, last, strlen(levels) - last)))
+}
+
+fn project_level_pop(levels: string) string {
+    var last: i32 = -1
+    var i: u32 = 0
+    while i < strlen(levels) {
+        if str_slice(levels, i, 1) == "," {
+            last = i32(i)
+        }
+        i = i + 1
+    }
+    if last < 0 {
+        return levels
+    }
+    return str_slice(levels, 0, u32(last))
+}
+
+// project_yaml_line_of is the line a key's value is on in a YAML file that
+// passed the line check, so a problem with a value names its line; 0 when the
+// key is not there.
+// @req MESH-XFER-0008
+fn project_yaml_line_of(text: string, path: string) u32 {
+    // The open maps, as `indent key` lines, innermost last.
+    var stack: string = ""
+    var number: u32 = 0
+    var at: u32 = 0
+    while at < strlen(text) {
+        var line: string = project_line_at(text, at)
+        at = project_line_next(text, at)
+        number = number + 1
+        if strlen(line) > 0 && str_slice(line, strlen(line) - 1, 1) == "\r" {
+            line = str_slice(line, 0, strlen(line) - 1)
+        }
+        var indent: u32 = 0
+        while indent < strlen(line) && str_slice(line, indent, 1) == " " {
+            indent = indent + 1
+        }
+        let trimmed: string = str_slice(line, indent, strlen(line) - indent)
+        if str_trim(trimmed) == "" || str_slice(trimmed, 0, 1) == "#" {
+            continue
+        }
+        let key_rest: string = project_yaml_key(trimmed)
+        if str_slice(key_rest, 0, 1) == "!" {
+            continue
+        }
+        let split: u32 = u32(str_index_of(key_rest, "\n"))
+        let key: string = str_slice(key_rest, 0, split)
+        let rest: string = str_trim(str_slice(key_rest, split + 1, strlen(key_rest) - split - 1))
+        // Close the maps this line is not inside.
+        while stack != "" && project_stack_indent(stack) >= indent {
+            stack = project_stack_pop(stack)
+        }
+        var prefix: string = project_stack_path(stack)
+        var full: string = key
+        if key == "_" {
+            full = prefix
+        } else if prefix != "" {
+            full = prefix + "." + key
+        }
+        if rest == "" || str_slice(rest, 0, 1) == "#" {
+            stack = stack + int_to_str(indent) + " " + key + "\n"
+        } else if full == path {
+            return number
+        }
+    }
+    return 0
+}
+
+fn project_stack_indent(stack: string) u32 {
+    let last: string = project_stack_last(stack)
+    return u32(int_from_str(str_slice(last, 0, u32(str_index_of(last, " ")))))
+}
+
+fn project_stack_last(stack: string) string {
+    let body: string = str_slice(stack, 0, strlen(stack) - 1)
+    var start: u32 = 0
+    var i: u32 = 0
+    while i < strlen(body) {
+        if str_slice(body, i, 1) == "\n" {
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return str_slice(body, start, strlen(body) - start)
+}
+
+fn project_stack_pop(stack: string) string {
+    let last: string = project_stack_last(stack)
+    return str_slice(stack, 0, strlen(stack) - strlen(last) - 1)
+}
+
+fn project_stack_path(stack: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(stack) {
+        let entry: string = project_line_at(stack, at)
+        at = project_line_next(stack, at)
+        let space: i32 = str_index_of(entry, " ")
+        if space < 0 {
+            continue
+        }
+        let key: string = str_slice(entry, u32(space) + 1, strlen(entry) - u32(space) - 1)
+        if key == "_" {
+            continue
+        }
+        if out != "" {
+            out = out + "."
+        }
+        out = out + key
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Schema versions                                                           */
+/* -------------------------------------------------------------------------- */
+
+// project_format_problem is the problem with a file's `format`, or "": missing
+// or not a Mesh project file (MESH-XFER-0001).
+// @req MESH-XFER-0001
+fn project_format_problem(flat: string) string {
+    let format: string = plan_value(flat, "format")
+    if format == "" {
+        return "format|missing: this is not a RoboHub Mesh project file (format: " + PROJECT_FORMAT + ")"
+    }
+    if format != PROJECT_FORMAT {
+        return "format|is " + format + ", not " + PROJECT_FORMAT + ": this is not a RoboHub Mesh project file"
+    }
+    return ""
+}
+
+// project_schema_problem is why a file's schema cannot be read by a Mesh of
+// schema `own`, or "": missing, not a number, one Mesh never wrote, or newer than
+// its own, naming the file's schema, its own and the Mesh that wrote the file
+// (MESH-XFER-0007).
+// @req MESH-XFER-0007
+fn project_schema_problem(flat: string, own: u32) string {
+    let text: string = plan_value(flat, "schema")
+    if text == "" {
+        return "schema|missing: a project file says which schema it follows"
+    }
+    if !project_digits(text) || strlen(text) > 9 {
+        return "schema|must be a whole number"
+    }
+    let schema: u32 = u32(int_from_str(text))
+    var by: string = plan_value(flat, "exported.by")
+    if by == "" {
+        by = "an unknown Mesh"
+    }
+    if schema > own {
+        return "schema|the file follows schema " + text + ", written by " + by +
+            "; this Mesh reads schema " + int_to_str(own) + " and older: import it with a newer Mesh"
+    }
+    if schema < 1 {
+        return "schema|schema " + text + " was never written by a Mesh"
+    }
+    return ""
+}
+
+// project_migrate_with carries a file of schema `from` forward to `own` by the
+// renames in `steps` (`<from>:<old>><new>` words, as PROJECT_MIGRATIONS), one
+// schema at a time, and says the file is now of schema `own`.
+// @req MESH-XFER-0007
+fn project_migrate_with(flat: string, from: u32, own: u32, steps: string) string {
+    var text: string = flat
+    var schema: u32 = from
+    while schema < own {
+        var rest: string = steps
+        while rest != "" {
+            let at: i32 = str_index_of(rest, " ")
+            var rule: string = rest
+            if at < 0 {
+                rest = ""
+            } else {
+                rule = str_slice(rest, 0, u32(at))
+                rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+            }
+            let head: string = int_to_str(schema) + ":"
+            let arrow: i32 = str_index_of(rule, ">")
+            if str_index_of(rule, head) != 0 || arrow < 0 {
+                continue
+            }
+            let old: string = str_slice(rule, strlen(head), u32(arrow) - strlen(head))
+            let renamed: string = str_slice(rule, u32(arrow) + 1, strlen(rule) - u32(arrow) - 1)
+            text = project_rename_key(text, old, renamed)
+        }
+        schema = schema + 1
+    }
+    return "schema=" + int_to_str(own) + "\n" + plan_without(text, "schema")
+}
+
+// project_migrate carries a file forward by the renames Mesh has made.
+fn project_migrate(flat: string, from: u32) string {
+    return project_migrate_with(flat, from, PROJECT_SCHEMA, PROJECT_MIGRATIONS)
+}
+
+// project_rename_key renames a key, and every key under it, or drops them when
+// the new name is "".
+fn project_rename_key(text: string, old: string, renamed: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(text) {
+        let line: string = project_line_at(text, at)
+        at = project_line_next(text, at)
+        let key: string = plan_line_key(line)
+        if key == old || str_index_of(key, old + ".") == 0 {
+            if renamed != "" {
+                out = out + renamed + str_slice(line, strlen(old), strlen(line) - strlen(old)) + "\n"
+            }
+            continue
+        }
+        if line != "" {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Every problem                                                             */
+/* -------------------------------------------------------------------------- */
+
+// project_plan_of is the `plan.` keys of a file as a plan's flat text.
+fn project_plan_of(flat: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(flat) {
+        let line: string = project_line_at(flat, at)
+        at = project_line_next(flat, at)
+        if str_index_of(line, "plan.") == 0 && project_plan_class(plan_line_key(str_slice(line, 5, strlen(line) - 5))) != "" {
+            out = out + str_slice(line, 5, strlen(line) - 5) + "\n"
+        }
+    }
+    return out
+}
+
+// project_lines_with are the lines of a text whose key starts with a prefix,
+// the prefix taken off.
+fn project_lines_with(flat: string, prefix: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(flat) {
+        let line: string = project_line_at(flat, at)
+        at = project_line_next(flat, at)
+        if str_index_of(line, prefix) == 0 {
+            out = out + str_slice(line, strlen(prefix), strlen(line) - strlen(prefix)) + "\n"
+        }
+    }
+    return out
+}
+
+// project_problems are every problem of a file's flat lines, as `<key>|<why>`
+// lines (MESH-XFER-0008): a key schema 1 does not have or given twice, a value
+// outside its class, a node row past the count, two nodes with one number or one
+// id, a parent, module board or link that names no node, a ring of parents, a
+// second gateway, more than 64 nodes, and a sealed block that is not whole.
+// Nothing is written while there is one.
+// @req MESH-XFER-0008, MESH-0027
+fn project_problems(flat: string) string {
+    var out: string = ""
+    var found: u32 = 0
+    var seen: string = "|"
+    var plan: string = ""
+    var sealed: bool = false
+    var at: u32 = 0
+    while at < strlen(flat) {
+        let line: string = project_line_at(flat, at)
+        at = project_line_next(flat, at)
+        if line == "" {
+            continue
+        }
+        let key: string = plan_line_key(line)
+        var why: string = ""
+        var where: string = key
+        if key == "" {
+            where = "(file)"
+            why = "a line that is not a key and a value"
+        } else {
+            let class: string = project_key_class(key)
+            if class == "" {
+                why = "not a key of schema " + int_to_str(PROJECT_SCHEMA)
+            } else if str_index_of(seen, "|" + key + "|") >= 0 {
+                why = "the key is given twice"
+            } else {
+                seen = seen + key + "|"
+                let value: string = plan_line_value(line)
+                if class != "format" && !project_value_ok(class, value) {
+                    why = project_class_message(class)
+                }
+                if str_index_of(key, "plan.") == 0 {
+                    plan = plan + str_slice(line, 5, strlen(line) - 5) + "\n"
+                }
+                if str_index_of(key, "sealed.") == 0 {
+                    sealed = true
+                }
+            }
+        }
+        if why != "" {
+            found = found + 1
+            if found <= PROJECT_PROBLEMS_SHOWN {
+                out = out + where + "|" + why + "\n"
+            }
+        }
+    }
+    let structure: string = project_structure_problems(plan, flat, sealed)
+    var rest: string = structure
+    while rest != "" {
+        let line: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        found = found + 1
+        if found <= PROJECT_PROBLEMS_SHOWN {
+            out = out + line + "\n"
+        }
+    }
+    if found > PROJECT_PROBLEMS_SHOWN {
+        out = out + "(file)|and " + int_to_str(found - PROJECT_PROBLEMS_SHOWN) + " more problems like these\n"
+    }
+    return out
+}
+
+// project_row_of_number finds the row a node number is at in a `|number=row|`
+// table, or 0.
+fn project_row_of_number(table: string, number: string) u32 {
+    return u32(int_from_str(plan_lookup(table, number)))
+}
+
+// project_parent_row is the row a node's parent is, 0 for the gateway or none.
+fn project_parent_row(plan: string, numbers: string, row: u32) u32 {
+    let prefix: string = "node." + int_to_str(row) + "."
+    let by_number: string = plan_value(plan, prefix + "parent_node")
+    if by_number != "" {
+        return project_row_of_number(numbers, by_number)
+    }
+    let parent: string = plan_value(plan, prefix + "parent")
+    if str_index_of(parent, "node.") == 0 {
+        return u32(int_from_str(str_slice(parent, 5, strlen(parent) - 5)))
+    }
+    return 0
+}
+
+// project_structure_problems are the problems of a file's plan as a whole.
+fn project_structure_problems(plan: string, flat: string, sealed: bool) string {
+    var out: string = ""
+    if str_index_of("\n" + flat, "\nmesh.id=") < 0 {
+        out = out + "mesh.id|missing: a project file names its mesh\n"
+    }
+    let count_text: string = plan_value(plan, "node.count")
+    var count: u32 = u32(int_from_str(count_text))
+    if count_text != "" && project_digits(count_text) && (strlen(count_text) > 5 || count > PROJECT_MAX_NODES) {
+        out = out + "plan.node.count|more than " + int_to_str(PROJECT_MAX_NODES) + " nodes: a mesh has at most " +
+            int_to_str(PROJECT_MAX_NODES) + "\n"
+        count = PROJECT_MAX_NODES
+    }
+    // Rows past the count, once each.
+    var past: string = "|"
+    var at: u32 = 0
+    while at < strlen(plan) {
+        let line: string = project_line_at(plan, at)
+        at = project_line_next(plan, at)
+        let row: u32 = plan_node_row(plan_line_key(line))
+        if row > count && str_index_of(past, "|" + int_to_str(row) + "|") < 0 {
+            past = past + int_to_str(row) + "|"
+            out = out + "plan.node." + int_to_str(row) + "|names node row " + int_to_str(row) + ", but node.count is " +
+                int_to_str(count) + "\n"
+        }
+    }
+    // Numbers and ids, each held by one node.
+    var numbers: string = "|"
+    var ids: string = "|"
+    var gateways: u32 = 0
+    var row: u32 = 1
+    while row <= count {
+        let prefix: string = "node." + int_to_str(row) + "."
+        let number: string = plan_value(plan, prefix + "number")
+        if number != "" {
+            if plan_lookup(numbers, number) != "" {
+                out = out + "plan." + prefix + "number|node number " + number + " is also node row " +
+                    plan_lookup(numbers, number) + "'s\n"
+            } else {
+                numbers = numbers + number + "=" + int_to_str(row) + "|"
+            }
+        }
+        var id: string = plan_value(plan, prefix + "id")
+        if id == "" {
+            id = plan_value(plan, prefix + "uid")
+        }
+        if id != "" {
+            if plan_lookup(ids, id) != "" {
+                out = out + "plan." + prefix + "id|node id " + id + " is also node row " + plan_lookup(ids, id) + "'s\n"
+            } else {
+                ids = ids + id + "=" + int_to_str(row) + "|"
+            }
+        }
+        if plan_value(plan, prefix + "role") == "gateway" {
+            gateways = gateways + 1
+            if gateways == 2 {
+                out = out + "plan." + prefix + "role|a second gateway: a mesh has one\n"
+            }
+        }
+        row = row + 1
+    }
+    // Every parent is a node, and no chain of parents comes back to itself.
+    row = 1
+    while row <= count {
+        let prefix: string = "node." + int_to_str(row) + "."
+        let kind: string = plan_value(plan, prefix + "kind")
+        let by_number: string = plan_value(plan, prefix + "parent_node")
+        let parent: string = plan_value(plan, prefix + "parent")
+        var what: string = "its parent"
+        if kind == "module" {
+            what = "the board of this module"
+        }
+        if by_number != "" && project_row_of_number(numbers, by_number) == 0 {
+            out = out + "plan." + prefix + "parent_node|" + what + " is node number " + by_number + ", which is no node\n"
+        } else if str_index_of(parent, "node.") == 0 && project_value_ok("parent", parent) &&
+            u32(int_from_str(str_slice(parent, 5, strlen(parent) - 5))) > count {
+            out = out + "plan." + prefix + "parent|" + what + " is " + parent + ", which is no node\n"
+        } else if by_number == "" && parent == "" && plan_value(plan, prefix + "link") != "" {
+            out = out + "plan." + prefix + "link|the link reaches no node: the node names no parent\n"
+        } else if by_number == "" && parent == "" && kind == "module" {
+            out = out + "plan." + prefix + "parent_node|a module names the board it sits on\n"
+        }
+        var walk: u32 = project_parent_row(plan, numbers, row)
+        var steps: u32 = 0
+        while walk > 0 && walk <= count && steps <= count {
+            if walk == row {
+                out = out + "plan." + prefix + "parent_node|the parents make a ring through node row " + int_to_str(row) + "\n"
+                break
+            }
+            walk = project_parent_row(plan, numbers, walk)
+            steps = steps + 1
+        }
+        row = row + 1
+    }
+    if sealed {
+        var keys: string = "cipher kdf iterations salt nonce data"
+        while keys != "" {
+            let space: i32 = str_index_of(keys, " ")
+            var key: string = keys
+            if space < 0 {
+                keys = ""
+            } else {
+                key = str_slice(keys, 0, u32(space))
+                keys = str_slice(keys, u32(space) + 1, strlen(keys) - u32(space) - 1)
+            }
+            if str_index_of("\n" + flat, "\nsealed." + key + "=") < 0 {
+                out = out + "sealed." + key + "|missing: a sealed block names its cipher, kdf, iterations, salt, nonce and data\n"
+            }
+        }
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Decisions an import makes                                                 */
+/* -------------------------------------------------------------------------- */
+
+// project_mode_ok is whether a mode is one an import has.
+fn project_mode_ok(mode: string) bool {
+    return mode == "new" || mode == "copy" || mode == "overwrite"
+}
+
+// project_choose_id is the id a mesh imported as new is created under: the
+// file's, when no mesh here has it, otherwise one made from the name
+// (MESH-XFER-0014).
+// @req MESH-XFER-0014, MESH-XFER-0018
+fn project_choose_id(file_id: string, file_id_taken: bool, name_id: string) string {
+    if !file_id_taken && project_mesh_id_ok(file_id) {
+        return file_id
+    }
+    return name_id
+}
+
+// project_keep_deployed is whether a mesh imported as new keeps the file's
+// record of what its boards run: only with the sealed gateway key, the file's
+// area and uplink port and every node's number and id all kept
+// (MESH-XFER-0017).
+// @req MESH-XFER-0017
+fn project_keep_deployed(mode: string, key_kept: bool, area_kept: bool, uplink_kept: bool, identity_kept: bool) bool {
+    return mode == "new" && key_kept && area_kept && uplink_kept && identity_kept
+}
+
+// project_identity_conflicts are the conflicts that refuse an import with the
+// file's identity (new or overwrite) and offer a copy (MESH-XFER-0018): node ids
+// another mesh here has (`ids_elsewhere`, `id mesh` lines) and, for a new mesh,
+// a sealed gateway key another mesh here uses. A copy takes no identity and has
+// none of them.
+// @req MESH-XFER-0018
+fn project_identity_conflicts(mode: string, ids_elsewhere: string, key_elsewhere: string) string {
+    if mode == "copy" {
+        return ""
+    }
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(ids_elsewhere) {
+        let line: string = project_line_at(ids_elsewhere, at)
+        at = project_line_next(ids_elsewhere, at)
+        let space: i32 = str_index_of(line, " ")
+        if space <= 0 {
+            continue
+        }
+        out = out + "node-id|node id " + str_slice(line, 0, u32(space)) + " is a board of mesh " +
+            str_slice(line, u32(space) + 1, strlen(line) - u32(space) - 1) + " here; import the file as a copy\n"
+    }
+    if mode == "new" && key_elsewhere != "" {
+        out = out + "gateway-key|the sealed gateway key is mesh " + key_elsewhere + "'s here; import the file as a copy\n"
+    }
+    return out
+}
+
+// project_place_choice is what a mesh is placed at: the file's value when no
+// other mesh here has it, otherwise what the fleet assigns (MESH-XFER-0018).
+// @req MESH-XFER-0018
+fn project_place_choice(wanted: string, taken: bool, assigned: string) string {
+    if wanted != "" && !taken {
+        return wanted
+    }
+    return assigned
+}
+
+// project_same_definition is whether two plans' definitions are the same set of
+// keys and values, a key with no value counted as absent (MESH-XFER-0023).
+// @req MESH-XFER-0023
+fn project_same_definition(a: string, b: string) bool {
+    let left: string = project_nonempty_lines(project_definition_lines(a))
+    let right: string = project_nonempty_lines(project_definition_lines(b))
+    if strlen(left) != strlen(right) {
+        return false
+    }
+    let haystack: string = "\n" + right
+    var at: u32 = 0
+    while at < strlen(left) {
+        let line: string = project_line_at(left, at)
+        at = project_line_next(left, at)
+        if str_index_of(haystack, "\n" + line + "\n") < 0 {
+            return false
+        }
+    }
+    return true
+}
+
+fn project_nonempty_lines(text: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(text) {
+        let line: string = project_line_at(text, at)
+        at = project_line_next(text, at)
+        if plan_line_value(line) != "" {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+// project_node_key is how a node is known across two plans: its id, or its
+// number when it has none.
+fn project_node_key(plan: string, row: u32) string {
+    let prefix: string = "node." + int_to_str(row) + "."
+    let id: string = plan_value(plan, prefix + "id")
+    if id != "" {
+        return id
+    }
+    return "#" + plan_value(plan, prefix + "number")
+}
+
+fn project_node_row_by_key(plan: string, key: string) u32 {
+    let count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        if project_node_key(plan, row) == key {
+            return row
+        }
+        row = row + 1
+    }
+    return 0
+}
+
+// project_row_fields are a node's definition fields with a value, `field=value`.
+fn project_row_fields(plan: string, row: u32) string {
+    let prefix: string = "node." + int_to_str(row) + "."
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(plan) {
+        let line: string = project_line_at(plan, at)
+        at = project_line_next(plan, at)
+        if str_index_of(line, prefix) == 0 && plan_line_value(line) != "" && project_plan_class(plan_line_key(line)) != "" {
+            out = out + str_slice(line, strlen(prefix), strlen(line) - strlen(prefix)) + "\n"
+        }
+    }
+    return out
+}
+
+fn project_same_lines(a: string, b: string) bool {
+    if strlen(a) != strlen(b) {
+        return false
+    }
+    let haystack: string = "\n" + b
+    var at: u32 = 0
+    while at < strlen(a) {
+        let line: string = project_line_at(a, at)
+        at = project_line_next(a, at)
+        if str_index_of(haystack, "\n" + line + "\n") < 0 {
+            return false
+        }
+    }
+    return true
+}
+
+// project_node_changes are the nodes an import adds, changes and removes, as
+// `added|<key>|<name>`, `changed|...` and `removed|...` lines, a node known by
+// its id (MESH-XFER-0020). Both plans are stored text.
+// @req MESH-XFER-0020
+fn project_node_changes(before: string, after: string) string {
+    var out: string = ""
+    let count: u32 = u32(int_from_str(plan_value(after, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        let key: string = project_node_key(after, row)
+        let name: string = plan_value(after, "node." + int_to_str(row) + ".name")
+        let old: u32 = project_node_row_by_key(before, key)
+        if old == 0 {
+            out = out + "added|" + key + "|" + name + "\n"
+        } else if !project_same_lines(project_row_fields(before, old), project_row_fields(after, row)) {
+            out = out + "changed|" + key + "|" + name + "\n"
+        }
+        row = row + 1
+    }
+    let old_count: u32 = u32(int_from_str(plan_value(before, "node.count")))
+    row = 1
+    while row <= old_count && row <= PROJECT_MAX_NODES {
+        let key: string = project_node_key(before, row)
+        if project_node_row_by_key(after, key) == 0 {
+            out = out + "removed|" + key + "|" + plan_value(before, "node." + int_to_str(row) + ".name") + "\n"
+        }
+        row = row + 1
+    }
+    return out
+}
+
+// project_manifest_changes are what a new node manifest does to the boards a
+// gateway admits, compared with the one it replaces: `admits <uid>`, `refuses
+// <uid>` (no longer planned) and `revokes <uid>` lines (MESH-XFER-0022).
+// @req MESH-XFER-0022
+fn project_manifest_changes(before: string, after: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(after) {
+        let line: string = project_line_at(after, at)
+        at = project_line_next(after, at)
+        let bar: i32 = str_index_of(line, "|")
+        if bar <= 0 || str_slice(line, 0, 1) == "#" {
+            continue
+        }
+        let uid: string = str_slice(line, 0, u32(bar))
+        let old: string = manifest_find(before, uid)
+        let revoked: bool = str_field(line, "|", 5) == "1"
+        if old == "" {
+            if revoked {
+                out = out + "revokes " + uid + "\n"
+            } else {
+                out = out + "admits " + uid + "\n"
+            }
+        } else if str_field(old, "|", 5) != str_field(line, "|", 5) {
+            if revoked {
+                out = out + "revokes " + uid + "\n"
+            } else {
+                out = out + "admits " + uid + "\n"
+            }
+        } else if old != line {
+            out = out + "admits " + uid + "\n"
+        }
+    }
+    at = 0
+    while at < strlen(before) {
+        let line: string = project_line_at(before, at)
+        at = project_line_next(before, at)
+        let bar: i32 = str_index_of(line, "|")
+        if bar <= 0 || str_slice(line, 0, 1) == "#" {
+            continue
+        }
+        let uid: string = str_slice(line, 0, u32(bar))
+        if manifest_find(after, uid) == "" {
+            out = out + "refuses " + uid + "\n"
+        }
+    }
+    return out
+}

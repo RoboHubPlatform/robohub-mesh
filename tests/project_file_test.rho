@@ -1,0 +1,412 @@
+//
+// @file project_file_test.rho
+// @brief The unit tests of the project file's rules: the allow-list, the YAML line check, the classes, schema versions, problems and the import's decisions.
+//
+// @module mesh.project_file_test
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.project_file_test
+
+include "../src/mesh/domain/plan_text.rho"
+include "../src/mesh/domain/manifest.rho"
+include "../src/mesh/domain/project_file.rho"
+
+// The project file's rules (src/mesh/domain/project_file.rho) without a running
+// Mesh: what an export carries and leaves out, the line check a YAML file passes,
+// the class of every value, older and newer schemas, every problem a file can
+// have, and the decisions an import makes about ids, places, deployed records,
+// conflicts and an overwrite that changes nothing.
+
+extern fn abort()
+
+fn check(condition: bool, what: string) void {
+    if !condition {
+        print("FAIL: " + what + "\n")
+        abort()
+    }
+}
+
+fn has(text: string, part: string) bool {
+    return str_index_of(text, part) >= 0
+}
+
+// A plan as plan.yml holds one: definition, runtime state, placement, identity
+// and secrets side by side.
+const SAMPLE_PLAN: string = "revision=7\nupdated=1795082400\nproject.name=Garden\nproject.description=Back garden\narea_id=3\nrest_port=8081\nuplink_port=5002\ngateway=native\ngateway_host=127.0.0.1\ngateway_serial=/dev/ttyACM0\ngateway_tls_cert=/etc/mesh/cert.pem\nrelay_uid=0011223344556677\nmesh_parent=north\npassword=meshwide-secret\nssid=HomeNet\ngateway_token=legacy-token\ntelemetry_retention_days=30\nstatus.gateway=running\nstatus.node.1=programmed\nmessage.build=done\nstep_build=done\ncurrent_step=build\nfault.last_id=4\nnode.count=2\nnode.next_number=3\nnode.1.number=1\nnode.1.id=0123456789abcdef\nnode.1.name=Pump board\nnode.1.board=pico2w\nnode.1.parent=gateway\nnode.1.link=wifi\nnode.1.ssid=GardenNet\nnode.1.password=node-secret\nnode.1.rev=5\nnode.1.epoch=2\nnode.1.revoked=0\nnode.1.production=on\nnode.2.number=2\nnode.2.id=fedcba9876543210\nnode.2.kind=device\nnode.2.name=Plug\nnode.2.device=shelly-plug\nnode.2.parent_node=1\nnode.2.state=on\nnode.2.last_value=12.5\nnode.2.last_checked=1795082400\n"
+
+/* -------------------------------------------------------------------------- */
+/*  What an export carries                                                    */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-XFER-0002, MESH-XFER-0003, MESH-0025
+test fn an_export_carries_the_definition_and_nothing_else() void {
+    let lines: string = project_definition_lines(SAMPLE_PLAN)
+    check(has(lines, "plan.gateway=native\n"), "the gateway's role is carried")
+    check(has(lines, "plan.gateway_serial=/dev/ttyACM0\n"), "the gateway's serial device is carried")
+    check(has(lines, "plan.gateway_tls_cert=/etc/mesh/cert.pem\n"), "the TLS file paths are carried")
+    check(has(lines, "plan.relay_uid=0011223344556677\n"), "the relay id is carried")
+    check(has(lines, "plan.mesh_parent=north\n"), "the mesh it reports through is carried")
+    check(has(lines, "plan.telemetry_retention_days=30\n"), "the telemetry retention is carried")
+    check(has(lines, "plan.node.count=2\n") && has(lines, "plan.node.next_number=3\n"), "the count and the counter are carried")
+    check(has(lines, "plan.node.1.id=0123456789abcdef\n") && has(lines, "plan.node.1.number=1\n"), "a node's id and number are carried")
+    check(has(lines, "plan.node.1.ssid=GardenNet\n"), "a Wi-Fi network's name is carried")
+    check(has(lines, "plan.node.1.epoch=2\n") && has(lines, "plan.node.1.revoked=0\n") && has(lines, "plan.node.1.production=on\n"),
+        "a board's key epoch, revocation and production setting are carried")
+    check(has(lines, "plan.node.2.device=shelly-plug\n") && has(lines, "plan.node.2.parent_node=1\n"), "a device and its parent are carried")
+    check(!has(lines, "revision") && !has(lines, "updated"), "no revision or update time")
+    check(!has(lines, "status.") && !has(lines, "message.") && !has(lines, "step_") && !has(lines, "current_step") && !has(lines, "fault."),
+        "no steps, status, message or fault cursor")
+    check(!has(lines, ".rev=") && !has(lines, ".state=") && !has(lines, ".last_value=") && !has(lines, ".last_checked="),
+        "no node edit revision, device state, last value or poll time")
+    check(!has(lines, "secret") && !has(lines, "password") && !has(lines, "legacy-token"), "no password and no token")
+    check(!has(lines, "area_id") && !has(lines, "rest_port") && !has(lines, "uplink_port") && !has(lines, "project."),
+        "placement and identity are the file's mesh.* keys, not plan keys")
+    print("[PASS] an_export_carries_the_definition_and_nothing_else\n")
+}
+
+// @verifies MESH-XFER-0002, MESH-XFER-0003
+test fn every_key_of_a_plan_has_a_kind() void {
+    check(project_key_kind("node.3.board") == "definition", "a node's board is definition")
+    check(project_key_kind("gateway_tls_key") == "definition", "a TLS path is definition")
+    check(project_key_kind("password") == "secret" && project_key_kind("node.3.password") == "secret", "passwords are secrets")
+    check(project_key_kind("gateway_token") == "secret", "the legacy token is a secret")
+    check(project_key_kind("area_id") == "placement" && project_key_kind("uplink_port") == "placement", "area and ports are placement")
+    check(project_key_kind("project.name") == "identity", "the name is identity")
+    check(project_key_kind("revision") == "runtime" && project_key_kind("status.node.4") == "runtime" &&
+        project_key_kind("node.2.last_checked") == "runtime" && project_key_kind("step_verify") == "runtime" &&
+        project_key_kind("import.wifi_needed") == "runtime", "runtime keys are runtime")
+    check(project_key_kind("node.3.frobnicate") == "" && project_key_kind("gateway_colour") == "",
+        "a key nobody listed has no kind, so a test of real plans finds it")
+    print("[PASS] every_key_of_a_plan_has_a_kind\n")
+}
+
+// @verifies MESH-XFER-0009, MESH-0026
+test fn an_export_lists_the_secrets_it_left_out_by_name() void {
+    let omitted: string = project_omitted_lines(SAMPLE_PLAN, true, true, true, false)
+    check(has(omitted, "omitted.gateway_key="), "the gateway key is listed")
+    check(has(omitted, "omitted.relay_key="), "the relay key is listed")
+    check(has(omitted, "omitted.signing_key="), "the signing key is listed")
+    check(has(omitted, "omitted.gateway_token="), "the legacy token is listed")
+    check(has(omitted, "omitted.password=the Wi-Fi password of network HomeNet\n"), "the mesh-wide Wi-Fi password is listed with its network")
+    check(has(omitted, "omitted.node.1.password=the Wi-Fi password of network GardenNet\n"), "a board's Wi-Fi password is listed with its network")
+    check(!has(omitted, "secret") && !has(omitted, "legacy-token"), "no value is listed")
+    let sealed: string = project_omitted_lines(SAMPLE_PLAN, true, true, true, true)
+    check(!has(sealed, "omitted.gateway_key") && !has(sealed, "password"), "a sealed export carries the key and the passwords, so does not list them")
+    check(has(sealed, "omitted.relay_key") && has(sealed, "omitted.signing_key"), "the relay key and the signing key are never exported")
+    let nothing: string = project_omitted_lines("node.count=0\n", false, false, false, false)
+    check(nothing == "", "a mesh without secrets lists none")
+    print("[PASS] an_export_lists_the_secrets_it_left_out_by_name\n")
+}
+
+// @verifies MESH-XFER-0010
+test fn a_sealed_export_seals_the_passwords_bound_to_its_file() void {
+    let passwords: string = project_password_lines(SAMPLE_PLAN)
+    check(has(passwords, "plan.password=meshwide-secret\n") && has(passwords, "plan.node.1.password=node-secret\n"),
+        "the Wi-Fi passwords are what is sealed beside the key")
+    check(!has(passwords, "legacy-token"), "the legacy token is not sealed")
+    check(project_aad("1", "garden", "2026-11-19T10:00:00Z") == "robohub-mesh-project|1|garden|2026-11-19T10:00:00Z",
+        "the associated data is the format, schema, mesh id and export time")
+    print("[PASS] a_sealed_export_seals_the_passwords_bound_to_its_file\n")
+}
+
+// @verifies MESH-XFER-0001
+test fn an_export_time_is_utc() void {
+    check(project_utc(0) == "1970-01-01T00:00:00Z", "the epoch")
+    check(project_utc(1795082400) == "2026-11-19T10:00:00Z", "a day in 2026")
+    check(project_utc(951868799) == "2000-02-29T23:59:59Z", "a leap day")
+    check(project_utc(4107542401) == "2100-03-01T00:00:01Z", "a century that is not a leap year")
+    check(project_value_ok("time", project_utc(1795082400)), "the time is of its class")
+    print("[PASS] an_export_time_is_utc\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  YAML and JSON                                                             */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-XFER-0004
+test fn json_is_told_apart_by_its_first_character() void {
+    check(project_is_json("  \n\t{\"format\": \"x\"}"), "a document whose first character is { is JSON")
+    check(!project_is_json("# a comment\nformat: x\n"), "a YAML document is not")
+    check(!project_is_json(""), "nothing is not JSON")
+    print("[PASS] json_is_told_apart_by_its_first_character\n")
+}
+
+const GOOD_YAML: string = "# A RoboHub Mesh project file.\n\nexported:\n  at: \"2026-11-19T10:00:00Z\"\n  by: \"robohub-mesh 0.21.0\"\nformat: \"robohub-mesh-project\"\nmesh:\n  id: \"garden\"\n  name: 'Garden ''west'''\nplan:\n  gateway:\n    _: \"native\"\n  node:\n    1:\n      name: Pump board   # a comment\n      board: \"pico\\u00e9 \\\"2w\\\"\"\n    count: \"1\"\n\nschema: \"1\"\n"
+
+// @verifies MESH-XFER-0004
+test fn a_yaml_file_of_nested_maps_passes_the_line_check() void {
+    check(project_yaml_problems(GOOD_YAML) == "", "what the writer writes, comments, plain and quoted values pass: " + project_yaml_problems(GOOD_YAML))
+    check(project_yaml_problems("format: x\r\nschema: 1\r\n") == "", "a file with CRLF line ends passes")
+    print("[PASS] a_yaml_file_of_nested_maps_passes_the_line_check\n")
+}
+
+// @verifies MESH-XFER-0004, MESH-XFER-0008
+test fn every_yaml_line_mesh_cannot_read_is_refused_with_its_number() void {
+    let text: string = "format: x\nnodes:\n  - one\nplan: {a: 1}\nmesh:\n\tid: tabbed\nname: |\n  two lines\nkey value\nsealed:\n  data: \"open\n    deeper: under-a-value\nbad!key: 1\nanchor: &a 1\n---\nok: \"fine\"\nz: a: b\n"
+    let problems: string = project_yaml_problems(text)
+    check(has(problems, "3|a list is not allowed"), "a list item, line 3")
+    check(has(problems, "4|a list or map written inline"), "flow style, line 4")
+    check(has(problems, "6|a tab where spaces indent"), "a tab, line 6")
+    check(has(problems, "7|a value over several lines"), "a block scalar, line 7")
+    check(has(problems, "9|not a key"), "a line that is not a key, line 9")
+    check(has(problems, "11|a quoted value that is not closed"), "an unclosed quote, line 11")
+    check(has(problems, "12|indented under a value"), "a line indented under a value, line 12")
+    check(has(problems, "13|a key holds only letters"), "a key with other characters, line 13")
+    check(has(problems, "14|an anchor"), "an anchor, line 14")
+    check(has(problems, "15|a document marker"), "a document marker, line 15")
+    check(has(problems, "17|a value holds ': '"), "a map on one line, line 17")
+    check(!has(problems, "16|") && !has(problems, "\n1|") && !has(problems, "\n2|"), "the good lines are not named")
+    check(has(project_yaml_problems("a:\n    b: 1\n  c: 2\n"), "3|the indentation matches no key above it"),
+        "a line between two levels is named")
+    print("[PASS] every_yaml_line_mesh_cannot_read_is_refused_with_its_number\n")
+}
+
+// @verifies MESH-XFER-0008
+test fn a_problem_with_a_value_names_its_yaml_line() void {
+    check(project_yaml_line_of(GOOD_YAML, "plan.node.1.board") == 16, "a node's board, line 16")
+    check(project_yaml_line_of(GOOD_YAML, "plan.gateway") == 12, "a key's own value under _, line 12")
+    check(project_yaml_line_of(GOOD_YAML, "schema") == 19, "a top-level key after a nested map, line 19")
+    check(project_yaml_line_of(GOOD_YAML, "plan.node.2.board") == 0, "a key that is not there, 0")
+    print("[PASS] a_problem_with_a_value_names_its_yaml_line\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The schema's keys and classes                                             */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-XFER-0006
+test fn every_class_takes_what_its_samples_say() void {
+    var at: u32 = 0
+    var checked: u32 = 0
+    while at < strlen(PROJECT_CLASS_SAMPLES) {
+        let line: string = project_line_at(PROJECT_CLASS_SAMPLES, at)
+        at = project_line_next(PROJECT_CLASS_SAMPLES, at)
+        if line == "" {
+            continue
+        }
+        let class: string = str_field(line, ";", 0)
+        let value: string = str_replace(str_field(line, ";", 1), "\\t", "\t")
+        let wanted: bool = str_field(line, ";", 2) == "1"
+        check(project_value_ok(class, value) == wanted, "class " + class + " and value [" + value + "]")
+        checked = checked + 1
+    }
+    check(checked > 60, "the samples cover every class")
+    print("[PASS] every_class_takes_what_its_samples_say\n")
+}
+
+// @verifies MESH-XFER-0001, MESH-XFER-0006
+test fn a_key_of_the_file_has_its_class() void {
+    check(project_key_class("format") == "format" && project_key_class("schema") == "schema", "format and schema")
+    check(project_key_class("exported.by") == "text" && project_key_class("exported.at") == "time", "who wrote it, and when")
+    check(project_key_class("mesh.id") == "meshid" && project_key_class("mesh.uplink_port") == "port", "the mesh's keys")
+    check(project_key_class("plan.node.3.board") == "text" && project_key_class("plan.node.3.id") == "uid", "a node's keys")
+    check(project_key_class("plan.node.03.board") == "", "a row written with a leading zero is not a row")
+    check(project_key_class("plan.node.3.password") == "" && project_key_class("plan.password") == "",
+        "a password in clear is no key of the file")
+    check(project_key_class("plan.revision") == "" && project_key_class("plan.node.3.rev") == "", "runtime keys are no keys of the file")
+    check(project_key_class("omitted.gateway_key") == "text" && project_key_class("omitted.node.2.password") == "text",
+        "what was left out")
+    check(project_key_class("omitted.anything") == "" && project_key_class("deployed.gateway") == "", "anything else is not a key")
+    print("[PASS] a_key_of_the_file_has_its_class\n")
+}
+
+// @verifies MESH-XFER-0026
+test fn a_mesh_id_from_a_file_is_a_safe_folder_name() void {
+    check(project_mesh_id_ok("garden") && project_mesh_id_ok("Garden-2_b.c"), "letters, digits, -, _ and .")
+    check(!project_mesh_id_ok(".import-x") && !project_mesh_id_ok("."), "not starting with a dot")
+    check(!project_mesh_id_ok("..") && !project_mesh_id_ok("a..b") && !project_mesh_id_ok("../etc"), "never ..")
+    check(!project_mesh_id_ok("a/b") && !project_mesh_id_ok("a b") && !project_mesh_id_ok("a\nb") && !project_mesh_id_ok("a\"b"),
+        "no slash, space, line break or quote")
+    check(!project_mesh_id_ok(""), "not empty")
+    check(!project_mesh_id_ok("a234567890123456789012345678901234567890123456789012345678901234x"), "at most 64")
+    print("[PASS] a_mesh_id_from_a_file_is_a_safe_folder_name\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Format and schema versions                                                */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-XFER-0001
+test fn a_file_says_what_it_is() void {
+    check(has(project_format_problem("schema=1\n"), "format|missing"), "a file without format is refused, naming the field")
+    check(has(project_format_problem("format=robohub-energy-site\n"), "format|is robohub-energy-site"),
+        "a file of another format is refused, naming the field")
+    check(project_format_problem("format=robohub-mesh-project\n") == "", "a project file is one")
+    print("[PASS] a_file_says_what_it_is\n")
+}
+
+// @verifies MESH-XFER-0007
+test fn a_newer_schema_is_refused_and_an_older_one_carried_forward() void {
+    let newer: string = project_schema_problem("format=robohub-mesh-project\nschema=2\nexported.by=robohub-mesh 0.30.0\n", 1)
+    check(has(newer, "schema 2") && has(newer, "schema 1") && has(newer, "robohub-mesh 0.30.0"),
+        "a newer schema is refused naming the file's schema, Mesh's own and the Mesh that wrote it: " + newer)
+    check(has(project_schema_problem("schema=0\n", 1), "never written"), "schema 0 was never written")
+    check(has(project_schema_problem("format=x\n", 1), "schema|missing"), "a file without a schema is refused")
+    check(project_schema_problem("schema=1\n", 1) == "", "Mesh's own schema is read")
+    check(project_schema_problem("schema=1\n", 3) == "", "an older schema is read by a newer Mesh")
+    // A Mesh of schema 3 that renamed a key in 1 -> 2 and dropped one in 2 -> 3.
+    let carried: string = project_migrate_with("schema=1\nplan.gateway_kind=native\nplan.node.1.colour=red\nplan.node.1.name=A\n", 1, 3,
+        "1:plan.gateway_kind>plan.gateway 2:plan.node.1.colour>")
+    check(plan_value(carried, "schema") == "3", "the file is carried to Mesh's schema")
+    check(plan_value(carried, "plan.gateway") == "native" && !has(carried, "gateway_kind"), "a renamed key is renamed")
+    check(!has(carried, "colour") && plan_value(carried, "plan.node.1.name") == "A", "a dropped key is dropped and the rest kept")
+    let same: string = project_migrate("schema=1\nplan.gateway=native\n", 1)
+    check(plan_value(same, "plan.gateway") == "native" && plan_value(same, "schema") == "1", "a file of Mesh's own schema is unchanged")
+    print("[PASS] a_newer_schema_is_refused_and_an_older_one_carried_forward\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Every problem                                                             */
+/* -------------------------------------------------------------------------- */
+
+const GOOD_FILE: string = "format=robohub-mesh-project\nschema=1\nexported.by=robohub-mesh 0.21.0\nexported.at=2026-11-19T10:00:00Z\nmesh.id=garden\nmesh.name=Garden\nmesh.area=3\nmesh.rest_port=8081\nmesh.uplink_port=5002\nplan.gateway=native\nplan.node.count=2\nplan.node.next_number=3\nplan.node.1.number=1\nplan.node.1.id=0123456789abcdef\nplan.node.1.parent=gateway\nplan.node.1.link=wifi\nplan.node.2.number=2\nplan.node.2.kind=module\nplan.node.2.parent_node=1\nomitted.node.1.password=the Wi-Fi password of network GardenNet\n"
+
+// @verifies MESH-XFER-0008, MESH-0027
+test fn a_good_file_has_no_problem() void {
+    check(project_problems(GOOD_FILE) == "", "a file as an export writes it has no problem: " + project_problems(GOOD_FILE))
+    print("[PASS] a_good_file_has_no_problem\n")
+}
+
+// @verifies MESH-XFER-0008, MESH-0027
+test fn every_problem_of_a_file_is_named_at_once() void {
+    let bad: string = "format=robohub-mesh-project\nschema=1\nmesh.id=../garden\nmesh.colour=red\nmesh.area=0\nplan.node.count=4\nplan.node.1.number=1\nplan.node.1.id=0123456789abcdef\nplan.node.1.parent_node=3\nplan.node.2.number=1\nplan.node.2.id=0123456789abcdef\nplan.node.2.role=gateway\nplan.node.3.number=3\nplan.node.3.parent_node=1\nplan.node.3.role=gateway\nplan.node.4.number=4\nplan.node.4.kind=module\nplan.node.4.parent_node=9\nplan.node.4.link=uart\nplan.node.7.name=Ghost\nplan.node.1.kind=robot\nplan.gateway=native\nplan.gateway=docker\nsealed.salt=00112233445566778899aabbccddeeff\n"
+    let problems: string = project_problems(bad)
+    check(has(problems, "mesh.id|must be a mesh id"), "an unsafe mesh id")
+    check(has(problems, "mesh.colour|not a key of schema 1"), "an unknown key")
+    check(has(problems, "mesh.area|must be an area"), "a value outside its pattern")
+    check(has(problems, "plan.node.1.kind|must be compute"), "a kind that is none")
+    check(has(problems, "plan.gateway|the key is given twice"), "a key given twice")
+    check(has(problems, "plan.node.2.number|node number 1 is also node row 1"), "two nodes with one number")
+    check(has(problems, "plan.node.2.id|node id 0123456789abcdef is also node row 1"), "two nodes with one id")
+    check(has(problems, "plan.node.3.role|a second gateway"), "more than one gateway")
+    check(has(problems, "plan.node.4.parent_node|the board of this module is node number 9, which is no node"), "a module's board that is no node")
+    check(has(problems, "plan.node.7|names node row 7, but node.count is 4"), "a row past the count")
+    check(has(problems, "the parents make a ring"), "a ring of parents")
+    check(has(problems, "sealed.data|missing"), "a sealed block that is not whole")
+    let crowded: string = project_problems("format=robohub-mesh-project\nschema=1\nmesh.id=a\nplan.node.count=65\n")
+    check(has(crowded, "plan.node.count|"), "more than 64 nodes: " + crowded)
+    check(has(project_problems("format=robohub-mesh-project\nschema=1\n"), "mesh.id|missing"), "a file without a mesh id")
+    check(has(project_problems("format=robohub-mesh-project\nschema=1\nmesh.id=a\nplan.node.count=1\nplan.node.1.link=wifi\n"),
+        "plan.node.1.link|the link reaches no node"), "a link that names no node")
+    print("[PASS] every_problem_of_a_file_is_named_at_once\n")
+}
+
+// @verifies MESH-XFER-0008
+test fn a_file_of_many_problems_lists_a_hundred_and_counts_the_rest() void {
+    var text: string = "format=robohub-mesh-project\nschema=1\nmesh.id=a\n"
+    var i: u32 = 0
+    while i < 150 {
+        text = text + "junk" + int_to_str(i) + "=x\n"
+        i = i + 1
+    }
+    let problems: string = project_problems(text)
+    check(has(problems, "junk0|") && has(problems, "junk99|") && !has(problems, "junk100|"), "the first hundred are listed")
+    check(has(problems, "and 50 more problems"), "the rest are counted")
+    print("[PASS] a_file_of_many_problems_lists_a_hundred_and_counts_the_rest\n")
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The import's decisions                                                    */
+/* -------------------------------------------------------------------------- */
+
+// @verifies MESH-XFER-0014, MESH-XFER-0018
+test fn a_new_mesh_keeps_the_file_id_while_it_is_free() void {
+    check(project_choose_id("garden", false, "Garden-2") == "garden", "the file's id when no mesh here has it")
+    check(project_choose_id("garden", true, "Garden-2") == "Garden-2", "otherwise an id made from the name")
+    check(project_choose_id("../x", false, "x") == "x", "never an unsafe id")
+    check(project_place_choice("5002", false, "5003") == "5002", "the file's port when no other mesh has it")
+    check(project_place_choice("5002", true, "5003") == "5003", "the fleet's otherwise")
+    check(project_place_choice("", false, "5003") == "5003", "the fleet's when the file says none")
+    check(project_mode_ok("new") && project_mode_ok("copy") && project_mode_ok("overwrite") && !project_mode_ok("merge"),
+        "three modes")
+    print("[PASS] a_new_mesh_keeps_the_file_id_while_it_is_free\n")
+}
+
+// @verifies MESH-XFER-0017, MESH-XFER-0013
+test fn what_was_deployed_travels_only_with_the_whole_identity() void {
+    check(project_keep_deployed("new", true, true, true, true), "key, area, uplink and identity kept: the record is kept")
+    check(!project_keep_deployed("new", false, true, true, true), "without the key, never programmed")
+    check(!project_keep_deployed("new", true, false, true, true), "another area, never programmed")
+    check(!project_keep_deployed("new", true, true, false, true), "another uplink port, never programmed")
+    check(!project_keep_deployed("new", true, true, true, false), "another number or id, never programmed")
+    check(!project_keep_deployed("copy", true, true, true, true), "a copy, never")
+    print("[PASS] what_was_deployed_travels_only_with_the_whole_identity\n")
+}
+
+// @verifies MESH-XFER-0018, MESH-XFER-0015
+test fn a_node_id_or_key_used_here_refuses_identity_and_offers_a_copy() void {
+    let conflicts: string = project_identity_conflicts("new", "0123456789abcdef garden\n", "garden")
+    check(has(conflicts, "node-id|node id 0123456789abcdef is a board of mesh garden here; import the file as a copy"),
+        "a node id another mesh has")
+    check(has(conflicts, "gateway-key|the sealed gateway key is mesh garden's here"), "a key another mesh uses")
+    let overwrite: string = project_identity_conflicts("overwrite", "0123456789abcdef north\n", "garden")
+    check(has(overwrite, "node-id|") && !has(overwrite, "gateway-key"), "an overwrite takes no key, so only node ids conflict")
+    check(project_identity_conflicts("copy", "0123456789abcdef garden\n", "garden") == "", "a copy takes no identity")
+    print("[PASS] a_node_id_or_key_used_here_refuses_identity_and_offers_a_copy\n")
+}
+
+// @verifies MESH-XFER-0023
+test fn an_overwrite_with_the_same_definition_changes_nothing() void {
+    let file_plan: string = project_plan_of(project_definition_lines(SAMPLE_PLAN))
+    check(project_same_definition(SAMPLE_PLAN, file_plan), "a plan and its own export are the same definition")
+    check(project_same_definition(SAMPLE_PLAN, file_plan + "node.1.description=\n"), "a key with no value counts as absent")
+    check(!project_same_definition(SAMPLE_PLAN, plan_without(file_plan, "node.1.board") + "node.1.board=pico\n"),
+        "a changed board is another definition")
+    print("[PASS] an_overwrite_with_the_same_definition_changes_nothing\n")
+}
+
+// @verifies MESH-XFER-0020
+test fn a_preview_names_the_nodes_added_changed_and_removed() void {
+    let before: string = "node.count=2\nnode.1.number=1\nnode.1.id=0123456789abcdef\nnode.1.name=Pump\nnode.1.board=pico\nnode.2.number=2\nnode.2.id=1111111111111111\nnode.2.name=Old\n"
+    let after: string = "node.count=2\nnode.1.number=1\nnode.1.id=0123456789abcdef\nnode.1.name=Pump\nnode.1.board=pico2w\nnode.2.number=3\nnode.2.id=2222222222222222\nnode.2.name=New\n"
+    let changes: string = project_node_changes(before, after)
+    check(has(changes, "changed|0123456789abcdef|Pump\n"), "a changed node by id and name")
+    check(has(changes, "added|2222222222222222|New\n"), "an added node")
+    check(has(changes, "removed|1111111111111111|Old\n"), "a removed node")
+    check(project_node_changes(before, before) == "", "the same plan changes nothing")
+    print("[PASS] a_preview_names_the_nodes_added_changed_and_removed\n")
+}
+
+// @verifies MESH-XFER-0022
+test fn a_preview_names_what_the_new_manifest_admits_refuses_and_revokes() void {
+    let before: string = manifest_document("0123456789abcdef|3|1|board|0|0|\n1111111111111111|3|2|board|0|0|\n2222222222222222|3|3|board|0|0|\n", "")
+    let after: string = manifest_document("0123456789abcdef|3|1|board|0|0|\n2222222222222222|3|3|board|0|1|\n3333333333333333|3|4|board|0|0|\n", "")
+    let changes: string = project_manifest_changes(before, after)
+    check(has(changes, "admits 3333333333333333\n"), "a new board is admitted")
+    check(has(changes, "revokes 2222222222222222\n"), "a revoked board is revoked")
+    check(has(changes, "refuses 1111111111111111\n"), "a board no longer planned is refused")
+    check(!has(changes, "0123456789abcdef"), "an unchanged board is not named")
+    print("[PASS] a_preview_names_what_the_new_manifest_admits_refuses_and_revokes\n")
+}
+
+fn main() void {
+    an_export_carries_the_definition_and_nothing_else()
+    every_key_of_a_plan_has_a_kind()
+    an_export_lists_the_secrets_it_left_out_by_name()
+    a_sealed_export_seals_the_passwords_bound_to_its_file()
+    an_export_time_is_utc()
+    json_is_told_apart_by_its_first_character()
+    a_yaml_file_of_nested_maps_passes_the_line_check()
+    every_yaml_line_mesh_cannot_read_is_refused_with_its_number()
+    a_problem_with_a_value_names_its_yaml_line()
+    every_class_takes_what_its_samples_say()
+    a_key_of_the_file_has_its_class()
+    a_mesh_id_from_a_file_is_a_safe_folder_name()
+    a_file_says_what_it_is()
+    a_newer_schema_is_refused_and_an_older_one_carried_forward()
+    a_good_file_has_no_problem()
+    every_problem_of_a_file_is_named_at_once()
+    a_file_of_many_problems_lists_a_hundred_and_counts_the_rest()
+    a_new_mesh_keeps_the_file_id_while_it_is_free()
+    what_was_deployed_travels_only_with_the_whole_identity()
+    a_node_id_or_key_used_here_refuses_identity_and_offers_a_copy()
+    an_overwrite_with_the_same_definition_changes_nothing()
+    a_preview_names_the_nodes_added_changed_and_removed()
+    a_preview_names_what_the_new_manifest_admits_refuses_and_revokes()
+    print("mesh project file tests ok\n")
+}
