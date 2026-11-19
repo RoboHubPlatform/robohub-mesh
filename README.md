@@ -18,7 +18,10 @@ rho build .
 rho test .                   # the unit suite and the HTTP smoke test
 ```
 
-`plugins/mesh-telemetry` is Mesh's telemetry store, the Go port it is built with.
+`plugins/mesh-telemetry` is Mesh's telemetry store, the Go port it is built with, and
+`plugins/mesh-projectfile` the port its project files are read, written and sealed
+with. A mesh is exported and imported as a project file whose schema is published in
+`schemas/mesh-project.v1.json`.
 
 Its guide is [docs/doc/index.md](docs/doc/index.md); the running application serves it
 under Documentation.

@@ -311,10 +311,16 @@ fn mesh_project_settings_page(req: Request) Response {
 }
 
 fn mesh_project_settings_for(req: Request, id: string) Response {
-    let file: string = project_file(id)
-    if !rho_path_exists(file) {
+    if !rho_path_exists(project_file(id)) {
         return mesh_redirect("/mesh")
     }
+    return html(status_ok(), mesh_project_settings_html(req, id, ""))
+}
+
+// mesh_project_settings_html is a mesh's settings page, with a problem of its
+// export form when there is one.
+fn mesh_project_settings_html(req: Request, id: string, export_problem: string) string {
+    let file: string = project_file(id)
     let name: string = project_name(id)
     let description: string = project_description(id)
     let form0: string = "<form class=\"grid\" method=\"post\" action=\"/mesh/project/" +
@@ -344,7 +350,8 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
         "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
         "<input name=\"name\" aria-label=\"" + escape_html(i18n_t(req, "project.copy_name")) + "\" placeholder=\"" +
         escape_html(mesh_fill(i18n_t(req, "project.copy_placeholder"), "name", project_name(id))) + "\">" +
-        "<button type=\"submit\">" + i18n_t(req, "project.copy") + "</button></form></section>"
+        "<button type=\"submit\">" + i18n_t(req, "project.copy") + "</button></form></section>" +
+        projectfile_settings_sections(req, id, export_problem)
     let content: string = template_fill(template_get("mesh-project-settings"),
         i18n_vars(req) +
         vars("project", escape_html(id)) +
@@ -356,8 +363,8 @@ fn mesh_project_settings_for(req: Request, id: string) Response {
             "onsubmit=\"return confirm(" + escape_html(json_string(i18n_t(req, "project.delete_confirm"))) + ");\">" +
             "<input type=\"hidden\" name=\"project\" value=\"" + escape_html(id) + "\">" +
             "<button type=\"submit\" class=\"danger\">" + i18n_t(req, "project.delete") + "</button></form>"))
-    return html(status_ok(), mesh_shell(req, i18n_t(req, "nav.project_settings"),
-        "<section class=\"mesh-form-panel page-panel\">" + content + "</section>"))
+    return mesh_shell(req, i18n_t(req, "nav.project_settings"),
+        "<section class=\"mesh-form-panel page-panel\">" + content + "</section>")
 }
 
 fn mesh_project_settings_post(req: Request) Response {

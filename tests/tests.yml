@@ -1,8 +1,9 @@
 # The Mesh application's test suites.
 #
 # A suite is declared rather than discovered: the Rho unit tests check the
-# string helpers and the domain (the plan as text, transports, the impact table), and the smoke suite builds Mesh and walks the application
-# over HTTP, including the event stream that reports a long action.
+# string helpers and the domain (the plan as text, transports, the impact table,
+# the project file's rules), and the smoke suites build Mesh and walk the
+# application over HTTP, including the event stream that reports a long action.
 
 name: mesh
 suites:
@@ -12,6 +13,11 @@ suites:
   - name: tests/domain_test.rho
     kind: rho
     tags: [unit, rho, domain]
+  # The project file's rules: the allow-list, the YAML line check, the classes,
+  # schema versions, every problem and the import's decisions.
+  - name: tests/project_file_test.rho
+    kind: rho
+    tags: [unit, rho, domain, transfer]
   # @verifies MESH-0001, MESH-0003, MESH-0008, MESH-0012, MESH-0013, MESH-0015, MESH-0016, MESH-0017, MESH-0018, MESH-0019, MESH-PLAN-0001, MESH-PLAN-0002, MESH-PLAN-0003, MESH-PLAN-0004, MESH-PLAN-0005, MESH-PLAN-0007, MESH-BUILD-0002, MESH-BUILD-0003, MESH-BUILD-0004, MESH-BUILD-0005, MESH-BUILD-0006, MESH-BUILD-0007, MESH-BUILD-0008, MESH-ACCESS-0002, MESH-API-0001, MESH-API-0003, MESH-API-0004, MESH-FLEET-0001, MESH-FLEET-0002, MESH-FLEET-0003, MESH-FLEET-0004, MESH-FLEET-0005, MESH-FLEET-0006, MESH-UI-0001, MESH-UI-0002, MESH-UI-0003, MESH-UI-0004, MESH-UI-0005
   - name: wizard-smoke
     kind: command
@@ -33,7 +39,7 @@ suites:
   # Who may reach what in a running Mesh: the public routes, every other route
   # class refused without a ticket, /mesh/api's token scopes, a gateway's token,
   # standalone mode and the kept copy of the keeper's public key.
-  # @verifies MESH-0011, MESH-0012, MESH-0013, MESH-0020, MESH-API-0001, MESH-API-0002, MESH-API-0006, MESH-API-0007, MESH-API-0008
+  # @verifies MESH-0011, MESH-0012, MESH-0013, MESH-0020, MESH-API-0001, MESH-API-0002, MESH-API-0006, MESH-API-0007, MESH-API-0008, MESH-XFER-0024, MESH-0028
   - name: access-smoke
     kind: command
     tags: [smoke, security, access]
@@ -57,3 +63,28 @@ suites:
     kind: command
     tags: [unit, go, telemetry]
     command: [go, -C, plugins/mesh-telemetry/ports, test, -count=1, ./...]
+  # The project file's published schema and Mesh's own rules, held together:
+  # the same keys at the same places, the same class for each, and every sample
+  # value taken or refused alike.
+  # @verifies MESH-XFER-0006
+  - name: project-schema
+    kind: command
+    tags: [unit, transfer, schema]
+    command: [python3, tests/project_schema_test.py]
+  # The projectfile port's own tests: sealing round trips and fails closed
+  # (wrong passphrase, altered ciphertext, other associated data or parameters),
+  # JSON read as flat lines and refused where they cannot hold it, flat lines
+  # written as sorted JSON, the digest, and a port that touches no file.
+  # @verifies MESH-XFER-0004, MESH-XFER-0005, MESH-XFER-0010, MESH-XFER-0011, MESH-XFER-0012, MESH-XFER-0020, MESH-0026
+  - name: projectfile-port
+    kind: command
+    tags: [unit, go, transfer]
+    command: [go, -C, plugins/mesh-projectfile/ports, test, -count=1, ./...]
+  # Exporting and importing over HTTP, across several running Meshes: what a
+  # file carries, sealed secrets, the three modes, conflicts, the preview, an
+  # overwrite, invalid files, grants and form tokens, the pages, and an import
+  # interrupted before its rename. The script tags each requirement it proves.
+  - name: project-file-smoke
+    kind: command
+    tags: [smoke, transfer, security]
+    command: [python3, tests/project_file_smoke.py]

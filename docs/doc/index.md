@@ -80,10 +80,10 @@ other applications are in the app switcher.
 
 | Page | Address | What it does |
 | --- | --- | --- |
-| Fleet | `/mesh` | Every mesh as a card, new meshes, faults across meshes, search |
+| Fleet | `/mesh` | Every mesh as a card, new meshes, a mesh imported from a project file, faults across meshes, search |
 | Agora | `/mesh/p/<project>` | One mesh as a live tree, edited in the inspector |
 | Apply changes | `/mesh/p/<project>/apply` | What differs from what runs, and the jobs that apply it |
-| Mesh settings | `/mesh/project/<project>/settings` | Name, description, gateway URL, retention, copy, delete |
+| Mesh settings | `/mesh/project/<project>/settings` | Name, description, gateway URL, retention, copy, export and import a project file, delete |
 | Faults | `/faults` | The fault inbox, cleared one by one |
 | Settings | `/settings` | Mesh's own settings |
 | Documentation | `/mesh/docs` | This guide, embedded in the program |
@@ -331,6 +331,98 @@ through itself or through a mesh that reports through it.
   was deployed.
 - **Apply in all meshes**, on the fleet's bar while changes are waiting, queues each
   mesh's jobs at once.
+- **Export and import a project file** carries a mesh to a file and back, here or on
+  another Mesh (below).
+
+### Project files: export and import
+
+A mesh can leave Mesh as one file and come back from it: to back it up or keep it in
+git, to move it to another machine, to undo edits older than its last 20 revisions,
+or to start another site from its design. The file is the mesh's **definition** —
+nothing that only this Mesh recorded.
+
+**What is in it.** YAML by default (JSON on request, the same keys and values):
+
+```yaml
+exported: { at: "2026-11-19T10:00:00Z", by: "robohub-mesh 0.21.0" }
+format: "robohub-mesh-project"
+mesh: { id: "garden", name: "Garden", description: "", area: "5", rest_port: "8081", uplink_port: "5002" }
+omitted:
+  gateway_key: "the gateway key every board's key derives from"
+  node: { 1: { password: "the Wi-Fi password of network GardenNet" } }
+plan:
+  gateway: "native"
+  node:
+    1: { id: "0123456789abcdef", number: "1", name: "Pump board", link: "wifi", ssid: "GardenNet", parent: "gateway" }
+    count: "1"
+schema: "1"
+```
+
+(Mesh writes it as nested maps, one key per line, every value quoted, keys sorted — a
+node row by its number — so two exports of an unchanged mesh differ only in
+`exported.at` and a renamed board is one changed line.) `plan:` holds the plan's own
+definition keys: the gateway (role, board, driver, sensors, host, serial device, TLS
+file paths, the URL of a gateway elsewhere), the telemetry retention, every node with
+its number, id, kind, role, name, description, board, driver, parent, link and link
+settings, its module or device, its key epoch, revocation and production setting, the
+relay id and the meshes it reports through or that report through it. Never in it:
+the plan's revision, steps, status and messages, device states and last values,
+telemetry, faults, jobs, logs, revisions, built images, token records, registered
+clients or Mesh's own settings. The schema is published as
+`schemas/mesh-project.v1.json` (JSON Schema 2020-12) in Mesh's repository; an editor
+can check a file against it without Mesh.
+
+**Secrets.** An ordinary export leaves out the gateway key, the relay key, every
+Wi-Fi password, a legacy gateway token and the production signing key, and lists
+each one under `omitted:` by name — never its value — so it is safe to share and
+commit. **Export with the secrets, sealed** puts the gateway key, the Wi-Fi passwords
+and the record of what each board runs in `sealed:`, encrypted with AES-256-GCM under
+a key PBKDF2-HMAC-SHA256 derives (600 000 iterations, random salt) from a passphrase
+of at least 12 characters you type twice; the block is bound to the file's format,
+schema, mesh id and export time, so it cannot be moved into another file. Mesh never
+keeps, logs or passes on the passphrase, and the relay key (derived again from the
+parent's key) and the signing key (a file of the machine) are never exported. A
+forgotten passphrase costs a rebuild and reflash of every board, nothing more.
+
+**Three ways to import.**
+
+| Mode | What happens |
+| --- | --- |
+| **New mesh** (fleet page, *Import a mesh*) | A mesh under the file's id — or, when this Mesh has a mesh or folder of that id, one made from the name — with every node's number and id, the file's area and ports when no other mesh here has them (otherwise the fleet's, listed), and the gateway key when the sealed block is opened. With the key, the area, the uplink port and every number and id kept, the boards that were current stay current: a mesh moved whole needs nothing built or flashed. Anything less and every board and the gateway are never programmed, with a new key. |
+| **Copy** (fleet page) | What *Copy as a template* does: the file's gateway, boards, modules, devices and links with new node ids, a new key, no secret, nothing deployed and no link to another mesh. For a second site. |
+| **Over this mesh** (a mesh's settings page) | The plan's definition is replaced in one write, after you type the mesh's name. The mesh keeps its id, folder, area, ports, gateway key — whatever the file carries — deployed records, tokens, jobs and history, and the Wi-Fi passwords of the nodes the file keeps when the file has none; the plan it replaces is kept as a revision even if one was kept a moment before. Importing a file whose definition is already the mesh's writes nothing. |
+
+**Preview first.** Every import is first a preview that writes nothing: the mesh's id
+and name, each node added, changed or removed, each area or port that is not the
+file's, the secrets kept and those not in the file, the boards that will be out of
+date, what the gateway's node manifest will admit, refuse or revoke (for an overwrite),
+every conflict and how it is settled, and every warning. The confirmation names the
+file by its SHA-256, so another file is refused. Settled for you and listed: a mesh id
+taken (a new id, or import over it), an area or port taken (the fleet's), a link to a
+mesh that is not here (left out). Refused, with a copy offered: node ids another mesh
+here has, or a sealed gateway key another mesh uses. Warnings: a board, driver,
+module or device integration this Mesh's catalog does not have (the node is kept and
+its build refused until the catalog has it), a Wi-Fi board whose password the file
+left out (its build is refused, naming the network, until a password is entered in its
+link), and the gateway's serial device and TLS file paths, which name files of the
+machine that exported them — they are imported as written; check them here.
+
+**Checked whole, applied whole.** A file is checked before anything is written and
+every problem is listed with its key and, for YAML, its line: a line that is not a key,
+a key and a value, a comment or blank (lists, inline maps, anchors and multi-line
+values are refused), an unknown key, a value outside its pattern, two nodes with one
+number or id, a parent, module board or link that names no node, a ring of parents, a
+second gateway, more than 64 nodes, a file over 1 MiB. A file of a newer schema is
+refused, naming its schema, Mesh's own and the Mesh that wrote it; an older one is
+carried forward. A new mesh is written in a hidden folder and renamed into place, its
+fleet place given back if that fails, and Mesh clears anything an interrupted import
+left when it starts. An import queues no job and starts, stops or restarts no gateway:
+Apply stays a deliberate act. Nothing in a file is run, put on a command line or
+followed as a path, and a mesh id is taken from it only as a safe folder name.
+
+**Who may.** Exporting without secrets needs a grant that reads the mesh; exporting
+the sealed secrets and every import need Mesh as a whole (`*` or `mesh:*`). Pages post
+with the form token, programs with a bearer ticket; anything else is `403`.
 
 ## Settings
 
@@ -363,7 +455,8 @@ forget it.
 
 **A mesh's settings** (`/mesh/project/<project>/settings`): its name, a short
 description, the gateway URL it owns, how long its raw readings are kept, **Copy as a
-template** and **Delete project**. The Storage tab's raw window, when set, applies to
+template**, **Export as a project file** (YAML, JSON, or with the secrets sealed),
+**Import a project file over this mesh** and **Delete project**. The Storage tab's raw window, when set, applies to
 every mesh.
 
 A few keys are written in the mesh's `plan.yml` by hand, while Mesh is stopped:
@@ -543,6 +636,9 @@ All under Mesh's sign-in; a program presents a service token as above.
 | `GET /mesh/api/gateway`, `/mesh/api/sources` | the same for the open mesh |
 | `GET /mesh/api/devices` | the devices in the plan, each with `state` (what the device reports, or `pending` / `unconfirmed` while a switch waits), `reported` and `requested` |
 | `POST /mesh/api/devices/{id}/switch` | switch a plug, switch or actuator: `state=on` or `off` (anything else is `400`); `200` with `"confirmed":true` once the device reports that state, `202` with `"state":"pending"` (or `"unconfirmed"`) while it has not, `502` when it did not take the command |
+| `GET /mesh/api/projects/{project}/export` | the mesh as a project file without secrets, YAML (`?format=json` for JSON), named `<project>.mesh.yml`; needs a grant that reads the mesh |
+| `POST /mesh/api/projects/{project}/export` | the same with the secrets sealed: form body `passphrase` (at least 12 characters, never in the address; `passphrase2` is checked when sent) and `format`; needs `*` or `mesh:*` and a bearer ticket; `Cache-Control: no-store` |
+| `POST /mesh/api/projects/import` | import a project file: form body `file` (the file's text, at most 1 MiB), `passphrase` for a sealed file (empty imports it without its secrets), `mode` (`new`, `copy`, `overwrite`), `target` (the mesh an overwrite replaces), `name` (a new mesh's name, or the overwritten mesh's name typed to confirm) and `confirm` (the preview's `digest`). Without `confirm` the answer is the preview as JSON (`digest`, `mesh`, `nodes`, `places`, `secrets`, `out_of_date`, `manifest`, `conflicts`, `warnings`, `unchanged`); with it the import is done (`{"ok":true,"imported":true,"mesh":...}`). An invalid file is `422`, an unsettled conflict `409`, a confirmation for another file `412`, a file over 1 MiB `413`, each with every problem in `problems`; needs `*` or `mesh:*` and a bearer ticket |
 | `POST /mesh/api/clients/register`, `/heartbeat`, `/publish` | application clients |
 | `GET /mesh/api/clients` | the clients, their project, topics, last seen and online flag |
 
@@ -652,4 +748,10 @@ its state folder's path holding a space, beside a stand-in Shelly plug: a switch
 confirmed only by what the plug reports, a stuck relay shown pending and then
 unconfirmed, a gateway outage and an unsent revocation raised as one alert each
 through the log provider, and a mesh deleted without touching a folder named like
-the path's first word.
+the path's first word. The project-file suites check the file's rules on their own
+(the allow-list, the YAML line check, every class of value, schema versions, every
+problem, the import's decisions), hold the published schema to them, run the
+projectfile port's Go tests (sealing, JSON, digests), and walk export and import over
+HTTP across several running Meshes: round trips in YAML and JSON, sealed secrets,
+the three modes, conflicts, the preview, an overwrite and its revision, invalid
+files, grants and form tokens, and an import interrupted before its rename.

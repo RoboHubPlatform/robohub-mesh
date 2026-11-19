@@ -214,6 +214,9 @@ def check_access(root: Path) -> None:
             ("GET", "/mesh/api/projects/Sec/telemetry/status"), ("GET", "/mesh/api/devices"),
             ("GET", "/mesh/api/gateway"), ("GET", "/mesh/api/clients"),
             ("POST", "/mesh/api/clients/register"), ("POST", "/mesh/project/Sec/token"),
+            ("GET", "/mesh/api/projects/Sec/export"), ("POST", "/mesh/api/projects/Sec/export"),
+            ("POST", "/mesh/api/projects/import"), ("GET", "/mesh/project/Sec/export"),
+            ("POST", "/mesh/project/Sec/export"), ("POST", "/mesh/project/import"),
         ]
         forged = {"X-Rho-Aud": "mesh", "X-Rho-Scopes": "*", "X-Rho-Subject": "intruder"}
         for method, path in protected:
@@ -250,6 +253,17 @@ def check_access(root: Path) -> None:
             status, _ = call(base, path, method=method, data=data, token=gateway,
                              headers={"HX-Request": "true"} if method == "POST" else None)
             expect(status == 403, f"a gateway token (gateway:Sec:*) is refused at {method} {path}")
+        # A project file: a mesh's own token exports it; importing one, or
+        # exporting its sealed secrets, needs Mesh as a whole.
+        status, _ = call(base, "/mesh/api/projects/Sec/export", token=sec)
+        expect(status == 200, "a token for the mesh exports it")
+        status, _ = call(base, "/mesh/api/projects/Sec/export", token=other)
+        expect(status == 403, "a token for another mesh does not")
+        status, _ = call(base, "/mesh/api/projects/import", method="POST", data=b"file=x", token=sec)
+        expect(status == 403, "a token for one mesh cannot import a project file")
+        status, _ = call(base, "/mesh/api/projects/Sec/export", method="POST",
+                         data=b"passphrase=correct+horse+battery", token=sec)
+        expect(status == 403, "nor export a mesh's sealed secrets")
         status, body = call(base, "/mesh/search?q=Board", token=sec)
         expect(status == 200 and "Board Sec" in body and "Board Other" not in body,
                "search finds only in the meshes the person may read")

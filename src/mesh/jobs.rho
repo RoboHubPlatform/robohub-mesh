@@ -295,6 +295,12 @@ fn jobs_queue_board(loc: string, index: u32) string {
     if jobs_open_for(id, target, "") != "" {
         return mesh_fill(mesh_t(loc, "jobs.board_busy"), "name", editor_name(loc, index))
     }
+    // A board an import brought without its Wi-Fi password, or with a board,
+    // driver or module this Mesh's catalog lacks, is not built until it has them.
+    let held: string = projectfile_build_refusal(loc, id, index)
+    if held != "" {
+        return held
+    }
     // A production build is refused before anything is prepared when its board
     // has no production mode, or its plan needs the signing key and the mesh
     // names none it can use (production.rho).

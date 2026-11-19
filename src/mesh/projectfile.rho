@@ -1,0 +1,1710 @@
+//
+// @file projectfile.rho
+// @brief Exporting a mesh as a project file and importing one: as a new mesh, a copy or over a mesh, previewed and whole.
+//
+// @module mesh.projectfile
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.projectfile
+
+// A mesh leaves Mesh as a project file and comes back from one (ADR-0004 to
+// ADR-0008). The file's rules are domain/project_file.rho; this is the part that
+// reads and writes: the export (YAML through the runtime's writer, JSON through
+// the projectfile port, the secrets left out or sealed), the import (checked
+// whole, previewed, then written in a hidden folder and renamed into place, or
+// over a mesh in one plan write), the pages and the API.
+//
+// A file is data. Nothing in it is run, put on a command line or followed as a
+// path; a mesh id from it is taken only when it is a safe folder name; the
+// passphrase is read from a form field or a request body alone and is never
+// written, logged or handed to another program. An import queues no job and
+// starts, stops or restarts no gateway.
+
+extern fn projectfile_json_flat(text: string) string
+extern fn projectfile_flat_json(flat: string) string
+extern fn projectfile_seal(passphrase: string, plain: string, aad: string) string
+extern fn projectfile_open(passphrase: string, fields: string, aad: string) string
+extern fn projectfile_digest(text: string) string
+extern fn rho_list_dir(path: string) string
+
+const PROJECTFILE_HEADER: string = "A RoboHub Mesh project file: one mesh's definition, to import again on this\nor another Mesh. Its secrets are left out (omitted) or sealed under a\npassphrase (sealed). Schema: schemas/mesh-project.v1.json in robohub-mesh."
+// The largest form body an import or export reads: a 1 MiB file, every byte
+// percent-encoded, and the other fields.
+const PROJECTFILE_MAX_BODY: u32 = 3211264
+const PROJECTFILE_STAGING: string = ".import-"
+
+// What an import will do, or why it will not: the answer of a preview and the
+// plan of a confirmation.
+struct ProjectImport {
+    status: u32
+    problems: string
+    digest: string
+    mode: string
+    id: string
+    name: string
+    text: string
+    key: string
+    deployed: string
+    area: string
+    rest: string
+    uplink: string
+    preview: string
+    unchanged: bool
+}
+
+fn projectfile_refused(status: u32, problems: string, digest: string, mode: string) ProjectImport {
+    return ProjectImport{ status, problems, digest, mode, "", "", "", "", "", "", "", "", "", false }
+}
+
+fn projectfile_version() string {
+    let version: string = yaml.value(rho_asset_dir("mesh") + "/module.yml", "module.version")
+    if version == "" {
+        return "robohub-mesh"
+    }
+    return "robohub-mesh " + version
+}
+
+fn projectfile_report() string {
+    return wizard_report("projectfile")
+}
+
+// projectfile_scratch is a file of Mesh's own state folder no other request
+// uses, for the runtime's YAML functions, which read and write files.
+fn projectfile_scratch(name: string) string {
+    ensure_wizard_dir()
+    return wizard_dir() + "/.projectfile-" + name + "-" + rho_random_hex(8) + ".yml"
+}
+
+fn projectfile_remove(path: string) void {
+    ignore_u32(rho_exec_args("rm", "-f\n--\n" + path + "\n", projectfile_report()))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Export                                                                    */
+/* -------------------------------------------------------------------------- */
+
+// projectfile_rest_port and projectfile_uplink_port are where a mesh is placed:
+// what its plan chose, or the fleet's.
+fn projectfile_place(id: string, key: string) string {
+    let value: string = state_value_in(project_file(id), key)
+    if value != "" {
+        return value
+    }
+    return fleet_value(id, key)
+}
+
+// projectfile_export_flat is a mesh's project file as flat lines: what it is,
+// the mesh, its plan's definition, the secrets it left out by name and, when the
+// person asked for them, the gateway key, the Wi-Fi passwords and the record of
+// what runs, sealed under the passphrase. "" when sealing failed.
+// @req MESH-0025, MESH-XFER-0001, MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009, MESH-XFER-0010, MESH-XFER-0017
+fn projectfile_export_flat(id: string, at: string, sealed: bool, passphrase: string) string {
+    let file: string = project_file(id)
+    plan_import(file)
+    let stored: string = rho_yaml_flat(file)
+    let key_text: string = str_trim(rho_read_text(mesh_gateway_key_file(id)))
+    let has_key: bool = rho_path_exists(mesh_gateway_key_file(id))
+    var out: string = "format=" + PROJECT_FORMAT + "\nschema=" + int_to_str(PROJECT_SCHEMA) + "\n" +
+        "exported.by=" + projectfile_version() + "\nexported.at=" + at + "\n" +
+        "mesh.id=" + id + "\nmesh.name=" + project_name(id) + "\nmesh.description=" + project_description(id) + "\n" +
+        "mesh.area=" + project_area_id(file) + "\nmesh.rest_port=" + projectfile_place(id, "rest_port") + "\n" +
+        "mesh.uplink_port=" + projectfile_place(id, "uplink_port") + "\n" +
+        project_definition_lines(stored) +
+        project_omitted_lines(stored, has_key, rho_path_exists(link_relay_key_file(id)),
+            rho_path_exists(production_key_file(id)), sealed)
+    if !sealed {
+        return out
+    }
+    var plain: string = "format=" + PROJECT_SECRETS_FORMAT + "\n"
+    if strlen(key_text) == 64 {
+        plain = plain + "gateway_key=" + key_text + "\n"
+    }
+    plain = plain + project_password_lines(stored)
+    var rest: string = rho_read_text(deployed_file(id))
+    while rest != "" {
+        let line: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        let tab: i32 = str_index_of(line, "\t")
+        if tab > 0 {
+            plain = plain + "deployed." + str_slice(line, 0, u32(tab)) + "=" +
+                str_slice(line, u32(tab) + 1, strlen(line) - u32(tab) - 1) + "\n"
+        }
+    }
+    let fields: string = projectfile_seal(passphrase, plain, project_aad(int_to_str(PROJECT_SCHEMA), id, at))
+    if fields == "" {
+        return ""
+    }
+    var at_line: u32 = 0
+    while at_line < strlen(fields) {
+        let line: string = project_line_at(fields, at_line)
+        at_line = project_line_next(fields, at_line)
+        if line != "" {
+            out = out + "sealed." + line + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_yaml is flat lines as the YAML document the runtime writes: keys
+// sorted, a numeric key by its number, every value quoted (MESH-XFER-0005).
+// @req MESH-XFER-0004, MESH-XFER-0005
+fn projectfile_yaml(flat: string) string {
+    let path: string = projectfile_scratch("export")
+    if !rho_yaml_write_flat(path, flat, PROJECTFILE_HEADER) {
+        projectfile_remove(path)
+        return ""
+    }
+    let text: string = rho_read_text(path)
+    projectfile_remove(path)
+    return text
+}
+
+// projectfile_download_name is the file a download is saved as, named from the
+// mesh's checked id only (MESH-XFER-0026).
+// @req MESH-XFER-0026
+fn projectfile_download_name(id: string, json_form: bool) string {
+    var base: string = id
+    if !project_mesh_id_ok(id) {
+        base = "mesh-project"
+    }
+    if json_form {
+        return base + ".mesh.json"
+    }
+    return base + ".mesh.yml"
+}
+
+// projectfile_export_answer is an export as a download.
+fn projectfile_export_answer(id: string, json_form: bool, sealed: bool, passphrase: string) Response {
+    let flat: string = projectfile_export_flat(id, project_utc(rho_now_s()), sealed, passphrase)
+    if flat == "" {
+        return json(500, "{\"ok\":false,\"error\":\"the secrets could not be sealed\"}")
+    }
+    var body: string = ""
+    var kind: string = "application/yaml; charset=utf-8"
+    if json_form {
+        body = projectfile_flat_json(flat)
+        kind = "application/json"
+    } else {
+        body = projectfile_yaml(flat)
+    }
+    if body == "" {
+        return json(500, "{\"ok\":false,\"error\":\"the file could not be written\"}")
+    }
+    var what: string = "without secrets"
+    if sealed {
+        what = "with its secrets sealed"
+    }
+    info("mesh", "exported " + id + " " + what)
+    return Response{ 200, body, kind, "Content-Disposition: attachment; filename=\"" +
+        projectfile_download_name(id, json_form) + "\"\nCache-Control: no-store" }
+}
+
+fn projectfile_wants_json(req: Request, body: string) bool {
+    return request_query_param(req, "format") == "json" || form_field(body, "format") == "json"
+}
+
+// The export without secrets: a read grant on the mesh (MESH-XFER-0024).
+// @req MESH-XFER-0024, MESH-XFER-0028, MESH-0028
+fn mesh_project_export_get(req: Request) Response {
+    var id: string = param(req, "project")
+    if id == "" {
+        id = param(req, "id")
+    }
+    if !mesh_may(req, id, false) {
+        return mesh_denied(req)
+    }
+    if !projectfile_mesh_here(id) {
+        return json(404, "{\"ok\":false,\"error\":\"no such mesh\"}")
+    }
+    return projectfile_export_answer(id, projectfile_wants_json(req, ""), false, "")
+}
+
+// projectfile_mesh_here is whether an id names a mesh of this Mesh.
+fn projectfile_mesh_here(id: string) bool {
+    return id != "" && sanitize(id) == id && str_index_of(id, "/") < 0 && str_index_of(id, "..") < 0 &&
+        rho_path_exists(project_file(id))
+}
+
+// projectfile_passphrase_problem is why a passphrase cannot seal, or "". It is
+// read from the body only, never the address (MESH-XFER-0011).
+// @req MESH-XFER-0010, MESH-XFER-0011
+fn projectfile_passphrase_problem(loc: string, body: string, twice: bool) string {
+    let passphrase: string = form_field(body, "passphrase")
+    if strlen(passphrase) < PROJECT_MIN_PASSPHRASE || projectfile_chars(passphrase) < PROJECT_MIN_PASSPHRASE {
+        return mesh_t(loc, "projectfile.passphrase_short")
+    }
+    if twice && !str_eq(passphrase, form_field(body, "passphrase2")) {
+        return mesh_t(loc, "projectfile.passphrase_differs")
+    }
+    return ""
+}
+
+// projectfile_chars counts the characters of UTF-8 text.
+fn projectfile_chars(text: string) u32 {
+    var count: u32 = 0
+    var i: u32 = 0
+    while i < strlen(text) {
+        let b: u8 = str_at(text, i)
+        if b < 128 || b >= 192 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// The export with sealed secrets: Mesh as a whole and the form token from a page
+// (MESH-XFER-0024, MESH-XFER-0025).
+// @req MESH-XFER-0010, MESH-XFER-0024, MESH-XFER-0025, MESH-XFER-0027, MESH-0026, MESH-0028
+fn mesh_project_export_sealed_page(req: Request) Response {
+    let id: string = param(req, "id")
+    if !mesh_may(req, id, false) || !mesh_admin_request(req) {
+        return mesh_denied(req)
+    }
+    if projectfile_too_large(req) {
+        return projectfile_too_large_answer(req)
+    }
+    let body: string = request_body(req)
+    if !forms_csrf_ok(body) {
+        return mesh_denied(req)
+    }
+    if !projectfile_mesh_here(id) {
+        return mesh_redirect("/mesh")
+    }
+    let problem: string = projectfile_passphrase_problem(i18n_locale(req), body, true)
+    if problem != "" {
+        return projectfile_settings_with(req, id, problem, 400)
+    }
+    return projectfile_export_answer(id, projectfile_wants_json(req, body), true, form_field(body, "passphrase"))
+}
+
+// The API's sealed export: Mesh as a whole and a bearer token.
+// @req MESH-XFER-0010, MESH-XFER-0024, MESH-XFER-0025, MESH-XFER-0028, MESH-0028
+fn mesh_api_project_export_sealed(req: Request) Response {
+    let id: string = param(req, "project")
+    if !mesh_may(req, id, false) || !mesh_admin_request(req) {
+        return mesh_denied(req)
+    }
+    if projectfile_too_large(req) {
+        return projectfile_too_large_answer(req)
+    }
+    let body: string = request_body(req)
+    if !forms_machine_ok(req, body) {
+        return json(403, "{\"ok\":false,\"error\":\"a session needs the form token; a program sends a bearer ticket\"}")
+    }
+    if !projectfile_mesh_here(id) {
+        return json(404, "{\"ok\":false,\"error\":\"no such mesh\"}")
+    }
+    let problem: string = projectfile_passphrase_problem("en", body, form_field(body, "passphrase2") != "")
+    if problem != "" {
+        return json(422, "{\"ok\":false,\"problems\":[{\"where\":\"passphrase\",\"problem\":" + json_string(problem) + "}]}")
+    }
+    return projectfile_export_answer(id, projectfile_wants_json(req, body), true, form_field(body, "passphrase"))
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Reading a file                                                            */
+/* -------------------------------------------------------------------------- */
+
+// projectfile_yaml_flat reads a YAML file that passed the line check with the
+// runtime's reader, the one plan.yml is read with.
+fn projectfile_yaml_flat(text: string) string {
+    let path: string = projectfile_scratch("import")
+    if !rho_write_secret(path, text) {
+        return ""
+    }
+    let flat: string = rho_yaml_flat(path)
+    projectfile_remove(path)
+    return flat
+}
+
+// projectfile_json_problems turns the port's `!path: why` lines into problems.
+fn projectfile_json_problems(answer: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(answer) {
+        let line: string = project_line_at(answer, at)
+        at = project_line_next(answer, at)
+        if str_slice(line, 0, 1) != "!" {
+            continue
+        }
+        let colon: i32 = str_index_of(line, ": ")
+        if colon < 0 {
+            out = out + "(file)|" + str_slice(line, 1, strlen(line) - 1) + "\n"
+        } else {
+            var where: string = str_slice(line, 1, u32(colon) - 1)
+            if where == "" {
+                where = "(file)"
+            }
+            out = out + where + "|" + str_slice(line, u32(colon) + 2, strlen(line) - u32(colon) - 2) + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_with_lines names the YAML line of each problem with a key.
+fn projectfile_with_lines(problems: string, text: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(problems) {
+        let line: string = project_line_at(problems, at)
+        at = project_line_next(problems, at)
+        let bar: i32 = str_index_of(line, "|")
+        if bar <= 0 {
+            continue
+        }
+        let where: string = str_slice(line, 0, u32(bar))
+        let number: u32 = project_yaml_line_of(text, where)
+        if number > 0 {
+            out = out + "line " + int_to_str(number) + ", " + line + "\n"
+        } else {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_yaml_line_problems names a YAML line check's problems by line.
+fn projectfile_yaml_line_problems(found: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(found) {
+        let line: string = project_line_at(found, at)
+        at = project_line_next(found, at)
+        let bar: i32 = str_index_of(line, "|")
+        if bar <= 0 {
+            continue
+        }
+        let number: string = str_slice(line, 0, u32(bar))
+        var where: string = "line " + number
+        if number == "0" {
+            where = "(file)"
+        }
+        out = out + where + "|" + str_slice(line, u32(bar) + 1, strlen(line) - u32(bar) - 1) + "\n"
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  What an import will do                                                    */
+/* -------------------------------------------------------------------------- */
+
+// projectfile_ids_elsewhere are the node ids of a plan another mesh here has,
+// as `id mesh` lines; `except` is the mesh an overwrite replaces.
+fn projectfile_ids_elsewhere(plan: string, except: string) string {
+    var wanted: string = "|"
+    let count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        let id: string = plan_value(plan, "node." + int_to_str(row) + ".id")
+        if id != "" {
+            wanted = wanted + id + "|"
+        }
+        row = row + 1
+    }
+    if wanted == "|" {
+        return ""
+    }
+    var out: string = ""
+    var rest: string = project_ids()
+    while rest != "" {
+        let mesh: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        if mesh == "" || mesh == except {
+            continue
+        }
+        let other: string = rho_yaml_flat(project_file(mesh))
+        let other_count: u32 = u32(int_from_str(plan_value(other, "node.count")))
+        var other_row: u32 = 1
+        while other_row <= other_count {
+            let id: string = plan_value(other, "node." + int_to_str(other_row) + ".id")
+            if id != "" && str_index_of(wanted, "|" + id + "|") >= 0 {
+                out = out + id + " " + mesh + "\n"
+            }
+            other_row = other_row + 1
+        }
+    }
+    return out
+}
+
+// projectfile_key_elsewhere is the mesh here whose gateway key is `key`, or "".
+fn projectfile_key_elsewhere(key: string) string {
+    if key == "" {
+        return ""
+    }
+    var rest: string = project_ids()
+    while rest != "" {
+        let mesh: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        if mesh != "" && str_eq(str_trim(rho_read_text(mesh_gateway_key_file(mesh))), key) {
+            return mesh
+        }
+    }
+    return ""
+}
+
+// projectfile_fleet_view is the fleet with every mesh in it: a mesh placed by
+// its own plan that the fleet has not been asked about yet holds its area and
+// ports all the same. Nothing is written.
+fn projectfile_fleet_view() string {
+    var text: string = fleet_text()
+    var rest: string = project_ids()
+    while rest != "" {
+        let mesh: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        if mesh == "" || plan_value(text, "mesh." + mesh + ".area") != "" {
+            continue
+        }
+        let plan: string = rho_yaml_flat(project_file(mesh))
+        let names: string = "area_id:area rest_port:rest_port uplink_port:uplink_port"
+        var index: u32 = 0
+        while index < 3 {
+            let pair: string = str_field(names, " ", index)
+            let value: string = plan_value(plan, str_field(pair, ":", 0))
+            if value != "" {
+                text = text + "mesh." + mesh + "." + str_field(pair, ":", 1) + "=" + value + "\n"
+            }
+            index = index + 1
+        }
+    }
+    return text
+}
+
+// projectfile_fleet_assign is the area and ports the fleet gives a mesh that
+// wants the ones given: each when no other mesh has it, otherwise the first
+// free one, as fleet_place decides (MESH-FLEET-0001). `area rest uplink`.
+fn projectfile_fleet_assign(text: string, id: string, area: string, rest: string, uplink: string) string {
+    var chosen_area: u32 = u32(int_from_str(area))
+    if chosen_area == 0 || fleet_taken(text, id, "area", int_to_str(chosen_area)) {
+        chosen_area = 1
+        while fleet_taken(text, id, "area", int_to_str(chosen_area)) {
+            chosen_area = chosen_area + 1
+        }
+    }
+    var offset: u32 = 0
+    while fleet_taken(text, id, "rest_port", int_to_str(FLEET_REST_BASE + offset)) ||
+        fleet_taken(text, id, "uplink_port", int_to_str(FLEET_UPLINK_BASE + offset)) {
+        offset = offset + 1
+    }
+    var chosen_rest: u32 = u32(int_from_str(rest))
+    if chosen_rest == 0 || fleet_taken(text, id, "rest_port", int_to_str(chosen_rest)) {
+        chosen_rest = FLEET_REST_BASE + offset
+    }
+    var chosen_uplink: u32 = u32(int_from_str(uplink))
+    if chosen_uplink == 0 || fleet_taken(text, id, "uplink_port", int_to_str(chosen_uplink)) {
+        chosen_uplink = FLEET_UPLINK_BASE + offset
+    }
+    return int_to_str(chosen_area) + " " + int_to_str(chosen_rest) + " " + int_to_str(chosen_uplink)
+}
+
+// projectfile_secrets_problem is why opened secrets are not a sealed block of
+// this file, or "".
+fn projectfile_secrets_problem(plain: string, count: u32) string {
+    if plan_value(plain, "format") != PROJECT_SECRETS_FORMAT {
+        return "not a sealed block of a project file"
+    }
+    var at: u32 = 0
+    while at < strlen(plain) {
+        let line: string = project_line_at(plain, at)
+        at = project_line_next(plain, at)
+        let key: string = plan_line_key(line)
+        let value: string = plan_line_value(line)
+        if line == "" || key == "format" || str_index_of(key, "deployed.") == 0 {
+            continue
+        }
+        if key == "gateway_key" {
+            if strlen(value) != 64 || !project_lower_hex(value) {
+                return "the sealed gateway key is not 64 hex digits"
+            }
+            continue
+        }
+        if key == "plan.password" {
+            continue
+        }
+        let field: string = project_node_field(str_slice(key, 5, strlen(key) - 5))
+        if str_index_of(key, "plan.") == 0 && field == "password" && plan_node_row(str_slice(key, 5, strlen(key) - 5)) <= count {
+            continue
+        }
+        return "the sealed block holds " + key + ", which it may not"
+    }
+    return ""
+}
+
+// projectfile_without_links is a plan without its links to other meshes.
+fn projectfile_without_links(plan: string) string {
+    return plan_without(plan_without(plan, "mesh_parent"), "mesh_children")
+}
+
+// projectfile_links are the links of a file's plan this Mesh can keep for a
+// mesh `id`, as plan lines, with a `conflict|...` preview line for each one left
+// out: a parent that is here and makes no ring, children that are here and
+// report through `id` (MESH-XFER-0018).
+fn projectfile_links(plan: string, id: string) string {
+    var out: string = ""
+    let parent: string = plan_value(plan, "mesh_parent")
+    if parent != "" {
+        if projectfile_mesh_here(parent) && !str_eq(parent, id) && !link_above(parent, id) {
+            out = out + "mesh_parent=" + parent + "\n"
+        } else {
+            out = out + "!conflict|the mesh reported through " + parent + ", which is not here: the link is left out\n"
+        }
+    }
+    var kept: string = ""
+    var rest: string = plan_value(plan, "mesh_children")
+    while rest != "" {
+        let space: i32 = str_index_of(rest, " ")
+        var child: string = rest
+        if space < 0 {
+            rest = ""
+        } else {
+            child = str_slice(rest, 0, u32(space))
+            rest = str_slice(rest, u32(space) + 1, strlen(rest) - u32(space) - 1)
+        }
+        if child == "" {
+            continue
+        }
+        if projectfile_mesh_here(child) && str_eq(link_parent(child), id) {
+            if kept != "" {
+                kept = kept + " "
+            }
+            kept = kept + child
+        } else {
+            out = out + "!conflict|mesh " + child + " reported through this one and is not here: the link is left out\n"
+        }
+    }
+    if kept != "" {
+        out = out + "mesh_children=" + kept + "\n"
+    }
+    return out
+}
+
+// projectfile_split separates plan lines from `!` preview lines.
+fn projectfile_plan_part(lines: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(lines) {
+        let line: string = project_line_at(lines, at)
+        at = project_line_next(lines, at)
+        if line != "" && str_slice(line, 0, 1) != "!" {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+fn projectfile_preview_part(lines: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(lines) {
+        let line: string = project_line_at(lines, at)
+        at = project_line_next(lines, at)
+        if str_slice(line, 0, 1) == "!" {
+            out = out + str_slice(line, 1, strlen(line) - 1) + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_effective_password is a node's Wi-Fi password: its own, or the
+// mesh's.
+fn projectfile_effective_password(plan: string, row: u32) string {
+    let own: string = plan_value(plan, "node." + int_to_str(row) + ".password")
+    if own != "" {
+        return own
+    }
+    return plan_value(plan, "password")
+}
+
+fn projectfile_ssid(plan: string, row: u32) string {
+    let own: string = plan_value(plan, "node." + int_to_str(row) + ".ssid")
+    if own != "" {
+        return own
+    }
+    return plan_value(plan, "ssid")
+}
+
+fn projectfile_node_label(plan: string, row: u32) string {
+    let name: string = plan_value(plan, "node." + int_to_str(row) + ".name")
+    if name != "" {
+        return name
+    }
+    return "node " + plan_value(plan, "node." + int_to_str(row) + ".number")
+}
+
+// projectfile_wifi_holds are the boards on a Wi-Fi link whose password the file
+// left out — `left_out` says which: the file listed it omitted, or its sealed
+// block was not opened — and that have none after the import: their numbers, and
+// a `!warning|...` line naming each (MESH-XFER-0029).
+// @req MESH-XFER-0029
+fn projectfile_wifi_holds(plan: string, flat: string, all_left_out: bool) string {
+    var numbers: string = ""
+    var lines: string = ""
+    let count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        let prefix: string = "node." + int_to_str(row) + "."
+        if plan_value(plan, prefix + "link") == "wifi" && projectfile_effective_password(plan, row) == "" {
+            let listed: bool = plan_value(flat, "omitted." + prefix + "password") != "" ||
+                (plan_value(flat, "omitted.password") != "" && plan_value(plan, prefix + "password") == "")
+            if listed || all_left_out {
+                if numbers != "" {
+                    numbers = numbers + " "
+                }
+                numbers = numbers + plan_value(plan, prefix + "number")
+                lines = lines + "!warning|" + projectfile_node_label(plan, row) + " is on Wi-Fi network " +
+                    projectfile_ssid(plan, row) + " without its password: its build is refused until the password is entered\n"
+            }
+        }
+        row = row + 1
+    }
+    if numbers == "" {
+        return ""
+    }
+    return "import.wifi_needed=" + numbers + "\n" + lines
+}
+
+// projectfile_catalog_missing is what of a board this Mesh's catalog lacks: its
+// board, driver, the modules on it, or its device's integration; "".
+fn projectfile_catalog_missing(view: string, row: u32) string {
+    let prefix: string = "node." + int_to_str(row) + "."
+    var out: string = ""
+    let board: string = plan_value(view, prefix + "board")
+    let kind: string = plan_value(view, prefix + "kind")
+    if kind == "device" {
+        let device: string = plan_value(view, prefix + "device")
+        if device != "" && device_row(device) == "" {
+            out = "device integration " + device
+        }
+        return out
+    }
+    if kind == "module" {
+        let module_name: string = plan_value(view, prefix + "module")
+        if module_name != "" && module_row(module_name) == "" {
+            out = "module " + module_name
+        }
+        return out
+    }
+    if board != "" && row_by_name(board_rows(), board) == "" {
+        out = "board " + board
+    }
+    let driver: string = plan_value(view, prefix + "driver")
+    if driver != "" && row_by_name(driver_rows(), driver) == "" {
+        if out != "" {
+            out = out + ", "
+        }
+        out = out + "driver " + driver
+    }
+    return out
+}
+
+// projectfile_catalog_holds are the boards whose board, driver or modules this
+// Mesh's catalog lacks: their numbers, and a `!warning|...` line for each node
+// it lacks something for (MESH-XFER-0018).
+// @req MESH-XFER-0018
+fn projectfile_catalog_holds(view: string) string {
+    var numbers: string = ""
+    var lines: string = ""
+    let count: u32 = u32(int_from_str(plan_value(view, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        let missing: string = projectfile_catalog_missing(view, row)
+        if missing != "" {
+            lines = lines + "!warning|" + projectfile_node_label(view, row) + ": this Mesh's catalog has no " + missing +
+                "; the node is kept and its build refused until the catalog has it\n"
+            // A module is built with its board: the board is what is held.
+            var held: u32 = row
+            if plan_value(view, "node." + int_to_str(row) + ".kind") == "module" {
+                let parent: string = plan_value(view, "node." + int_to_str(row) + ".parent")
+                held = 0
+                if str_index_of(parent, "node.") == 0 {
+                    held = u32(int_from_str(str_slice(parent, 5, strlen(parent) - 5)))
+                }
+            }
+            let number: string = plan_value(view, "node." + int_to_str(held) + ".number")
+            if held > 0 && plan_value(view, "node." + int_to_str(held) + ".kind") != "device" && !words_contain(numbers, number) {
+                if numbers != "" {
+                    numbers = numbers + " "
+                }
+                numbers = numbers + number
+            }
+        }
+        row = row + 1
+    }
+    let gateway_board: string = plan_value(view, "relay")
+    if gateway_board != "" && row_by_name(board_rows(), gateway_board) == "" {
+        lines = lines + "!warning|the gateway: this Mesh's catalog has no board " + gateway_board + "\n"
+    }
+    if numbers == "" {
+        return lines
+    }
+    return "import.catalog_missing=" + numbers + "\n" + lines
+}
+
+// projectfile_machine_warnings name the values that are files of the machine
+// that exported the mesh: the gateway's serial device and its TLS files, kept as
+// written, never read (MESH-XFER-0030).
+// @req MESH-XFER-0030, MESH-XFER-0026
+fn projectfile_machine_warnings(plan: string) string {
+    var out: string = ""
+    let serial: string = plan_value(plan, "gateway_serial")
+    if serial != "" {
+        out = out + "!warning|the gateway's serial device " + serial + " names a device of the machine that exported the mesh: check it on this one\n"
+    }
+    let cert: string = plan_value(plan, "gateway_tls_cert")
+    if cert != "" {
+        out = out + "!warning|the gateway's TLS certificate " + cert + " names a file of the machine that exported the mesh: check it on this one\n"
+    }
+    let key: string = plan_value(plan, "gateway_tls_key")
+    if key != "" {
+        out = out + "!warning|the gateway's TLS key " + key + " names a file of the machine that exported the mesh: check it on this one\n"
+    }
+    return out
+}
+
+// projectfile_out_of_date are the boards, and the gateway, that will show out of
+// date after an import, with why, as `outdated|<name>|<reason>` lines.
+fn projectfile_out_of_date(view: string, deployed: string) string {
+    var out: string = ""
+    let count: u32 = u32(int_from_str(plan_value(view, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        if deploy_is_board(view, row) {
+            let recorded: string = projectfile_deployed_get(deployed, "node." + plan_value(view, "node." + int_to_str(row) + ".id"))
+            let reason: string = deploy_reason(recorded, deploy_node_signature(view, row))
+            if reason != "" {
+                out = out + "outdated|" + projectfile_node_label(view, row) + "|" + reason + "\n"
+            }
+        }
+        row = row + 1
+    }
+    let gateway: string = deploy_reason(projectfile_deployed_get(deployed, "gateway"), deploy_gateway_signature(view))
+    if gateway != "" {
+        out = out + "outdated|the gateway|" + gateway + "\n"
+    }
+    return out
+}
+
+fn projectfile_deployed_get(deployed: string, key: string) string {
+    let prefix: string = key + "\t"
+    var at: u32 = 0
+    while at < strlen(deployed) {
+        let line: string = project_line_at(deployed, at)
+        at = project_line_next(deployed, at)
+        if str_index_of(line, prefix) == 0 {
+            return str_slice(line, strlen(prefix), strlen(line) - strlen(prefix))
+        }
+    }
+    return ""
+}
+
+// projectfile_deployed_text is the sealed record of what runs as deployed.txt.
+fn projectfile_deployed_text(plain: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(plain) {
+        let line: string = project_line_at(plain, at)
+        at = project_line_next(plain, at)
+        if str_index_of(line, "deployed.") == 0 {
+            let rest: string = str_slice(line, 9, strlen(line) - 9)
+            out = out + plan_line_key(rest) + "\t" + plan_line_value(rest) + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_manifest_lines name what a new manifest does to each board.
+fn projectfile_manifest_lines(before: string, after: string, view: string) string {
+    var out: string = ""
+    let changes: string = project_manifest_changes(before, after)
+    var at: u32 = 0
+    while at < strlen(changes) {
+        let line: string = project_line_at(changes, at)
+        at = project_line_next(changes, at)
+        let space: i32 = str_index_of(line, " ")
+        if space <= 0 {
+            continue
+        }
+        let uid: string = str_slice(line, u32(space) + 1, strlen(line) - u32(space) - 1)
+        var label: string = uid
+        let row: u32 = project_node_row_by_key(view, uid)
+        if row > 0 {
+            label = projectfile_node_label(view, row) + " (" + uid + ")"
+        }
+        out = out + "manifest|" + str_slice(line, 0, u32(space)) + "|" + label + "\n"
+    }
+    return out
+}
+
+// projectfile_evaluate decides what importing a file would do, writing
+// nothing: the mesh it creates or replaces, everything that changes, every
+// conflict and how it is settled, every warning, and every problem that stops
+// it (MESH-XFER-0008, MESH-XFER-0013 to MESH-XFER-0020, MESH-XFER-0029,
+// MESH-XFER-0030).
+// @req MESH-0025, MESH-0027, MESH-XFER-0004, MESH-XFER-0007, MESH-XFER-0008, MESH-XFER-0012, MESH-XFER-0013, MESH-XFER-0014, MESH-XFER-0015, MESH-XFER-0016, MESH-XFER-0017, MESH-XFER-0018, MESH-XFER-0019, MESH-XFER-0020, MESH-XFER-0023, MESH-XFER-0026
+fn projectfile_evaluate(file: string, passphrase: string, mode_in: string, target: string, name_in: string) ProjectImport {
+    var mode: string = mode_in
+    if mode == "" {
+        mode = "new"
+    }
+    if strlen(file) > PROJECT_MAX_BYTES {
+        return projectfile_refused(413, "file|the file is over 1 MiB", "", mode)
+    }
+    if str_trim(file) == "" {
+        return projectfile_refused(422, "file|no file was given", "", mode)
+    }
+    let digest: string = projectfile_digest(file)
+    if !project_mode_ok(mode) {
+        return projectfile_refused(422, "mode|must be new, copy or overwrite", digest, mode)
+    }
+    // Read: JSON through the port, YAML checked line by line and then read by
+    // the runtime's reader.
+    let yaml_form: bool = !project_is_json(file)
+    var flat: string = ""
+    if yaml_form {
+        let lines: string = project_yaml_problems(file)
+        if lines != "" {
+            return projectfile_refused(422, projectfile_yaml_line_problems(lines), digest, mode)
+        }
+        flat = projectfile_yaml_flat(file)
+    } else {
+        flat = projectfile_json_flat(file)
+        if str_slice(flat, 0, 1) == "!" {
+            return projectfile_refused(422, projectfile_json_problems(flat), digest, mode)
+        }
+    }
+    let format_problem: string = project_format_problem(flat)
+    if format_problem != "" {
+        return projectfile_refused(422, format_problem + "\n", digest, mode)
+    }
+    let schema_problem: string = project_schema_problem(flat, PROJECT_SCHEMA)
+    if schema_problem != "" {
+        return projectfile_refused(422, schema_problem + "\n", digest, mode)
+    }
+    let schema_text: string = plan_value(flat, "schema")
+    flat = project_migrate(flat, u32(int_from_str(schema_text)))
+    var problems: string = project_problems(flat)
+    if problems != "" {
+        if yaml_form {
+            problems = projectfile_with_lines(problems, file)
+        }
+        return projectfile_refused(422, problems, digest, mode)
+    }
+    let file_id: string = plan_value(flat, "mesh.id")
+    var file_name: string = plan_value(flat, "mesh.name")
+    if file_name == "" {
+        file_name = file_id
+    }
+    let description: string = plan_value(flat, "mesh.description")
+    let plan: string = plan_stored(project_plan_of(flat))
+    let count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
+    let sealed_fields: string = project_lines_with(flat, "sealed.")
+    // The secrets, when the file has them and the person gave the passphrase.
+    var secrets: string = ""
+    if sealed_fields != "" && passphrase != "" && mode != "copy" {
+        let plain: string = projectfile_open(passphrase, sealed_fields,
+            project_aad(schema_text, file_id, plan_value(flat, "exported.at")))
+        if plain == "" {
+            return projectfile_refused(422, "sealed|the sealed secrets cannot be opened: the passphrase is wrong or the file was altered. Nothing was imported; leave the passphrase empty to import the file without its secrets\n",
+                digest, mode)
+        }
+        let wrong: string = projectfile_secrets_problem(plain, count)
+        if wrong != "" {
+            return projectfile_refused(422, "sealed|" + wrong + "\n", digest, mode)
+        }
+        secrets = plain
+    }
+    let all_left_out: bool = sealed_fields != "" && (secrets == "" || mode == "copy")
+    if mode == "overwrite" {
+        return projectfile_evaluate_overwrite(flat, plan, secrets, all_left_out, digest, target, name_in, file_name, description)
+    }
+    var preview: string = ""
+    var name: string = name_in
+    if name == "" {
+        name = file_name
+        if mode == "copy" {
+            name = file_name + " copy"
+        }
+    }
+    var id: string = ""
+    var lines: string = ""
+    var key: string = ""
+    var deployed: string = ""
+    let fleet: string = projectfile_fleet_view()
+    var assigned: string = ""
+    if mode == "new" {
+        let taken: bool = rho_path_exists(project_location(file_id))
+        id = project_choose_id(file_id, taken, project_id_from_name(name))
+        if taken {
+            preview = preview + "conflict|mesh id " + file_id + " is taken here: the mesh is created as " + id +
+                "; or import the file over " + file_id + "\n"
+        }
+        key = plan_value(secrets, "gateway_key")
+        let conflicts: string = project_identity_conflicts("new", projectfile_ids_elsewhere(plan, ""), projectfile_key_elsewhere(key))
+        if conflicts != "" {
+            return projectfile_refused(409, conflicts, digest, mode)
+        }
+        assigned = projectfile_fleet_assign(fleet, id, plan_value(flat, "mesh.area"), plan_value(flat, "mesh.rest_port"),
+            plan_value(flat, "mesh.uplink_port"))
+        let links: string = projectfile_links(plan, id)
+        preview = preview + projectfile_preview_part(links)
+        lines = projectfile_without_links(plan) + projectfile_plan_part(links) +
+            "area_id=" + str_field(assigned, " ", 0) + "\nrest_port=" + str_field(assigned, " ", 1) +
+            "\nuplink_port=" + str_field(assigned, " ", 2) + "\n" + project_lines_with(secrets, "plan.")
+        let keep: bool = project_keep_deployed("new", key != "", str_field(assigned, " ", 0) == plan_value(flat, "mesh.area"),
+            str_field(assigned, " ", 2) == plan_value(flat, "mesh.uplink_port"), true)
+        if keep {
+            deployed = projectfile_deployed_text(secrets)
+        }
+    } else {
+        id = project_id_from_name(name)
+        assigned = projectfile_fleet_assign(fleet, id, "", "", "")
+        // A copy is a template: what copying a mesh as a template keeps.
+        lines = cross_template_lines(plan_view(plan))
+    }
+    let stored: string = plan_stored(lines)
+    let view: string = plan_view(stored)
+    // What the fleet changed, and what is held until a person acts.
+    preview = preview + projectfile_place_lines(flat, assigned, mode)
+    let wifi: string = projectfile_wifi_holds(stored, flat, all_left_out)
+    let catalog: string = projectfile_catalog_holds(view)
+    preview = preview + projectfile_preview_part(wifi) + projectfile_preview_part(catalog) +
+        projectfile_preview_part(projectfile_machine_warnings(stored))
+    let text: string = "project.name=" + sanitize(name) + "\nproject.description=" + description + "\n" + lines +
+        projectfile_plan_part(wifi) + projectfile_plan_part(catalog)
+    preview = preview + projectfile_node_lines(project_node_changes("node.count=0\n", stored))
+    preview = preview + projectfile_secret_lines(flat, secrets, key, mode)
+    if deployed == "" {
+        preview = preview + "warning|every board and the gateway are shown as never programmed: build and flash them for this mesh\n"
+    }
+    preview = preview + projectfile_out_of_date(view, deployed)
+    return ProjectImport{ 200, "", digest, mode, id, sanitize(name), text, key, deployed,
+        str_field(assigned, " ", 0), str_field(assigned, " ", 1), str_field(assigned, " ", 2), preview, false }
+}
+
+// projectfile_place_lines name each area or port that is not the file's.
+fn projectfile_place_lines(flat: string, assigned: string, mode: string) string {
+    var out: string = ""
+    let names: string = "area rest_port uplink_port"
+    var index: u32 = 0
+    while index < 3 {
+        let what: string = str_field(names, " ", index)
+        let wanted: string = plan_value(flat, "mesh." + what)
+        let got: string = str_field(assigned, " ", index)
+        if mode == "copy" {
+            out = out + "place|" + what + "||" + got + "\n"
+        } else if wanted != got {
+            var said: string = what
+            if what != "area" {
+                said = str_replace(what, "_", " ")
+            }
+            out = out + "place|" + what + "|" + wanted + "|" + got + "\n"
+            out = out + "conflict|" + said + " " + wanted + " is another mesh's here: the mesh gets " + got + "\n"
+        }
+        index = index + 1
+    }
+    return out
+}
+
+fn projectfile_node_lines(changes: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(changes) {
+        let line: string = project_line_at(changes, at)
+        at = project_line_next(changes, at)
+        if line != "" {
+            out = out + "node|" + line + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_secret_lines say which secrets an import keeps and which it does
+// not have.
+fn projectfile_secret_lines(flat: string, secrets: string, key: string, mode: string) string {
+    var out: string = ""
+    if key != "" {
+        out = out + "kept|the gateway key, from the sealed block\n"
+    } else if mode != "overwrite" {
+        out = out + "omitted|the gateway key: the mesh gets a new one, so every board must be built and flashed again\n"
+    }
+    let passwords: string = project_lines_with(secrets, "plan.")
+    if passwords != "" && mode != "copy" {
+        out = out + "kept|the Wi-Fi passwords, from the sealed block\n"
+    }
+    let omitted: string = project_lines_with(flat, "omitted.")
+    var at: u32 = 0
+    while at < strlen(omitted) {
+        let line: string = project_line_at(omitted, at)
+        at = project_line_next(omitted, at)
+        if line != "" && plan_line_key(line) != "gateway_key" {
+            out = out + "omitted|" + plan_line_value(line) + "\n"
+        }
+    }
+    return out
+}
+
+// projectfile_evaluate_overwrite decides what importing a file over a mesh
+// would do: its plan's definition replaced in one write, what is this Mesh's
+// kept — id, folder, area, ports, gateway key, deployed records, tokens, jobs,
+// history — and nothing at all when the definition is already the mesh's
+// (MESH-XFER-0016, MESH-XFER-0019, MESH-XFER-0022, MESH-XFER-0023).
+// @req MESH-XFER-0016, MESH-XFER-0019, MESH-XFER-0022, MESH-XFER-0023
+fn projectfile_evaluate_overwrite(flat: string, plan: string, secrets: string, all_left_out: bool, digest: string,
+    target: string, name_in: string, file_name: string, description: string) ProjectImport {
+    if !projectfile_mesh_here(target) {
+        return projectfile_refused(409, "target|choose the mesh to import the file over", digest, "overwrite")
+    }
+    let path: string = project_file(target)
+    plan_import(path)
+    let current: string = rho_yaml_flat(path)
+    let conflicts: string = project_identity_conflicts("overwrite", projectfile_ids_elsewhere(plan, target), "")
+    if conflicts != "" {
+        return projectfile_refused(409, conflicts, digest, "overwrite")
+    }
+    var preview: string = ""
+    // The gateway key is this Mesh's and is never replaced.
+    let file_key: string = plan_value(secrets, "gateway_key")
+    let own_key: string = str_trim(rho_read_text(mesh_gateway_key_file(target)))
+    if file_key != "" && !str_eq(file_key, own_key) {
+        preview = preview + "warning|the file's gateway key is not this mesh's, which is kept: boards flashed with the file's key must be built and flashed again\n"
+    }
+    if own_key != "" {
+        preview = preview + "kept|this mesh's gateway key\n"
+    }
+    // What is this Mesh's: placement, the legacy token, and the passwords the
+    // file does not carry for a node it keeps.
+    var kept: string = ""
+    let names: string = "area_id rest_port uplink_port gateway_token"
+    var index: u32 = 0
+    while index < 4 {
+        let key: string = str_field(names, " ", index)
+        if plan_value(current, key) != "" {
+            kept = kept + key + "=" + plan_value(current, key) + "\n"
+        }
+        index = index + 1
+    }
+    var passwords: string = project_lines_with(secrets, "plan.")
+    if secrets == "" {
+        passwords = projectfile_kept_passwords(current, plan)
+    }
+    let links: string = projectfile_links(plan, target)
+    preview = preview + projectfile_preview_part(links)
+    let base: string = projectfile_without_links(plan) + projectfile_plan_part(links) + kept + passwords
+    let stored: string = plan_stored(base)
+    let view: string = plan_view(stored)
+    let wifi: string = projectfile_wifi_holds(stored, flat, all_left_out)
+    let catalog: string = projectfile_catalog_holds(view)
+    preview = preview + projectfile_preview_part(wifi) + projectfile_preview_part(catalog) +
+        projectfile_preview_part(projectfile_machine_warnings(stored))
+    // The area and ports stay this mesh's.
+    let area: string = project_area_id(path)
+    let rest: string = projectfile_place(target, "rest_port")
+    let uplink: string = projectfile_place(target, "uplink_port")
+    let wanted: string = plan_value(flat, "mesh.area") + " " + plan_value(flat, "mesh.rest_port") + " " + plan_value(flat, "mesh.uplink_port")
+    let mine: string = area + " " + rest + " " + uplink
+    if wanted != mine {
+        preview = preview + "conflict|the file's area and ports (" + wanted + ") are not applied: the mesh keeps its own (" + mine + ")\n"
+    }
+    let text: string = "project.name=" + sanitize(file_name) + "\nproject.description=" + description + "\n" + base +
+        projectfile_plan_part(wifi) + projectfile_plan_part(catalog)
+    let unchanged: bool = project_same_definition(current, stored) &&
+        str_eq(plan_value(current, "project.name"), sanitize(file_name)) &&
+        str_eq(plan_value(current, "project.description"), description)
+    preview = preview + projectfile_node_lines(project_node_changes(current, stored))
+    preview = preview + projectfile_secret_lines(flat, secrets, file_key, "overwrite")
+    let before_manifest: string = mesh_manifest_text(target)
+    let after_manifest: string = manifest_document(manifest_nodes(view, int_to_str(u32(int_from_str(area)))), mesh_manifest_relays(target))
+    preview = preview + projectfile_manifest_lines(before_manifest, after_manifest, view)
+    preview = preview + projectfile_out_of_date(view, rho_read_text(deployed_file(target)))
+    if !str_eq(name_in, project_name(target)) {
+        preview = preview + "confirm|type the mesh's name, " + project_name(target) + ", to import the file over it\n"
+    }
+    return ProjectImport{ 200, "", digest, "overwrite", target, project_name(target), text, "", "", area, rest, uplink,
+        preview, unchanged }
+}
+
+// projectfile_kept_passwords are the Wi-Fi passwords an overwrite keeps when
+// the file carries none: the mesh's own, and each of a node the file keeps by
+// its id, under that node's row in the file.
+fn projectfile_kept_passwords(current: string, plan: string) string {
+    var out: string = ""
+    if plan_value(current, "password") != "" {
+        out = out + "password=" + plan_value(current, "password") + "\n"
+    }
+    let count: u32 = u32(int_from_str(plan_value(plan, "node.count")))
+    var row: u32 = 1
+    while row <= count && row <= PROJECT_MAX_NODES {
+        let id: string = plan_value(plan, "node." + int_to_str(row) + ".id")
+        let old: u32 = project_node_row_by_key(current, id)
+        if id != "" && old > 0 {
+            let password: string = plan_value(current, "node." + int_to_str(old) + ".password")
+            if password != "" {
+                out = out + "node." + int_to_str(row) + ".password=" + password + "\n"
+            }
+        }
+        row = row + 1
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Applying it                                                               */
+/* -------------------------------------------------------------------------- */
+
+// projectfile_fleet_take gives a new mesh its place in the fleet, under the
+// fleet's lock.
+fn projectfile_fleet_take(id: string, area: string, rest: string, uplink: string) bool {
+    rho_lock("mesh.fleet")
+    var text: string = ""
+    var at: u32 = 0
+    let old: string = fleet_text()
+    while at < strlen(old) {
+        let line: string = project_line_at(old, at)
+        at = project_line_next(old, at)
+        if line != "" && str_index_of(line, "mesh." + id + ".") != 0 {
+            text = text + line + "\n"
+        }
+    }
+    let written: bool = rho_yaml_write_flat(fleet_file(), text + "mesh." + id + ".area=" + area + "\nmesh." + id +
+        ".rest_port=" + rest + "\nmesh." + id + ".uplink_port=" + uplink + "\n", FLEET_HEADER)
+    rho_unlock("mesh.fleet")
+    return written
+}
+
+// projectfile_apply_new writes a new mesh in a hidden folder under the
+// projects directory — plan, key, record of what runs, manifest — takes its
+// place in the fleet and renames the folder into place; a failed rename gives
+// the place back. "" when it is in place, or why not (MESH-XFER-0021).
+// Nothing is started: its gateway is not started until Apply (MESH-XFER-0022).
+// @req MESH-XFER-0021, MESH-XFER-0022, MESH-0027
+fn projectfile_apply_new(plan: ProjectImport) string {
+    rho_lock("mesh.import")
+    let destination: string = project_location(plan.id)
+    if rho_path_exists(destination) {
+        rho_unlock("mesh.import")
+        return "mesh id " + plan.id + " was taken meanwhile: preview the file again"
+    }
+    let staging: string = projects_dir() + "/" + PROJECTFILE_STAGING + rho_random_hex(8)
+    let report: string = projectfile_report()
+    ignore_u32(rho_exec_args("mkdir", "-p\n--\n" + staging + "\n", report))
+    ignore_u32(rho_exec_args("chmod", "700\n--\n" + staging + "\n", report))
+    var ok: bool = rho_path_exists(staging)
+    if ok && plan.key != "" {
+        ok = rho_write_secret(staging + "/gateway.key", plan.key + "\n")
+    }
+    if ok && plan.deployed != "" {
+        ok = rho_write_secret(staging + "/deployed.txt", plan.deployed)
+    }
+    let stored: string = plan_stored(plan.text)
+    if ok {
+        ok = rho_yaml_write_flat(staging + "/" + PLAN_FILE, "revision=1\nupdated=" + int_to_str(mesh_now_seconds()) + "\n" + stored,
+            PLAN_HEADER)
+    }
+    if ok && plan.key != "" {
+        ok = rho_write_secret(staging + "/nodes.txt", manifest_document(manifest_nodes(plan_view(stored), plan.area), ""))
+    }
+    if ok {
+        ok = projectfile_fleet_take(plan.id, plan.area, plan.rest, plan.uplink)
+    }
+    // A test stops here, as a power cut would, to show that a start clears what
+    // an interrupted import left.
+    if ok && getenv("ROBOHUB_MESH_TEST_IMPORT_HALT") == "before-rename" {
+        panic("import halted before the rename, as asked by ROBOHUB_MESH_TEST_IMPORT_HALT")
+    }
+    if ok {
+        ok = rho_exec_args("mv", "-T\n--\n" + staging + "\n" + destination + "\n", report) == 0
+        if !ok {
+            fleet_forget(plan.id)
+        }
+    }
+    if !ok {
+        ignore_u32(rho_exec_args("rm", "-rf\n--\n" + staging + "\n", report))
+        rho_unlock("mesh.import")
+        return "the mesh could not be written; nothing was imported"
+    }
+    rho_unlock("mesh.import")
+    // The other side of a kept link, which the parent's gateway signature reads.
+    let parent: string = plan_value(stored, "mesh_parent")
+    if parent != "" && projectfile_mesh_here(parent) {
+        save_setting_at(project_file(parent), "mesh_children", link_children_words(parent))
+    }
+    ignore_bool(mesh_manifest_write(plan.id, false))
+    return ""
+}
+
+// projectfile_apply_overwrite replaces a mesh's plan in one write, keeping the
+// plan it replaces as a revision even when one was kept moments before
+// (MESH-XFER-0016).
+// @req MESH-XFER-0016, MESH-XFER-0021, MESH-XFER-0022
+fn projectfile_apply_overwrite(plan: ProjectImport) string {
+    let path: string = project_file(plan.id)
+    rho_lock("mesh.plan:" + path)
+    ignore_u32(rho_exec_args("mkdir", "-p\n--\n" + plan_dir(path) + "/revisions\n", projectfile_report()))
+    ignore_bool(rho_write_text(plan_dir(path) + "/revisions/last-kept.txt", "0"))
+    let written: bool = plan_write_held(path, plan.text)
+    rho_unlock("mesh.plan:" + path)
+    if !written {
+        return "the plan could not be written; nothing was imported"
+    }
+    return ""
+}
+
+// projectfile_cleanup removes at start what an interrupted import left: a
+// hidden folder under the projects directory, a scratch file in the state
+// folder, and a place in the fleet whose mesh has no folder (MESH-XFER-0021).
+// @req MESH-XFER-0021
+fn projectfile_cleanup() void {
+    let report: string = projectfile_report()
+    var rest: string = rho_list_dir(projects_dir())
+    while rest != "" {
+        let name: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        if str_index_of(name, PROJECTFILE_STAGING) == 0 && str_index_of(name, "/") < 0 {
+            ignore_u32(rho_exec_args("rm", "-rf\n--\n" + projects_dir() + "/" + name + "\n", report))
+            info("mesh", "removed " + name + ", left by an import that did not finish")
+        }
+    }
+    rest = rho_list_dir(wizard_dir())
+    while rest != "" {
+        let name: string = project_line_at(rest, 0)
+        rest = str_slice(rest, project_line_next(rest, 0), strlen(rest) - project_line_next(rest, 0))
+        if str_index_of(name, ".projectfile-") == 0 && str_index_of(name, "/") < 0 {
+            projectfile_remove(wizard_dir() + "/" + name)
+        }
+    }
+    let fleet: string = fleet_text()
+    var at: u32 = 0
+    while at < strlen(fleet) {
+        let line: string = project_line_at(fleet, at)
+        at = project_line_next(fleet, at)
+        let key: string = plan_line_key(line)
+        let suffix: string = ".area"
+        if str_index_of(key, "mesh.") != 0 || strlen(key) <= 5 + strlen(suffix) ||
+            str_slice(key, strlen(key) - strlen(suffix), strlen(suffix)) != suffix {
+            continue
+        }
+        let id: string = str_slice(key, 5, strlen(key) - 5 - strlen(suffix))
+        if id != "" && !rho_path_exists(project_location(id)) {
+            fleet_forget(id)
+            info("mesh", "gave back the fleet place of " + id + ", which has no folder")
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The requests                                                              */
+/* -------------------------------------------------------------------------- */
+
+// projectfile_too_large is whether a request's body is larger than an import
+// or export reads, said by its length before the body is looked at.
+// @req MESH-XFER-0026
+fn projectfile_too_large(req: Request) bool {
+    let length: string = header_str(req, "Content-Length")
+    return length != "" && (strlen(length) > 9 || u32(int_from_str(length)) > PROJECTFILE_MAX_BODY)
+}
+
+fn projectfile_too_large_answer(req: Request) Response {
+    return json(413, "{\"ok\":false,\"status\":\"too large\",\"problems\":[{\"where\":\"file\",\"problem\":\"the file is over 1 MiB\"}]}")
+}
+
+fn projectfile_problems_json(problems: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(problems) {
+        let line: string = project_line_at(problems, at)
+        at = project_line_next(problems, at)
+        let bar: i32 = str_index_of(line, "|")
+        if bar < 0 {
+            continue
+        }
+        if out != "" {
+            out = out + ","
+        }
+        out = out + "{\"where\":" + json_string(str_slice(line, 0, u32(bar))) + ",\"problem\":" +
+            json_string(str_slice(line, u32(bar) + 1, strlen(line) - u32(bar) - 1)) + "}"
+    }
+    return "[" + out + "]"
+}
+
+fn projectfile_status_word(status: u32) string {
+    if status == 413 {
+        return "too large"
+    }
+    if status == 409 {
+        return "conflict"
+    }
+    if status == 412 {
+        return "stale"
+    }
+    return "invalid"
+}
+
+// projectfile_section_json is the preview lines of one section as a JSON array:
+// of strings for one field, of objects for several.
+fn projectfile_section_json(preview: string, section: string, names: string) string {
+    var out: string = ""
+    var at: u32 = 0
+    while at < strlen(preview) {
+        let line: string = project_line_at(preview, at)
+        at = project_line_next(preview, at)
+        if str_index_of(line, section + "|") != 0 {
+            continue
+        }
+        let rest: string = str_slice(line, strlen(section) + 1, strlen(line) - strlen(section) - 1)
+        if out != "" {
+            out = out + ","
+        }
+        if names == "" {
+            out = out + json_string(rest)
+            continue
+        }
+        var item: string = ""
+        var index: u32 = 0
+        while str_field(names, " ", index) != "" {
+            if item != "" {
+                item = item + ","
+            }
+            item = item + json_string(str_field(names, " ", index)) + ":" + json_string(str_field(rest, "|", index))
+            index = index + 1
+        }
+        out = out + "{" + item + "}"
+    }
+    return "[" + out + "]"
+}
+
+fn projectfile_preview_json(plan: ProjectImport) string {
+    var unchanged: string = "false"
+    if plan.unchanged {
+        unchanged = "true"
+    }
+    return "{\"ok\":true,\"preview\":true,\"digest\":" + json_string(plan.digest) + ",\"mode\":" + json_string(plan.mode) +
+        ",\"mesh\":{\"id\":" + json_string(plan.id) + ",\"name\":" + json_string(plan.name) + ",\"area\":" + json_string(plan.area) +
+        ",\"rest_port\":" + json_string(plan.rest) + ",\"uplink_port\":" + json_string(plan.uplink) + "}" +
+        ",\"unchanged\":" + unchanged +
+        ",\"nodes\":" + projectfile_section_json(plan.preview, "node", "change id name") +
+        ",\"places\":" + projectfile_section_json(plan.preview, "place", "what file assigned") +
+        ",\"secrets\":{\"kept\":" + projectfile_section_json(plan.preview, "kept", "") +
+        ",\"omitted\":" + projectfile_section_json(plan.preview, "omitted", "") + "}" +
+        ",\"out_of_date\":" + projectfile_section_json(plan.preview, "outdated", "name reason") +
+        ",\"manifest\":" + projectfile_section_json(plan.preview, "manifest", "change board") +
+        ",\"conflicts\":" + projectfile_section_json(plan.preview, "conflict", "") +
+        ",\"warnings\":" + projectfile_section_json(plan.preview, "warning", "") +
+        ",\"confirm\":" + projectfile_section_json(plan.preview, "confirm", "") + "}"
+}
+
+// projectfile_confirm checks a confirmation and applies the import: the file
+// must be the one previewed (its digest), an overwrite must name the mesh as it
+// is called, and nothing is written for an overwrite that changes nothing.
+// "" when it is done, or `<status>|<where>|<why>`.
+// @req MESH-XFER-0016, MESH-XFER-0020, MESH-XFER-0021, MESH-XFER-0023
+fn projectfile_confirm(plan: ProjectImport, confirm: string, typed: string) string {
+    if !str_eq(confirm, plan.digest) {
+        return "412|confirm|the confirmation names another file than this one: preview it again"
+    }
+    if plan.mode == "overwrite" {
+        if !str_eq(typed, project_name(plan.id)) {
+            return "409|name|type the mesh's name, " + project_name(plan.id) + ", to import the file over it"
+        }
+        if plan.unchanged {
+            return ""
+        }
+        let failed: string = projectfile_apply_overwrite(plan)
+        if failed != "" {
+            return "500|(file)|" + failed
+        }
+        info("mesh", "imported a project file over " + plan.id)
+        return ""
+    }
+    let failed: string = projectfile_apply_new(plan)
+    if failed != "" {
+        if str_index_of(failed, "taken meanwhile") >= 0 {
+            return "409|mesh.id|" + failed
+        }
+        return "500|(file)|" + failed
+    }
+    info("mesh", "imported a project file as " + plan.mode + " mesh " + plan.id)
+    return ""
+}
+
+// The API's import: Mesh as a whole and a bearer token; a preview as JSON
+// without `confirm`, the import with it (MESH-XFER-0028).
+// @req MESH-XFER-0024, MESH-XFER-0025, MESH-XFER-0026, MESH-XFER-0028, MESH-0027, MESH-0028
+fn mesh_api_project_import(req: Request) Response {
+    if !mesh_admin_request(req) {
+        return mesh_denied(req)
+    }
+    if projectfile_too_large(req) {
+        return projectfile_too_large_answer(req)
+    }
+    let body: string = request_body(req)
+    if !forms_machine_ok(req, body) {
+        return json(403, "{\"ok\":false,\"error\":\"a session needs the form token; a program sends a bearer ticket\"}")
+    }
+    let plan: ProjectImport = projectfile_evaluate(form_field(body, "file"), form_field(body, "passphrase"),
+        form_field(body, "mode"), form_field(body, "target"), form_field(body, "name"))
+    if plan.status != 200 {
+        return json(plan.status, "{\"ok\":false,\"status\":" + json_string(projectfile_status_word(plan.status)) +
+            ",\"digest\":" + json_string(plan.digest) + ",\"problems\":" + projectfile_problems_json(plan.problems) + "}")
+    }
+    let confirm: string = form_field(body, "confirm")
+    if confirm == "" {
+        return json(200, projectfile_preview_json(plan))
+    }
+    let failed: string = projectfile_confirm(plan, confirm, form_field(body, "name"))
+    if failed != "" {
+        let status: u32 = u32(int_from_str(str_field(failed, "|", 0)))
+        let rest: string = str_slice(failed, u32(str_index_of(failed, "|")) + 1, strlen(failed) - u32(str_index_of(failed, "|")) - 1)
+        return json(status, "{\"ok\":false,\"status\":" + json_string(projectfile_status_word(status)) +
+            ",\"problems\":" + projectfile_problems_json(rest + "\n") + "}")
+    }
+    var unchanged: string = "false"
+    if plan.unchanged {
+        unchanged = "true"
+    }
+    return json(200, "{\"ok\":true,\"imported\":" + projectfile_bool(!plan.unchanged) + ",\"unchanged\":" + unchanged +
+        ",\"mode\":" + json_string(plan.mode) + ",\"mesh\":" + json_string(plan.id) + ",\"url\":" +
+        json_string("/mesh/p/" + plan.id) + "}")
+}
+
+fn projectfile_bool(value: bool) string {
+    if value {
+        return "true"
+    }
+    return "false"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The pages                                                                 */
+/* -------------------------------------------------------------------------- */
+
+// The script that reads a chosen file into the form's `file` field: Mesh reads
+// form bodies, not uploads (ADR-0008).
+const PROJECTFILE_READ_SCRIPT: string = "var f=this.files[0],t=this.form.elements['file'];if(!f){return}if(f.size>1048576){alert(this.dataset.toolarge);this.value='';return}var r=new FileReader();r.onload=function(){t.value=r.result};r.readAsText(f)"
+
+fn projectfile_file_input(loc: string) string {
+    return "<label>" + escape_html(mesh_t(loc, "projectfile.file")) + "<input type=\"file\" accept=\".yml,.yaml,.json,application/json,application/yaml\" data-toolarge=\"" +
+        escape_html(mesh_t(loc, "projectfile.too_large")) + "\" onchange=\"" + escape_html(PROJECTFILE_READ_SCRIPT) +
+        "\" required></label><textarea name=\"file\" hidden></textarea>"
+}
+
+// projectfile_settings_sections are the settings page's export and import:
+// export as YAML or JSON for whoever may read the mesh, and — for Mesh as a
+// whole — with its secrets sealed, and an import over this mesh
+// (MESH-XFER-0027).
+// @req MESH-XFER-0027
+fn projectfile_settings_sections(req: Request, id: string, problem: string) string {
+    let loc: string = i18n_locale(req)
+    let base: string = "/mesh/project/" + escape_html(id) + "/export"
+    var out: string = "<section class=\"settings-export\" id=\"export\" style=\"margin-top:1.4rem\"><h2>" + mesh_t(loc, "projectfile.export_title") + "</h2>" +
+        "<p>" + escape_html(mesh_t(loc, "projectfile.export_intro")) + "</p>" +
+        "<p class=\"inline-row\"><a class=\"button\" href=\"" + base + "\" download>" + mesh_t(loc, "projectfile.export_yaml") +
+        "</a> <a class=\"button quiet\" href=\"" + base + "?format=json\" download>" + mesh_t(loc, "projectfile.export_json") + "</a></p>"
+    if problem != "" {
+        out = out + "<p class=\"notice error\">" + escape_html(problem) + "</p>"
+    }
+    if !mesh_admin_request(req) {
+        return out + "<p><small>" + escape_html(mesh_t(loc, "projectfile.admin_only")) + "</small></p></section>"
+    }
+    out = out + "<details><summary>" + mesh_t(loc, "projectfile.sealed_title") + "</summary>" +
+        "<p>" + escape_html(mesh_t(loc, "projectfile.sealed_intro")) + "</p>" +
+        "<form class=\"grid\" method=\"post\" action=\"" + base + "\">" + forms_csrf_field() +
+        "<label>" + escape_html(mesh_t(loc, "projectfile.passphrase")) + "<input type=\"password\" name=\"passphrase\" minlength=\"12\" autocomplete=\"new-password\" required></label>" +
+        "<label>" + escape_html(mesh_t(loc, "projectfile.passphrase2")) + "<input type=\"password\" name=\"passphrase2\" minlength=\"12\" autocomplete=\"new-password\" required></label>" +
+        mesh_select("format", mesh_t(loc, "projectfile.format"), option("yaml", "YAML", "", "yaml") + option("json", "JSON", "", "yaml"), "") +
+        "<button type=\"submit\">" + mesh_t(loc, "projectfile.export_sealed") + "</button></form></details></section>"
+    out = out + "<section class=\"settings-import\" id=\"import\" style=\"margin-top:1.4rem\"><h2>" + mesh_t(loc, "projectfile.import_over_title") + "</h2>" +
+        "<p>" + escape_html(mesh_t(loc, "projectfile.import_over_intro")) + "</p>" +
+        "<form class=\"grid\" method=\"post\" action=\"/mesh/project/import\">" + forms_csrf_field() +
+        "<input type=\"hidden\" name=\"mode\" value=\"overwrite\"><input type=\"hidden\" name=\"target\" value=\"" + escape_html(id) + "\">" +
+        projectfile_file_input(loc) +
+        "<label>" + escape_html(mesh_t(loc, "projectfile.passphrase_open")) + "<input type=\"password\" name=\"passphrase\" autocomplete=\"off\"></label>" +
+        "<button type=\"submit\">" + mesh_t(loc, "projectfile.preview") + "</button></form></section>"
+    return out
+}
+
+// projectfile_fleet_section is the fleet page's import: a file as a new mesh or
+// a copy, for Mesh as a whole (MESH-XFER-0027).
+// @req MESH-XFER-0027
+fn projectfile_fleet_section(req: Request) string {
+    if !mesh_admin_request(req) {
+        return ""
+    }
+    let loc: string = i18n_locale(req)
+    return "<section class=\"mesh-form-panel import-mesh\" id=\"import-mesh\" style=\"margin:1rem\"><h2>" + mesh_t(loc, "projectfile.import_title") + "</h2>" +
+        "<p>" + escape_html(mesh_t(loc, "projectfile.import_intro")) + "</p>" +
+        "<form class=\"grid\" method=\"post\" action=\"/mesh/project/import\">" + forms_csrf_field() +
+        projectfile_file_input(loc) +
+        mesh_select("mode", mesh_t(loc, "projectfile.mode"), option("new", mesh_t(loc, "projectfile.mode_new"), "", "new") +
+            option("copy", mesh_t(loc, "projectfile.mode_copy"), "", "new"), mesh_t(loc, "projectfile.mode_help")) +
+        mesh_input("name", mesh_t(loc, "projectfile.name"), "", mesh_t(loc, "projectfile.name_help")) +
+        "<label>" + escape_html(mesh_t(loc, "projectfile.passphrase_open")) + "<input type=\"password\" name=\"passphrase\" autocomplete=\"off\"></label>" +
+        "<button type=\"submit\">" + mesh_t(loc, "projectfile.preview") + "</button></form></section>"
+}
+
+fn projectfile_settings_with(req: Request, id: string, problem: string, status: u32) Response {
+    return Response{ status, mesh_project_settings_html(req, id, problem), "text/html; charset=utf-8", "Cache-Control: no-store" }
+}
+
+fn projectfile_list_html(loc: string, preview: string, section: string, title_key: string, fields: u32) string {
+    var items: string = ""
+    var at: u32 = 0
+    while at < strlen(preview) {
+        let line: string = project_line_at(preview, at)
+        at = project_line_next(preview, at)
+        if str_index_of(line, section + "|") != 0 {
+            continue
+        }
+        let rest: string = str_slice(line, strlen(section) + 1, strlen(line) - strlen(section) - 1)
+        var shown: string = rest
+        if fields > 1 {
+            shown = str_replace(rest, "|", " · ")
+        }
+        items = items + "<li>" + escape_html(shown) + "</li>"
+    }
+    if items == "" {
+        return ""
+    }
+    return "<h3>" + mesh_t(loc, title_key) + "</h3><ul>" + items + "</ul>"
+}
+
+fn projectfile_hidden(name: string, value: string) string {
+    return "<input type=\"hidden\" name=\"" + escape_html(name) + "\" value=\"" + escape_html(value) + "\">"
+}
+
+// projectfile_preview_page shows what an import will do before it is done:
+// the mesh it creates or replaces, every change, conflict and warning, and a
+// form that confirms this file by its digest (MESH-XFER-0020, MESH-XFER-0027).
+// @req MESH-XFER-0020, MESH-XFER-0027
+fn projectfile_preview_page(req: Request, plan: ProjectImport, body: string) Response {
+    let loc: string = i18n_locale(req)
+    var head: string = mesh_fill(mesh_fill(mesh_t(loc, "projectfile.preview_" + plan.mode), "id", plan.id), "name", plan.name)
+    var content: string = "<p class=\"mesh-nav\"><a href=\"/mesh\">" + mesh_t(loc, "nav.fleet") + "</a></p><h1>" +
+        mesh_t(loc, "projectfile.preview_title") + "</h1><p>" + escape_html(head) + "</p>" +
+        "<p><small>" + escape_html(mesh_fill(mesh_t(loc, "projectfile.digest"), "digest", plan.digest)) + "</small></p>"
+    if plan.unchanged {
+        content = content + "<p class=\"notice\">" + escape_html(mesh_t(loc, "projectfile.unchanged")) + "</p>"
+    }
+    content = content + projectfile_list_html(loc, plan.preview, "conflict", "projectfile.conflicts", 1) +
+        projectfile_list_html(loc, plan.preview, "warning", "projectfile.warnings", 1) +
+        projectfile_list_html(loc, plan.preview, "node", "projectfile.nodes", 3) +
+        projectfile_list_html(loc, plan.preview, "place", "projectfile.places", 3) +
+        projectfile_list_html(loc, plan.preview, "kept", "projectfile.kept", 1) +
+        projectfile_list_html(loc, plan.preview, "omitted", "projectfile.omitted", 1) +
+        projectfile_list_html(loc, plan.preview, "manifest", "projectfile.manifest", 2) +
+        projectfile_list_html(loc, plan.preview, "outdated", "projectfile.outdated", 2)
+    var confirm_field: string = ""
+    if plan.mode == "overwrite" {
+        confirm_field = "<label>" + escape_html(mesh_fill(mesh_t(loc, "projectfile.type_name"), "name", plan.name)) +
+            "<input type=\"text\" name=\"name\" autocomplete=\"off\" required></label>"
+    } else {
+        confirm_field = projectfile_hidden("name", form_field(body, "name"))
+    }
+    content = content + "<form class=\"grid\" method=\"post\" action=\"/mesh/project/import\">" + forms_csrf_field() +
+        projectfile_hidden("file", form_field(body, "file")) + projectfile_hidden("passphrase", form_field(body, "passphrase")) +
+        projectfile_hidden("mode", plan.mode) + projectfile_hidden("target", form_field(body, "target")) +
+        projectfile_hidden("confirm", plan.digest) + confirm_field +
+        "<button type=\"submit\">" + mesh_t(loc, "projectfile.confirm") + "</button> <a href=\"/mesh\">" + mesh_t(loc, "projectfile.cancel") + "</a></form>"
+    let page: string = mesh_shell(req, mesh_t(loc, "projectfile.preview_title"), "<section class=\"mesh-form-panel page-panel\">" + content + "</section>")
+    return Response{ 200, page, "text/html; charset=utf-8", "Cache-Control: no-store" }
+}
+
+fn projectfile_problems_page(req: Request, status: u32, problems: string) Response {
+    let loc: string = i18n_locale(req)
+    var items: string = ""
+    var at: u32 = 0
+    while at < strlen(problems) {
+        let line: string = project_line_at(problems, at)
+        at = project_line_next(problems, at)
+        if line != "" {
+            items = items + "<li><code>" + escape_html(str_field(line, "|", 0)) + "</code> " +
+                escape_html(str_slice(line, u32(str_index_of(line, "|")) + 1, strlen(line) - u32(str_index_of(line, "|")) - 1)) + "</li>"
+        }
+    }
+    var title: string = mesh_t(loc, "projectfile.invalid")
+    if status == 409 {
+        title = mesh_t(loc, "projectfile.conflicted")
+    } else if status == 412 {
+        title = mesh_t(loc, "projectfile.stale")
+    } else if status == 413 {
+        title = mesh_t(loc, "projectfile.too_large")
+    }
+    let page: string = mesh_shell(req, mesh_t(loc, "projectfile.preview_title"),
+        "<section class=\"mesh-form-panel page-panel\"><p class=\"mesh-nav\"><a href=\"/mesh\">" + mesh_t(loc, "nav.fleet") +
+        "</a></p><h1>" + escape_html(title) + "</h1><p>" + escape_html(mesh_t(loc, "projectfile.nothing_written")) + "</p><ul>" + items +
+        "</ul></section>")
+    return Response{ status, page, "text/html; charset=utf-8", "Cache-Control: no-store" }
+}
+
+// The page's import: Mesh as a whole and the form token; the preview page
+// without `confirm`, the import with it (MESH-XFER-0024, MESH-XFER-0025).
+// @req MESH-XFER-0020, MESH-XFER-0024, MESH-XFER-0025, MESH-XFER-0027, MESH-0027, MESH-0028
+fn mesh_project_import_page(req: Request) Response {
+    if !mesh_admin_request(req) {
+        return mesh_denied(req)
+    }
+    if projectfile_too_large(req) {
+        return projectfile_problems_page(req, 413, "file|the file is over 1 MiB\n")
+    }
+    let body: string = request_body(req)
+    if !forms_csrf_ok(body) {
+        return mesh_denied(req)
+    }
+    let plan: ProjectImport = projectfile_evaluate(form_field(body, "file"), form_field(body, "passphrase"),
+        form_field(body, "mode"), form_field(body, "target"), form_field(body, "name"))
+    if plan.status != 200 {
+        return projectfile_problems_page(req, plan.status, plan.problems)
+    }
+    let confirm: string = form_field(body, "confirm")
+    if confirm == "" {
+        return projectfile_preview_page(req, plan, body)
+    }
+    let failed: string = projectfile_confirm(plan, confirm, form_field(body, "name"))
+    if failed != "" {
+        let status: u32 = u32(int_from_str(str_field(failed, "|", 0)))
+        let rest: string = str_slice(failed, u32(str_index_of(failed, "|")) + 1, strlen(failed) - u32(str_index_of(failed, "|")) - 1)
+        return projectfile_problems_page(req, status, rest + "\n")
+    }
+    return mesh_redirect("/mesh/p/" + plan.id)
+}
+
+/* -------------------------------------------------------------------------- */
+/*  What an import holds back                                                 */
+/* -------------------------------------------------------------------------- */
+
+// projectfile_build_refusal is why a board an import brought cannot be built
+// yet, in `loc`, or "": on Wi-Fi without the password the file left out, until
+// one is entered (MESH-XFER-0029); a board, driver or module this Mesh's catalog
+// lacks, until it has it (MESH-XFER-0018).
+// @req MESH-XFER-0018, MESH-XFER-0029
+fn projectfile_build_refusal(loc: string, id: string, index: u32) string {
+    let text: string = plan_text(project_file(id))
+    let number: string = plan_value(text, "node." + int_to_str(index) + ".number")
+    if number == "" {
+        return ""
+    }
+    let label: string = projectfile_node_label(text, index)
+    if words_contain(plan_value(text, "import.wifi_needed"), number) &&
+        plan_value(text, "node." + int_to_str(index) + ".link") == "wifi" && projectfile_effective_password(text, index) == "" {
+        return mesh_fill(mesh_fill(mesh_t(loc, "projectfile.build_needs_wifi"), "name", label), "network", projectfile_ssid(text, index))
+    }
+    if words_contain(plan_value(text, "import.catalog_missing"), number) {
+        var missing: string = projectfile_catalog_missing(text, index)
+        let count: u32 = u32(int_from_str(plan_value(text, "node.count")))
+        var row: u32 = 1
+        while row <= count && missing == "" {
+            if plan_value(text, "node." + int_to_str(row) + ".parent") == "node." + int_to_str(index) {
+                missing = projectfile_catalog_missing(text, row)
+            }
+            row = row + 1
+        }
+        if missing != "" {
+            return mesh_fill(mesh_fill(mesh_t(loc, "projectfile.build_needs_catalog"), "name", label), "missing", missing)
+        }
+    }
+    return ""
+}

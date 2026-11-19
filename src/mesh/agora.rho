@@ -1386,6 +1386,7 @@ fn mesh_fleet_page(req: Request) Response {
         "<div class=\"fbar\" sse-swap=\"fleet-bar\" hx-swap=\"innerHTML\">" + fleet_summary(i18n_locale(req)) + "</div>" +
         "<div class=\"fleet-body\"><div class=\"fleet-grid\" sse-swap=\"fleet-cards\" hx-swap=\"innerHTML\">" + fleet_cards(i18n_locale(req)) + "</div>" +
         "<aside class=\"inbox\" sse-swap=\"fleet-side\" hx-swap=\"innerHTML\">" + fleet_inbox(i18n_locale(req)) + fleet_hosts(i18n_locale(req)) + "</aside></div>" +
+        projectfile_fleet_section(req) +
         "<div class=\"activity\" sse-swap=\"fleet-activity\" hx-swap=\"innerHTML\">" + fleet_activity(i18n_locale(req)) + "</div></div>"
     return html(status_ok(), mesh_shell(req, i18n_t(req, "nav.fleet"), body))
 }

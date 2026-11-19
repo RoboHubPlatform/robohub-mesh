@@ -28,6 +28,7 @@ include "mesh/domain/poll.rho"
 include "mesh/domain/switch.rho"
 include "mesh/domain/alerting.rho"
 include "mesh/domain/signals.rho"
+include "mesh/domain/project_file.rho"
 include "mesh/plan.rho"
 include "mesh/fleet.rho"
 include "mesh/store.rho"
@@ -54,6 +55,7 @@ include "mesh/manifest.rho"
 include "mesh/nodekey.rho"
 include "mesh/production.rho"
 include "mesh/alerts.rho"
+include "mesh/projectfile.rho"
 
 import std.web.http
 import std.web.template
@@ -132,10 +134,13 @@ route GET "/mesh/project/{id}/settings" => mesh_project_settings_page
 route POST "/mesh/project/{id}/settings" => mesh_project_settings_post
 route POST "/mesh/project/{id}/token" => mesh_project_token_generate
 route POST "/mesh/project/{id}/token/revoke" => mesh_project_token_revoke
+route GET "/mesh/project/{id}/export" => mesh_project_export_get
+route POST "/mesh/project/{id}/export" => mesh_project_export_sealed_page
 route GET "/mesh/project/{id}" => mesh_project_open_page
 route POST "/mesh/project/delete" => mesh_project_delete
 route POST "/mesh/project/new" => mesh_project_new
 route POST "/mesh/project/copy" => mesh_project_copy
+route POST "/mesh/project/import" => mesh_project_import_page
 route POST "/mesh/apply-all" => mesh_apply_all
 route GET "/mesh/search" => mesh_search
 route POST "/mesh/gateway/restart" => mesh_gateway_restart
@@ -164,6 +169,9 @@ route GET "/mesh/api/clients" => mesh_client_list
 route POST "/mesh/api/clients/publish" => mesh_publish
 route GET "/mesh/api/projects" => mesh_api_projects
 route GET "/mesh/api/projects/{project}/gateway" => mesh_api_project_gateway
+route GET "/mesh/api/projects/{project}/export" => mesh_project_export_get
+route POST "/mesh/api/projects/{project}/export" => mesh_api_project_export_sealed
+route POST "/mesh/api/projects/import" => mesh_api_project_import
 route GET "/mesh/api/projects/{project}/sources" => mesh_api_project_sources
 route GET "/mesh/api/projects/{project}/nodes" => mesh_api_project_nodes
 route GET "/mesh/api/projects/{project}/sources/{source}/value" => mesh_api_source_value
@@ -189,6 +197,9 @@ fn init() void {
     log_config_apply("mesh")
     // Keys, Wi-Fi passwords and images built with them are Mesh's user's alone.
     mesh_tree_private()
+    // An import a power cut interrupted left a hidden folder and maybe a fleet
+    // place; neither is a mesh.
+    projectfile_cleanup()
     info("mesh", "starting")
 }
 
