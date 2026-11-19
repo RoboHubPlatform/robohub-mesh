@@ -44,7 +44,7 @@ Names, descriptions and a device's address are not in any signature.
 - A board programmed before signatures were kept has none and shows as never
   programmed until it is flashed again (or the plan is told it was).
 
-## Amendment (2026-11-19, proposed)
+## Amendment (2026-11-19, approved by the maintainer)
 
 Found while analysing export and import, and proposed for review with the fix in
 Mesh 0.21.1:

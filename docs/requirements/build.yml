@@ -25,7 +25,7 @@ requirements:
     rationale: What does not reach the image must not make anyone rebuild it.
     satisfies: [MESH-0003]
     decided_by: [ADR-0001]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -42,7 +42,7 @@ requirements:
     rationale: The person decides what to apply from what changed; a new link needs both ends.
     satisfies: [MESH-0003]
     decided_by: [ADR-0001]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
@@ -196,7 +196,7 @@ requirements:
       compared segment by segment nor taken to run what is planned.
     rationale: What such a board was built with cannot be told from its record; showing it current is the fault this requirement closes, and a reflash is the only way to know.
     satisfies: [MESH-0003]
-    status: proposed
+    status: approved
     verification: test
     decided_by: [ADR-0001]
     owner: maintainer
@@ -215,7 +215,7 @@ requirements:
       replaced when it is read.
     rationale: deployed.txt, job records and the apply page's diff are not secrets stores; a password there leaked to anyone who could read them, while a change to it must still put the board out of date.
     satisfies: [MESH-0003]
-    status: proposed
+    status: approved
     verification: test
     decided_by: [ADR-0001]
     owner: maintainer

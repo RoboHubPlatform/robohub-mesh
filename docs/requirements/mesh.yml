@@ -50,7 +50,7 @@ requirements:
     rationale: Renaming a board must not cost a reflash, and an edit must never reset a running mesh by itself.
     satisfies: [SYS-0042]
     decided_by: [ADR-0001]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
     changed: 2026-11-19
