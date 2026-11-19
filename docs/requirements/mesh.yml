@@ -333,7 +333,7 @@ requirements:
     statement: When Mesh switches a network device it shall record the requested state as pending and show the device's state only from what the device reports after the request (its HTTP status, or the newest status message on the broker that carries the device's state field, from whichever of its status topics carries it, when that message is newer than the request); a request the device has not confirmed within 30 seconds, or one to a device whose manifest names no state field for its transport, shall be shown as requested and unconfirmed, never as the device's state, and the API shall answer 200 with the reported state when it is confirmed and 202 with state "pending" while it waits.
     rationale: A page must never claim a heater is off when it is not; a command that was taken is not a command that was carried out.
     satisfies: [SYS-0025, SYS-0059]
-    status: proposed
+    status: approved
     verification: test
     decided_by: [ADR-0009]
     owner: maintainer
