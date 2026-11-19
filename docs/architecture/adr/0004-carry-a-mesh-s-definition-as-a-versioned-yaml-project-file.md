@@ -148,3 +148,19 @@ document against a JSON Schema.
   runtime. JSON stays accepted and offered.
 - **A deny-list (as `cross_template_lines`).** A new runtime key would leak into
   every export until someone noticed. Rejected in favour of the allow-list.
+
+## Amendment (2026-11-19, approved by the maintainer)
+
+Made during implementation and approved in review:
+
+- **The record of what runs travels sealed, not in clear.** The `deployed.*` section
+  named above holds image signatures, and a signature includes the board's Wi-Fi
+  password; carried in clear it would break MESH-0026. It is therefore part of the
+  sealed block (`sealed.data`), and a default export carries no record of what runs.
+  An import without the sealed block starts with every board shown as never
+  programmed (MESH-XFER-0013, MESH-XFER-0017).
+- **Import holds are runtime keys of the plan.** A Wi-Fi board waiting for its
+  password and a board missing from the catalog are recorded as
+  `import.wifi_needed` and `import.catalog_missing`, so a new mesh stays one staged
+  plan and an overwrite one plan write; like every runtime key they are never
+  exported (MESH-XFER-0003, MESH-XFER-0029).

@@ -72,8 +72,15 @@ user and process.
 
 - **Import with `mesh:<id>` for an overwrite of that mesh.** Would let a holder of
   one mesh replace its manifest — and so admit boards — without Mesh-wide trust.
-  Rejected for now; an open question for the maintainer.
+  Rejected: the maintainer decided (2026-11-19) that an overwrite needs `*` or
+  `mesh:*`, because it changes which boards the gateway admits.
 - **Multipart upload.** Needs a parser in rho; reading the file in the page is
   enough.
 - **`rho mesh` CLI.** Second writer of the plan outside the process lock; not
   needed while the API exists. Rejected for now.
+
+## Amendment (2026-11-19, approved by the maintainer)
+
+The open question on importing over a mesh with that mesh's own grant is settled:
+an overwrite, like every import and every sealed export, needs `*` or `mesh:*`
+(MESH-XFER-0024).

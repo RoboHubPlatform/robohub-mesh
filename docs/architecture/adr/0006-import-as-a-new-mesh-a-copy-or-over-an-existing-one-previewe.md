@@ -129,3 +129,15 @@ the file does not exist here); a mesh id is accepted only in the charset
 - **Import without a preview, with undo only.** Undo of a new mesh is a delete;
   undo of an overwrite is a revision — but a manifest change takes effect before
   anyone sees it. Rejected.
+
+## Amendment (2026-11-19, approved by the maintainer)
+
+Made during implementation and approved in review:
+
+- **An overwrite from a file without passwords keeps this mesh's Wi-Fi passwords,**
+  the mesh-wide one and each node's, matched by node id; a sealed block that is
+  opened replaces them. This is what makes re-importing a default export over its
+  own mesh change nothing (MESH-XFER-0016, MESH-XFER-0023).
+- **An overwrite takes the file's name and description** (`mesh.*`), and keeps this
+  Mesh's id, folder, area, ports, gateway key, record of what runs, tokens, jobs and
+  history; runtime keys of the plan are dropped (MESH-XFER-0016, MESH-XFER-0019).
