@@ -44,8 +44,9 @@ requirements:
     statement: >
       Mesh shall record what each board's image and the gateway were last built
       from, show a board or the gateway as out of date, with the reason, only when
-      what it is built from differs from the plan, and change nothing that runs
-      until a person applies the change.
+      what it is built from differs from what the plan and the mesh — its area and
+      its gateway key — now give it, and change nothing that runs until a person
+      applies the change.
     rationale: Renaming a board must not cost a reflash, and an edit must never reset a running mesh by itself.
     satisfies: [SYS-0042]
     decided_by: [ADR-0001]

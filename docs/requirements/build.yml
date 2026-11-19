@@ -10,11 +10,17 @@ requirements:
   - id: MESH-BUILD-0001
     title: A board's signature is what its image is built from
     statement: >
-      A board's signature shall be made of its board, role, parent, link and the
-      link's settings, its modules, the links it serves, its production toggle
-      when on, and the gateway's address when it dials the gateway over a network;
-      a node's name or description and a device's address shall change no board's
-      signature and not the gateway's.
+      A board's signature shall be made of the mesh's area, the scope of the gateway
+      key its key is derived from (never the key itself), its number, board, role,
+      parent, link and the link's settings (with the mesh's Wi-Fi name and password
+      when the board has none of its own), its modules, the links it serves, its
+      production toggle when on, and, when it dials the gateway over a network, the
+      address it dials as the build resolves it (the plan's, else the fleet's uplink
+      port); the gateway's signature shall be made of the area, the gateway key's
+      scope, where it runs, its host, its REST and uplink ports, the links it
+      serves, and the meshes it reports through, with the address and key scope of
+      the one above; a node's name or description, a board's key epoch and a
+      device's address shall change no board's signature and not the gateway's.
     rationale: What does not reach the image must not make anyone rebuild it.
     satisfies: [MESH-0003]
     decided_by: [ADR-0001]
@@ -27,11 +33,11 @@ requirements:
   - id: MESH-BUILD-0002
     title: Out of date says why
     statement: >
-      A board whose recorded signature differs from the plan's shall be shown out
-      of date with the reason — never programmed, board changed, modules changed,
-      link changed, gateway address changed or production build changed — and a
-      changed link shall also put the gateway or relay serving it out of date as a
-      link it serves changed.
+      A board whose recorded signature differs from the plan's shall be shown out of
+      date with the reason — never programmed, area changed, gateway key changed,
+      node number changed, board changed, modules changed, link changed, gateway
+      address changed or production build changed — and a changed link shall also
+      put the gateway or relay serving it out of date as a link it serves changed.
     rationale: The person decides what to apply from what changed; a new link needs both ends.
     satisfies: [MESH-0003]
     decided_by: [ADR-0001]
@@ -179,3 +185,19 @@ requirements:
     owner: maintainer
     changed: 2026-11-19
     tags: [production, flash]
+
+  - id: MESH-BUILD-0012
+    title: A record without the area and key is not trusted
+    statement: >
+      A board or gateway whose recorded signature was written before signatures
+      named the mesh's area and gateway key shall be shown out of date with the
+      reason that it was recorded without its area and key, and shall not be
+      compared segment by segment nor taken to run what is planned.
+    rationale: What such a board was built with cannot be told from its record; showing it current is the fault this requirement closes, and a reflash is the only way to know.
+    satisfies: [MESH-0003]
+    status: proposed
+    verification: test
+    decided_by: [ADR-0001]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, deploy]
