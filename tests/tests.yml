@@ -49,16 +49,20 @@ suites:
   # (pending, then unconfirmed, when its relay sticks), a gateway outage and an
   # unsent revocation raised as one alert each through the log provider, and a
   # mesh created, saved and deleted without touching a folder named like the
-  # path's first word.
-  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010
+  # path's first word; and a stand-in Tasmota plug on a broker of the smoke's own,
+  # holding Mesh to its manifest's broker grants: four topics merged into one
+  # reading, a switch confirmed only by stat/RESULT or stat/POWER, a stuck relay
+  # pending then unconfirmed, a refused word kept out, LWT Offline unreachable.
+  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010, MESH-0029, MESH-0030, MESH-0031, MESH-0032
   - name: devices-smoke
     kind: command
     tags: [smoke, devices, alerts]
     command: [python3, tests/devices_smoke.py]
   # The telemetry store's own tests, against a real SQLite database with Mesh's
   # schema and a stand-in gateway: ingest once per gateway and sequence, series
-  # keying, roll-up and retention.
-  # @verifies MESH-TEL-0001, MESH-TEL-0002, MESH-TEL-0004, MESH-TEL-0005, MESH-TEL-0006
+  # keying, roll-up and retention; and a device's fields merged from the
+  # messages it published (topics newest first, `$`, onoff, the Shelly topic).
+  # @verifies MESH-TEL-0001, MESH-TEL-0002, MESH-TEL-0004, MESH-TEL-0005, MESH-TEL-0006, MESH-0029, MESH-0030, MESH-0031
   - name: telemetry-store
     kind: command
     tags: [unit, go, telemetry]

@@ -1611,6 +1611,14 @@ fn signal_clean(value: string) string {
         let last: string = rho_str_slice(out, u32(rho_strlen(out)) - 1, 1)
         if (first == "\"" && last == "\"") || (first == "'" && last == "'") {
             out = rho_str_slice(out, 1, u32(rho_strlen(out)) - 2)
+        } else if first == "\"" || first == "'" {
+            // A quoted item with a comment after it: the item is what the
+            // quotes hold (`- "a|b|c"   # why`).
+            let close: i32 = rho_str_index_of(rho_str_slice(out, 1, u32(rho_strlen(out)) - 1), first)
+            if close >= 0 && str_starts_with(str_trim(rho_str_slice(out, u32(close) + 2,
+                u32(rho_strlen(out)) - u32(close) - 2)), "#") {
+                out = rho_str_slice(out, 1, u32(close))
+            }
         }
     }
     return out

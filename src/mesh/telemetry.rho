@@ -41,6 +41,7 @@ extern fn telemetry_rollup(project: string) string
 extern fn telemetry_record(project: string, source: string, field_name: string, value: string, status: u32) u32
 extern fn telemetry_json_number(document: string, path: string, scale: string) string
 extern fn telemetry_json_bool(document: string, path: string) string
+extern fn telemetry_device_fields(listing: string, topics: string, fields: string) string
 extern fn telemetry_checkpoint(mode: string) string
 extern fn telemetry_vacuum(mode: string) string
 extern fn telemetry_storage_status(project: string) string
@@ -369,11 +370,33 @@ fn telemetry_poll_http_device(project: string, file: string, index: u32) u32 {
 }
 
 // telemetry_record_fields stores the fields a manifest's field map describes —
-// `signal|field|unit|kind|json path|scale`, one per line — from a device's JSON
-// answer, whichever transport brought it, and answers how many were written.
+// `signal|field|unit|kind|json path|scale`, one per line — from an HTTP device's
+// JSON answer, and answers how many were written.
 fn telemetry_record_fields(project: string, source: string, body: string, fields: string) u32 {
-    var rest: string = fields
+    return telemetry_record_reading(project, source, telemetry_http_reading(body, fields))
+}
+
+// telemetry_http_reading is an HTTP device's answer read by its field map, as
+// the telemetry port reads an MQTT device's messages: one message, on a topic of
+// its own, so `onoff` and `$` mean the same on both transports.
+// @req MESH-0030, MESH-0031
+fn telemetry_http_reading(body: string, fields: string) string {
+    var flat: string = str_replace(body, "\r", " ")
+    flat = str_replace(flat, "\n", " ")
+    flat = str_replace(flat, "\t", " ")
+    return telemetry_device_fields("http\t0\t" + flat + "\n", "http\n", fields)
+}
+
+// telemetry_record_reading stores a device's reading — the telemetry port's
+// line per field, `field<TAB>value<TAB>age<TAB>problem` — and answers how many
+// fields were written. A field the reading does not name is left as it was; a
+// field whose newest message held a value its type refuses (a protocol error)
+// is left as it was too, and said in the log once until it changes.
+// @req MESH-0029, MESH-0031
+fn telemetry_record_reading(project: string, source: string, reading: string) u32 {
+    var rest: string = reading
     var recorded: u32 = 0
+    var problems: string = ""
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
         var line: string = rest
@@ -381,42 +404,40 @@ fn telemetry_record_fields(project: string, source: string, body: string, fields
             rest = ""
         } else {
             line = rho_str_slice(rest, 0, u32(at))
-            rest = rho_str_slice(rest, u32(at) + 1,
-                u32(rho_strlen(rest)) - u32(at) - 1)
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
-        line = str_trim(line)
-        if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") &&
-            rho_str_slice(line, u32(rho_strlen(line)) - 1, 1) == "\"" {
-            line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
-        }
-        let field_name: string = field(line, 1)
-        let kind: string = field(line, 3)
-        let json_path: string = field(line, 4)
-        let scale: string = field(line, 5)
-        if field_name == "" || json_path == "" {
+        let field_name: string = device_reading_part(line, 0)
+        let value: string = device_reading_part(line, 1)
+        if field_name == "" {
             continue
         }
-        if kind == "bool" {
-            let value: string = telemetry_json_bool(body, json_path)
-            if value == "true" {
-                ignore_u32(telemetry_record_event(project, source, field_name, "1", 0))
-                recorded = recorded + 1
-            } else if value == "false" {
-                ignore_u32(telemetry_record_event(project, source, field_name, "0", 0))
-                recorded = recorded + 1
-            }
-        } else {
-            let value: string = telemetry_json_number(body, json_path, scale)
-            if value != "" {
-                ignore_u32(telemetry_record_event(project, source, field_name, value, 0))
-                recorded = recorded + 1
-            }
+        if value != "" {
+            ignore_u32(telemetry_record_event(project, source, field_name, value, 0))
+            recorded = recorded + 1
+        } else if device_reading_part(line, 3) != "" {
+            problems = problems + field_name + ": " + device_reading_part(line, 3) + "\n"
         }
     }
+    telemetry_device_problems(project, source, problems)
     if recorded > 0 {
         ignore_string(telemetry_rollup(project))
     }
     return recorded
+}
+
+// telemetry_device_problems says a device's protocol errors in the log when they
+// differ from the ones it said last for that device, so a message that stays the
+// newest is not said again at every poll.
+fn telemetry_device_problems(project: string, source: string, problems: string) void {
+    let note: string = project_location(project) + "/device-problems-" + source + ".txt"
+    if rho_read_text(note) == problems {
+        return
+    }
+    if problems != "" {
+        warn("mesh", "device " + source + " in " + project + " sent a value its manifest's type refuses, kept the last one: " +
+            str_replace(str_trim(problems), "\n", "; "))
+    }
+    ignore_bool(rho_write_text(note, problems))
 }
 
 // telemetry_bind_plan tells the store where each of a project's reporting nodes

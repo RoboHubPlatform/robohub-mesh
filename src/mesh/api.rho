@@ -880,6 +880,10 @@ fn mesh_api_gateway(req: Request) Response {
         ",\"project\":" + json_string(active) + ",\"url\":" + json_string(url) + "}")
 }
 
+// mesh_api_devices lists the active mesh's devices: the state each reports (or
+// where a switch stands), and whether an MQTT device's online topic says it is
+// reachable ("online", "unreachable", or "" when it is not known).
+// @req MESH-0022, MESH-0032
 fn mesh_api_devices(req: Request) Response {
     if !mesh_scoped(req, current_project()) {
         return mesh_scope_denied()
@@ -902,6 +906,7 @@ fn mesh_api_devices(req: Request) Response {
                 ",\"state\":" + json_string(mesh_device_state_shown(index)) +
                 ",\"reported\":" + json_string(mesh_device_state(index)) +
                 ",\"requested\":" + json_string(mesh_switch_requested(current_project(), index)) +
+                ",\"reachability\":" + json_string(mesh_device_reachability(current_project(), index)) +
                 ",\"power_w\":" + json_string(mesh_device_last(index)) + "}"
         }
         index = index + 1

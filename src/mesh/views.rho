@@ -464,8 +464,12 @@ fn mesh_select(name: string, label: string, options: string, help: string) strin
         "\">" + options + "</select>" + help_html + "</label>"
 }
 
+// mesh_device_actions is a device's read and switch buttons and its last state,
+// for a device Mesh reaches itself — over HTTP, or over MQTT through the broker
+// (MESH-0014); any other device is carried by the node it is attached to.
 fn mesh_device_actions(loc: string, index: u32) string {
-    if !rho_str_eq(node_device_transport(index), "http") {
+    let transport: string = node_device_transport(index)
+    if !rho_str_eq(transport, "http") && !rho_str_eq(transport, "mqtt") {
         return "<p><small>" + mesh_t(loc, "device.carried") + "</small></p>"
     }
     var switch_forms: string = ""
@@ -487,7 +491,21 @@ fn mesh_device_actions(loc: string, index: u32) string {
         switch_forms + "</div>" +
         "<p><small>" + escape_html(mesh_fill(mesh_fill(mesh_fill(mesh_t(loc, "device.last"),
             "state", mesh_device_state_text(loc, index)), "power", mesh_device_last(index)), "time", mesh_device_checked(index))) +
-        "</small></p>"
+        "</small></p>" + mesh_device_reach_line(loc, index)
+}
+
+// mesh_device_reach_line says on a device's page what its online topic says: a
+// device whose topic says it is gone is unreachable, and its values are its last.
+// @req MESH-0032
+fn mesh_device_reach_line(loc: string, index: u32) string {
+    let reach: string = mesh_device_reachability(current_project(), index)
+    if reach == "online" {
+        return "<p class=\"device-reach online\"><small>" + escape_html(mesh_t(loc, "device.reach_online")) + "</small></p>"
+    }
+    if reach == "unreachable" {
+        return "<p class=\"device-reach unreachable\"><small>" + escape_html(mesh_t(loc, "device.reach_unreachable")) + "</small></p>"
+    }
+    return ""
 }
 
 fn mesh_menu_link(label: string, href: string, icon: string) string {

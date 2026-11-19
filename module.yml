@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.21.1
+  version: 0.22.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -101,10 +101,12 @@ plugins:
 # workspace, or ~/.rho/apps/mesh when it is started by hand); these are the
 # defaults.
 # The bus reaches MQTT devices: the broker the keeper runs (robohub-mqtt), as the
-# broker user the keeper made for Mesh.
+# broker user the keeper made for Mesh. A Shelly speaks on <prefix>/rpc,
+# <prefix>/status/... and <prefix>/online; a Tasmota device on
+# <prefix>/cmnd/POWER, <prefix>/stat/... and <prefix>/tele/... (ADR-0009).
 bus:
-  publish: [+/rpc, mesh/+/telemetry]
-  subscribe: [+/status/#, +/online]
+  publish: [+/rpc, +/cmnd/POWER, mesh/+/telemetry]
+  subscribe: [+/status/#, +/online, +/stat/#, +/tele/#]
 
 bind:
   robohub.bus:

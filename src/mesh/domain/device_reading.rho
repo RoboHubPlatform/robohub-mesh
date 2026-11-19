@@ -1,0 +1,226 @@
+//
+// @file device_reading.rho
+// @brief A device's reading as its manifest describes it: the status topics it reports on, the answer the telemetry port merges from them, and whether its online topic says it is there.
+//
+// @module mesh.domain.device_reading
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-19
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.device_reading
+
+// An MQTT device names where it reports in its manifest's `telemetry_mqtt`
+// block: one `status_topic`, or a list of `status_topics` read as one reading
+// (ADR-0009), and an `online_topic` whose payload says whether it is there —
+// `online_up` when the manifest names it, `true` when it does not.
+//
+// The telemetry port merges the messages (telemetry_device_fields) and answers a
+// line per field: `field<TAB>value<TAB>age<TAB>problem`, the value empty and the
+// problem said when the newest message carrying the field holds a value the
+// field's type refuses. These functions read that answer and the manifest's
+// text; nothing here reads a file or the bus.
+
+// device_block_list is the items of a list nested one level in a manifest:
+// `key:` under `parent:`, as a block (`- item` lines) or inline (`[a, b]`), one
+// item per line, quotes taken off. "" when the manifest has no such list.
+// @req MESH-0029
+fn device_block_list(text: string, parent: string, key: string) string {
+    var rest: string = text
+    var inside: bool = false
+    var listing: bool = false
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        let trimmed: string = device_uncomment(line)
+        if trimmed == "" {
+            continue
+        }
+        if !str_starts_with(line, " ") && !str_starts_with(line, "\t") {
+            if listing {
+                return out
+            }
+            inside = str_eq(trimmed, parent + ":")
+            continue
+        }
+        if !inside {
+            continue
+        }
+        if listing {
+            if str_starts_with(trimmed, "- ") {
+                out = out + device_unquote(str_slice(trimmed, 2, u32(strlen(trimmed)) - 2)) + "\n"
+                continue
+            }
+            return out
+        }
+        if str_starts_with(trimmed, key + ":") {
+            let value: string = str_trim(str_slice(trimmed, u32(strlen(key)) + 1,
+                u32(strlen(trimmed)) - u32(strlen(key)) - 1))
+            if value == "" {
+                listing = true
+                continue
+            }
+            return device_inline_list(value)
+        }
+    }
+    return out
+}
+
+// device_uncomment is a manifest line trimmed and without its comment: a `#`
+// at the start or after a space, outside quotes, and everything after it.
+fn device_uncomment(line: string) string {
+    let length: u32 = u32(strlen(line))
+    var quote: string = ""
+    var i: u32 = 0
+    while i < length {
+        let ch: string = str_slice(line, i, 1)
+        if quote != "" {
+            if ch == quote {
+                quote = ""
+            }
+        } else if ch == "\"" || ch == "'" {
+            quote = ch
+        } else if ch == "#" && (i == 0 || str_slice(line, i - 1, 1) == " " || str_slice(line, i - 1, 1) == "\t") {
+            return str_trim(str_slice(line, 0, i))
+        }
+        i = i + 1
+    }
+    return str_trim(line)
+}
+
+// device_inline_list is an inline YAML list, `[a, "b"]`, one item per line.
+fn device_inline_list(value: string) string {
+    var body: string = str_trim(value)
+    if strlen(body) >= 2 && str_starts_with(body, "[") &&
+        str_slice(body, u32(strlen(body)) - 1, 1) == "]" {
+        body = str_slice(body, 1, u32(strlen(body)) - 2)
+    }
+    var out: string = ""
+    while body != "" {
+        let at: i32 = str_index_of(body, ",")
+        var item: string = body
+        if at < 0 {
+            body = ""
+        } else {
+            item = str_slice(body, 0, u32(at))
+            body = str_slice(body, u32(at) + 1, u32(strlen(body)) - u32(at) - 1)
+        }
+        let one: string = device_unquote(item)
+        if one != "" {
+            out = out + one + "\n"
+        }
+    }
+    return out
+}
+
+// device_unquote is a YAML scalar without its quotes, if it has them.
+fn device_unquote(value: string) string {
+    var out: string = str_trim(value)
+    if strlen(out) >= 2 {
+        let first: string = str_slice(out, 0, 1)
+        let last: string = str_slice(out, u32(strlen(out)) - 1, 1)
+        if (first == "\"" && last == "\"") || (first == "'" && last == "'") {
+            out = str_slice(out, 1, u32(strlen(out)) - 2)
+        }
+    }
+    return out
+}
+
+// device_status_templates is the topics a device reports its status on, as its
+// manifest writes them ({prefix} not yet filled), one per line: the single
+// `status_topic` when it names one, otherwise every `status_topics` entry.
+// @req MESH-0029
+fn device_status_templates(single: string, listed: string) string {
+    let one: string = device_unquote(single)
+    if one != "" {
+        return one + "\n"
+    }
+    return listed
+}
+
+// device_online_state is what a device's online topic says: "online" when its
+// newest payload is the manifest's online word (case-sensitive; `true` when the
+// manifest names none), "unreachable" when it is anything else, and "" while the
+// topic has said nothing.
+// @req MESH-0032
+fn device_online_state(payload: string, online_up: string) string {
+    let said: string = str_trim(payload)
+    if said == "" {
+        return ""
+    }
+    var up: string = device_unquote(online_up)
+    if up == "" {
+        up = "true"
+    }
+    if str_eq(said, up) {
+        return "online"
+    }
+    return "unreachable"
+}
+
+// device_reading_line is the port's line for one field, or "" when no message
+// carried it.
+fn device_reading_line(reading: string, field_name: string) string {
+    var rest: string = reading
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        if str_starts_with(line, field_name + "\t") {
+            return line
+        }
+    }
+    return ""
+}
+
+// device_reading_part is one tab-separated part of a port line: 0 the field,
+// 1 the value, 2 the age in seconds, 3 the problem.
+fn device_reading_part(line: string, index: u32) string {
+    var rest: string = line
+    var at: u32 = 0
+    while at < index {
+        let tab: i32 = str_index_of(rest, "\t")
+        if tab < 0 {
+            return ""
+        }
+        rest = str_slice(rest, u32(tab) + 1, u32(strlen(rest)) - u32(tab) - 1)
+        at = at + 1
+    }
+    let tab: i32 = str_index_of(rest, "\t")
+    if tab < 0 {
+        return rest
+    }
+    return str_slice(rest, 0, u32(tab))
+}
+
+// device_reported_since is a field's value from the merged reading, when the
+// message it came from arrived at or after since_s (now_s being the time now);
+// "" when no message carried it, the newest one that did held no valid value,
+// or that message is older than since_s.
+// @req MESH-0022
+fn device_reported_since(reading: string, field_name: string, now_s: u32, since_s: u32) string {
+    let line: string = device_reading_line(reading, field_name)
+    let value: string = device_reading_part(line, 1)
+    if line == "" || value == "" {
+        return ""
+    }
+    let age: u32 = u32(int_from_str(device_reading_part(line, 2)))
+    if age > now_s || now_s - age < since_s {
+        return ""
+    }
+    return value
+}

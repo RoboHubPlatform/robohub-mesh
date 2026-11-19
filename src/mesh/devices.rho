@@ -52,31 +52,94 @@ fn device_fill(text: string, prefix: string, on: string) string {
     return str_replace(out, "{client}", MESH_DEVICE_CLIENT)
 }
 
-// telemetry_poll_mqtt_device reads one MQTT device from the newest status it
-// published and stores the fields its manifest describes. The first read starts
-// following the device, so a reading is there from its next message on.
+// device_status_topics is the topics a device reports its status on, filled
+// with its prefix, one per line: its manifest's `telemetry_mqtt.status_topic`,
+// or every one of its `telemetry_mqtt.status_topics` (ADR-0009).
+// @req MESH-0029
+fn device_status_topics(manifest: string, prefix: string) string {
+    var rest: string = device_status_templates(yaml.value(manifest, "telemetry_mqtt.status_topic"),
+        device_block_list(rho_read_text(manifest), "telemetry_mqtt", "status_topics"))
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
+        let topic: string = device_fill(str_trim(line), prefix, "")
+        if topic != "" {
+            out = out + topic + "\n"
+        }
+    }
+    return out
+}
+
+// device_prefix_ok is whether a plan's MQTT address can be a topic prefix: set,
+// and no wildcard that would follow other devices' topics.
+fn device_prefix_ok(prefix: string) bool {
+    return prefix != "" && rho_str_index_of(prefix, "#") < 0 && rho_str_index_of(prefix, "+") < 0
+}
+
+// mesh_mqtt_device_reading is an MQTT device's reading, merged from the newest
+// message on each of its status topics by the telemetry port (one line per field
+// some message carries, src/mesh/domain/device_reading.rho). Reading it follows
+// the device, so its messages are heard from then on.
+// @req MESH-0029, MESH-0030, MESH-0031
+fn mesh_mqtt_device_reading(manifest: string, prefix: string) string {
+    if !device_prefix_ok(prefix) {
+        return ""
+    }
+    let topics: string = device_status_topics(manifest, prefix)
+    let fields: string = manifest_list_items(manifest, "telemetry_mqtt_fields")
+    if topics == "" || fields == "" {
+        return ""
+    }
+    ignore_bool(bus.follow(prefix + "/#", ""))
+    let listing: string = bus.topics(prefix + "/")
+    if listing == "" {
+        return ""
+    }
+    return telemetry_device_fields(listing, topics, fields)
+}
+
+// telemetry_poll_mqtt_device reads one MQTT device from the status messages it
+// published — every status topic its manifest lists, merged into one reading —
+// and stores the fields some message carries; a field none carries keeps its
+// last value. The first read starts following the device, so a reading is there
+// from its next message on.
+// @req MESH-0029
 fn telemetry_poll_mqtt_device(project: string, file: string, index: u32) u32 {
     let name: string = project_node_value(file, index, "device", "")
     let prefix: string = project_node_value(file, index, "address", "")
-    if name == "" || prefix == "" || rho_str_index_of(prefix, "#") >= 0 || rho_str_index_of(prefix, "+") >= 0 {
+    if name == "" || !device_prefix_ok(prefix) {
         return 0
     }
-    let manifest: string = device_manifest(name)
-    let topic: string = device_fill(yaml.value(manifest, "telemetry_mqtt.status_topic"), prefix, "")
-    let fields: string = manifest_list_items(manifest, "telemetry_mqtt_fields")
-    if topic == "" || fields == "" {
-        return 0
-    }
-    ignore_bool(bus.follow(prefix + "/#", ""))
-    let body: string = bus.latest(topic)
-    if body == "" {
+    let reading: string = mesh_mqtt_device_reading(device_manifest(name), prefix)
+    if reading == "" {
         return 0
     }
     let source: string = project_node_id(file, index)
     if source == "" {
         return 0
     }
-    return telemetry_record_fields(project, source, body, fields)
+    return telemetry_record_reading(project, source, reading)
+}
+
+// mesh_device_reachability is what a planned MQTT device's online topic says:
+// "online", "unreachable", or "" when the device names no online topic, is not
+// reached over MQTT, or its topic has said nothing yet.
+// @req MESH-0032
+fn mesh_device_reachability(project: string, index: u32) string {
+    let file: string = project_file(project)
+    if !rho_str_eq(project_node_value(file, index, "transport", "http"), "mqtt") {
+        return ""
+    }
+    let prefix: string = project_node_value(file, index, "address", "")
+    let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
+    let topic: string = device_fill(device_unquote(yaml.value(manifest, "telemetry_mqtt.online_topic")), prefix, "")
+    if !device_prefix_ok(prefix) || topic == "" {
+        return ""
+    }
+    ignore_bool(bus.follow(prefix + "/#", ""))
+    return device_online_state(bus.latest(topic), yaml.value(manifest, "telemetry_mqtt.online_up"))
 }
 
 // mesh_device_command tells a device to do something its manifest's `actions`
@@ -128,21 +191,32 @@ fn mesh_device_read_field(project: string, index: u32, wanted: string) string {
     if !mesh_arg_ok(mesh_http_base(address) + path) || mesh_curl("-fsS\n-m\n3\n" + mesh_http_base(address) + path + "\n", report) != 0 {
         return ""
     }
-    let body: string = rho_read_text(report)
-    var rest: string = manifest_list_items(manifest, "telemetry_http_fields")
+    let fields: string = manifest_list_items(manifest, "telemetry_http_fields")
+    let value: string = device_reading_part(device_reading_line(
+        telemetry_http_reading(rho_read_text(report), fields), wanted), 1)
+    // A switch state is answered as JSON spells a boolean, as it always was.
+    if device_field_kind(fields, wanted) == "bool" || device_field_kind(fields, wanted) == "onoff" {
+        if value == "1" {
+            return "true"
+        }
+        if value == "0" {
+            return "false"
+        }
+    }
+    return value
+}
+
+// device_field_kind is the type a field map gives a field: its first line for
+// that field's `kind` column.
+fn device_field_kind(fields: string, wanted: string) string {
+    var rest: string = fields
     while rest != "" {
         let at: i32 = rho_str_index_of(rest, "\n")
         var line: string = rest
         if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
-        line = str_trim(line)
-        if rho_strlen(line) >= 2 && rho_str_starts_with(line, "\"") {
-            line = rho_str_slice(line, 1, u32(rho_strlen(line)) - 2)
-        }
+        line = device_unquote(line)
         if rho_str_eq(field(line, 1), wanted) {
-            if rho_str_eq(field(line, 3), "bool") {
-                return telemetry_json_bool(body, field(line, 4))
-            }
-            return telemetry_json_number(body, field(line, 4), field(line, 5))
+            return field(line, 3)
         }
     }
     return ""
@@ -216,7 +290,7 @@ fn mesh_device_can_report(project: string, index: u32) bool {
     let transport: string = project_node_value(file, index, "transport", "http")
     if rho_str_eq(transport, "mqtt") {
         return device_state_path(manifest, transport) != "" &&
-            yaml.value(manifest, "telemetry_mqtt.status_topic") != ""
+            device_status_topics(manifest, "{prefix}") != ""
     }
     return device_state_path(manifest, transport) != "" && yaml.value(manifest, "telemetry.http_path") != ""
 }
@@ -224,7 +298,10 @@ fn mesh_device_can_report(project: string, index: u32) bool {
 // mesh_device_report is the state a device reports, "on" or "off", heard at or
 // after since_s; "" when it has said nothing since. Over HTTP the status is read
 // now, so it is always new; over MQTT it is the newest status message on the
-// broker, and only if it arrived after the request.
+// broker that carries the state field — on whichever of the device's status
+// topics it came — and only if it arrived after the request. A newer message
+// without the state (a meter reading) says nothing about the switch.
+// @req MESH-0022, MESH-0029
 fn mesh_device_report(project: string, index: u32, since_s: u32) string {
     let file: string = project_file(project)
     let manifest: string = device_manifest(project_node_value(file, index, "device", ""))
@@ -233,37 +310,11 @@ fn mesh_device_report(project: string, index: u32, since_s: u32) string {
         return switch_state_word(mesh_device_read_field(project, index, "state"))
     }
     let prefix: string = project_node_value(file, index, "address", "")
-    if prefix == "" || rho_str_index_of(prefix, "#") >= 0 || rho_str_index_of(prefix, "+") >= 0 {
+    if device_state_path(manifest, transport) == "" {
         return ""
     }
-    let topic: string = device_fill(yaml.value(manifest, "telemetry_mqtt.status_topic"), prefix, "")
-    let path: string = device_state_path(manifest, transport)
-    if topic == "" || path == "" {
-        return ""
-    }
-    ignore_bool(bus.follow(prefix + "/#", ""))
-    // bus.topics answers "topic<TAB>seconds since<TAB>payload" per line.
-    var rest: string = bus.topics(prefix)
-    while rest != "" {
-        let at: i32 = rho_str_index_of(rest, "\n")
-        var line: string = rest
-        if at < 0 { rest = "" } else { line = rho_str_slice(rest, 0, u32(at)); rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1) }
-        if rho_str_starts_with(line, topic + "\t") {
-            let tail: string = rho_str_slice(line, u32(rho_strlen(topic)) + 1, u32(rho_strlen(line)) - u32(rho_strlen(topic)) - 1)
-            let tab: i32 = rho_str_index_of(tail, "\t")
-            if tab < 0 {
-                return ""
-            }
-            let age: u32 = u32(rho_int_from_str(rho_str_slice(tail, 0, u32(tab))))
-            let payload: string = rho_str_slice(tail, u32(tab) + 1, u32(rho_strlen(tail)) - u32(tab) - 1)
-            let now: u32 = mesh_now_seconds()
-            if age > now || now - age < since_s {
-                return ""
-            }
-            return switch_state_word(telemetry_json_bool(payload, path))
-        }
-    }
-    return ""
+    let reading: string = mesh_mqtt_device_reading(manifest, prefix)
+    return switch_state_word(device_reported_since(reading, "state", mesh_now_seconds(), since_s))
 }
 
 // mesh_device_reported_set keeps the state a device reported, where the pages

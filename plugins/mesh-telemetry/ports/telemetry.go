@@ -741,6 +741,202 @@ func telemetryJsonBool(document string, path string) string {
 	return "false"
 }
 
+// A device's fields from the messages it published (MESH-0029, MESH-0030,
+// MESH-0031). A device may report over several topics — Tasmota's relay on
+// stat/RESULT, stat/POWER and tele/STATE, its meter on tele/SENSOR — and one
+// reading is made of them: each field takes its value from the newest message
+// that carries it, and a field no message carries is not answered, so the store
+// keeps its last value.
+
+// deviceMessage is one status message: its topic, its age in seconds and its
+// payload, with the payload decoded once when it is JSON.
+type deviceMessage struct {
+	topic   string
+	age     string
+	payload string
+	decoded any
+	isJSON  bool
+}
+
+// deviceFieldLine is one line of a manifest's field map:
+// `signal|field|unit|kind|path|scale`.
+type deviceFieldLine struct {
+	field string
+	kind  string
+	path  string
+	scale string
+}
+
+// deviceOnOff reads an ON/OFF word as 1 or 0: ON/OFF, true/false, 1/0 in any
+// case. Anything else is not a switch state.
+func deviceOnOff(word string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(word)) {
+	case "on", "true", "1":
+		return "1", true
+	case "off", "false", "0":
+		return "0", true
+	}
+	return "", false
+}
+
+// deviceScaled is a number times a field's scale, as the store's text.
+func deviceScaled(number float64, scaleText string) string {
+	scale := 1.0
+	if parsed, err := strconv.ParseFloat(strings.TrimSpace(scaleText), 64); err == nil && parsed != 0 {
+		scale = parsed
+	}
+	return strconv.FormatFloat(number*scale, 'f', -1, 64)
+}
+
+// deviceRead reads one field line from one message. carried says whether the
+// message has the line's path at all; when it does, the answer is the value to
+// store or, for an onoff field whose value is no switch state, a protocol error.
+func deviceRead(msg *deviceMessage, line deviceFieldLine) (carried bool, value string, problem string) {
+	var found any
+	if line.path == "$" {
+		// The whole payload, when it is a scalar: a bare word, a number, or one
+		// JSON scalar. A JSON object or array is not one, so it carries nothing.
+		text := strings.TrimSpace(msg.payload)
+		if text == "" || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+			return false, "", ""
+		}
+		if msg.isJSON {
+			found = msg.decoded
+		} else {
+			found = text
+		}
+	} else {
+		if !msg.isJSON {
+			return false, "", ""
+		}
+		at, ok := telemetryJSONValue(msg.decoded, line.path)
+		if !ok {
+			return false, "", ""
+		}
+		found = at
+	}
+	switch line.kind {
+	case "onoff":
+		switch v := found.(type) {
+		case bool:
+			if v {
+				return true, "1", ""
+			}
+			return true, "0", ""
+		case float64:
+			if v == 1 {
+				return true, "1", ""
+			}
+			if v == 0 {
+				return true, "0", ""
+			}
+		case string:
+			if word, ok := deviceOnOff(v); ok {
+				return true, word, ""
+			}
+		}
+		shown, _ := json.Marshal(found)
+		return true, "", fmt.Sprintf("%s is not on or off", string(shown))
+	case "bool":
+		// bool reads a JSON boolean only, as it always has.
+		if v, ok := found.(bool); ok {
+			if v {
+				return true, "1", ""
+			}
+			return true, "0", ""
+		}
+		return false, "", ""
+	default:
+		switch v := found.(type) {
+		case float64:
+			return true, deviceScaled(v, line.scale), ""
+		case string:
+			if line.path == "$" {
+				if number, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+					return true, deviceScaled(number, line.scale), ""
+				}
+			}
+		}
+		return false, "", ""
+	}
+}
+
+// telemetryDeviceFields merges a device's status messages into one reading.
+//
+//   - listing is what the bus answers for the device's prefix, newest first:
+//     `topic<TAB>seconds since<TAB>payload` per line (an HTTP answer is one such
+//     line);
+//   - topics names the device's status topics, one per line; a message on any
+//     other topic is not read;
+//   - fields is the manifest's field map, one `signal|field|unit|kind|path|scale`
+//     line each, quoted or not.
+//
+// It answers a line per field some message carries, in the field map's order:
+// `field<TAB>value<TAB>age<TAB>` with the value taken from the newest message
+// carrying it, or `field<TAB><TAB>age<TAB>problem` when that message's value is a
+// protocol error, which leaves the field as it was. Two lines may name one field
+// with different paths; whichever a message carries applies.
+func telemetryDeviceFields(listing string, topics string, fields string) string {
+	wanted := map[string]bool{}
+	for _, topic := range strings.Split(topics, "\n") {
+		if topic = strings.TrimSpace(topic); topic != "" {
+			wanted[topic] = true
+		}
+	}
+	var messages []*deviceMessage
+	for _, row := range strings.Split(listing, "\n") {
+		parts := strings.SplitN(row, "\t", 3)
+		if len(parts) != 3 || !wanted[parts[0]] {
+			continue
+		}
+		msg := &deviceMessage{topic: parts[0], age: strings.TrimSpace(parts[1]), payload: parts[2]}
+		if err := json.Unmarshal([]byte(parts[2]), &msg.decoded); err == nil {
+			msg.isJSON = true
+		}
+		messages = append(messages, msg)
+	}
+	var order []string
+	lines := map[string][]deviceFieldLine{}
+	for _, raw := range strings.Split(fields, "\n") {
+		text := strings.TrimSpace(raw)
+		if len(text) >= 2 && strings.HasPrefix(text, "\"") && strings.HasSuffix(text, "\"") {
+			text = text[1 : len(text)-1]
+		}
+		parts := strings.Split(text, "|")
+		for len(parts) < 6 {
+			parts = append(parts, "")
+		}
+		line := deviceFieldLine{field: strings.TrimSpace(parts[1]), kind: strings.TrimSpace(parts[3]),
+			path: strings.TrimSpace(parts[4]), scale: strings.TrimSpace(parts[5])}
+		if line.field == "" || line.path == "" {
+			continue
+		}
+		if _, seen := lines[line.field]; !seen {
+			order = append(order, line.field)
+		}
+		lines[line.field] = append(lines[line.field], line)
+	}
+	var b strings.Builder
+	for _, field := range order {
+	messages:
+		for _, msg := range messages {
+			for _, line := range lines[field] {
+				carried, value, problem := deviceRead(msg, line)
+				if !carried {
+					continue
+				}
+				if problem != "" {
+					fmt.Fprintf(&b, "%s\t\t%s\t%s: %s\n", field, msg.age, msg.topic, problem)
+				} else {
+					fmt.Fprintf(&b, "%s\t%s\t%s\t\n", field, value, msg.age)
+				}
+				break messages
+			}
+		}
+	}
+	return b.String()
+}
+
 // telemetryRecord writes one reading a service read itself, rather than one a
 // gateway delivered, under the source the service read it from. The synthetic
 // feed is per field so the reading's unique key stays meaningful, and the

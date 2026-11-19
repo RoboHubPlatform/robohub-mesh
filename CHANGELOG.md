@@ -577,3 +577,35 @@ before. A project file's record of what runs still travels only with the gateway
 key, area, uplink port and every node's identity (MESH-XFER-0017), and a record that
 travels with them compares equal on the other machine.
 
+## [0.22.0] - 2026-11-19
+
+A device that reports over several MQTT topics with ON/OFF words — the Sonoff
+S60TPF reflashed with Tasmota (robohub-devices ADR-0002) — is read and switched
+from its manifest, with no code of its own (ADR-0009, MESH-0029..0032, approved):
+
+- `telemetry_mqtt.status_topics` lists several status topics, merged into one
+  reading: a message changes only the fields whose path it carries, each field
+  takes the value of the newest message carrying it, a field none carries keeps
+  its last value. `status_topic` keeps its meaning; the Shelly plug reads as it
+  did.
+- A field path of `$` is the whole payload, for a bare word such as Tasmota's
+  `stat/POWER`; a path a message does not carry, or a JSON path into a payload
+  that is not JSON, changes nothing and is no error.
+- A new field type, `onoff`: ON/OFF, true/false, 1/0 in any case, stored as 1 or
+  0; anything else is a protocol error that keeps the field's last value and is
+  logged once. `bool` is unchanged. HTTP devices are read through the same code,
+  so both types mean the same on both transports.
+- `telemetry_mqtt.online_up` names the online word of `online_topic` (`true` when
+  not given): a device is shown online or unreachable on its Data tab and as
+  `reachability` in `GET /mesh/api/devices`.
+- A switch is confirmed from the newest status message carrying the state, on
+  whichever topic it came (MESH-0022 amended): Tasmota's `stat/RESULT` or
+  `stat/POWER`, not a later meter reading.
+- An MQTT device's Data tab has the Poll and switch buttons an HTTP device has,
+  rather than saying it is carried by another node.
+- Mesh's broker grants add publishing `+/cmnd/POWER` and reading `+/stat/#` and
+  `+/tele/#`; a device's prefix must be one topic level.
+- A quoted field-map line may carry a comment after it.
+
+The devices smoke plans a stand-in Tasmota plug on a broker of its own that holds
+Mesh to the grants its manifest asks for.

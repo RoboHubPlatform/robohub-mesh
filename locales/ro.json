@@ -111,6 +111,8 @@
   "device.last": "Ultima: stare {state}, putere {power} W la {time}",
   "device.state_pending": "{state} cerut, se așteaptă confirmarea dispozitivului (raportează {reported})",
   "device.state_unconfirmed": "{state} cerut, neconfirmat: dispozitivul nu l-a raportat (raportează {reported})",
+  "device.reach_online": "Online: subiectul său de prezență spune că este conectat.",
+  "device.reach_unreachable": "Inaccesibil: subiectul său de prezență spune că s-a deconectat; valorile afișate sunt ultimele trimise.",
   "device.poll": "Interoghează dispozitivul",
   "device.switch_off": "Oprește",
   "device.switch_on": "Pornește",

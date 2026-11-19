@@ -210,13 +210,77 @@ A network device is a node of its own too: an integration from `robohub-devices`
 relay. It is never built or programmed. The device editor chooses the integration,
 the transport (`http` or `mqtt`), an HTTP address and the device id. An HTTP device
 is polled by Mesh's background worker and can be polled and switched from the Data
-tab; an MQTT device reaches Mesh through the broker the keeper runs. Switch actions
-appear only for a plug, switch or actuator.
+tab; an MQTT device reaches Mesh through the broker the keeper runs, is read by
+the same worker and can be polled and switched from the Data tab too. Switch
+actions appear only for a plug, switch or actuator.
+
+#### What a device manifest tells Mesh
+
+Mesh does what a device's manifest in `robohub-devices` says, so a device it has
+never seen needs no code here. Over HTTP the manifest names `telemetry.http_path`
+and a field map, `telemetry_http_fields`; over MQTT a `telemetry_mqtt` block and a
+field map, `telemetry_mqtt_fields`. The plan's address of an MQTT device is its
+topic prefix, which fills `{prefix}` in every topic:
+
+```yaml
+telemetry_mqtt:
+  status_topic: "{prefix}/status/switch:0"   # one topic (a Shelly), or:
+  status_topics:                              # several, read as one reading (Tasmota)
+    - "{prefix}/stat/RESULT"
+    - "{prefix}/stat/POWER"
+    - "{prefix}/tele/STATE"
+    - "{prefix}/tele/SENSOR"
+  online_topic: "{prefix}/tele/LWT"
+  online_up: "Online"                         # optional; "true" when not given
+telemetry_mqtt_fields:
+  # signal | field | unit | type | path | scale
+  - "switch|state||onoff|POWER|1"
+  - "switch|state||onoff|$|1"                 # the bare payload of stat/POWER
+  - "power|power_w|W|f32|ENERGY/Power|1"
+actions:
+  switch:
+    mqtt_topic: "{prefix}/cmnd/POWER"
+    mqtt_payload: "{on}"                      # true or false
+```
+
+- **One topic or several.** A manifest names `status_topic` or `status_topics`,
+  not both. Every listed topic is read, and the messages are merged into one
+  reading: a message changes only the fields whose path it carries, each field
+  takes its value from the newest message that carries it, and a field no message
+  carries keeps its last value (MESH-0029).
+- **Paths.** A path is a `/`-separated walk into a JSON payload (`ENERGY/Power`,
+  `switch:0/output`). `$` is the whole payload, for a topic whose payload is a bare
+  word or number rather than JSON (Tasmota's `stat/POWER` is `ON`); it carries
+  nothing in a JSON object or array. A path a message does not carry, or a JSON
+  path into a payload that is not JSON, leaves the field as it was and is not an
+  error, which is why two lines may name one field with different paths: whichever
+  a message carries applies (MESH-0030).
+- **Types.** `bool` is a JSON boolean, as it always was. `onoff` is a switch state
+  written as a word: `ON`/`OFF`, `true`/`false` or `1`/`0` in any case, as a JSON
+  string, boolean or number or a bare payload, stored as 1 or 0. Anything else in
+  an `onoff` field is a protocol error: the field keeps its last value and the log
+  says so once, until the value changes (MESH-0031). Every other type is a number,
+  multiplied by the scale.
+- **Online.** When the manifest names an `online_topic`, a device whose newest
+  payload there is `online_up` (compared case-sensitively; `true` when the manifest
+  does not say, the Shelly's word) is online, anything else is unreachable, and a
+  topic that has said nothing is unknown. The Data tab says "Unreachable" and
+  `GET /mesh/api/devices` answers `"reachability":"unreachable"`; the values shown
+  are then the last the device sent (MESH-0032).
+
+The prefix is one topic level. Mesh's broker user may publish only `+/rpc` and
+`+/cmnd/POWER` and read only `+/status/#`, `+/online`, `+/stat/#` and `+/tele/#`
+(the `bus:` block of its manifest, which the keeper turns into the broker's ACL),
+so a device whose prefix has a `/` in it is not reached. A Tasmota device's
+FullTopic is set to `%topic%/%prefix%/` and its Topic to one word, such as
+`s60-desk`, which is then the device's address in the plan.
 
 A switch is shown in the state the device **reports**, not the one it was told. When
 the device takes the command, Mesh records the request as pending and asks the
 device for its state — over HTTP it reads the status back at once; over MQTT it
-waits for a status message newer than the request. The request is confirmed when
+waits for a status message newer than the request that carries the state field, on
+whichever of the device's status topics it comes (a Tasmota plug's `stat/RESULT` or
+`stat/POWER`; a newer `tele/SENSOR` without the relay says nothing about it). The request is confirmed when
 the device reports the requested state; until then the Data tab says "on
 requested, waiting for the device to report it", and after 30 seconds without that
 report, "on requested, unconfirmed" — beside the state the device does report. A
@@ -482,7 +546,7 @@ A few keys are written in the mesh's `plan.yml` by hand, while Mesh is stopped:
 | --- | --- |
 | The keeper | Signs people in; installs and runs Mesh; registers it as a client for the services it calls (`deploy.calls: [gateway, energy]`). |
 | Gateways | Each mesh's gateway ({ref}`robohub-gateway/index`), started, deployed or programmed by Mesh. |
-| `robohub.bus` | Bound to `robohub-provider-mqtt`: Mesh is a user of the keeper's MQTT broker, publishing `+/rpc` and `mesh/+/telemetry`, subscribed to `+/status/#` and `+/online`. |
+| `robohub.bus` | Bound to `robohub-provider-mqtt`: Mesh is a user of the keeper's MQTT broker, publishing `+/rpc`, `+/cmnd/POWER` and `mesh/+/telemetry`, subscribed to `+/status/#`, `+/online`, `+/stat/#` and `+/tele/#`. |
 | `robohub.alert` | Bound to the log, e-mail and Telegram providers. |
 | Shared modules | `ui`, `i18n`, `settings`, `forms`, `notifications`, `htmx`, `logging`. |
 | Applications | The aquarium and energy read a mesh through {ref}`robohub-provider-mesh/index`, which implements the gateway contract against Mesh's API. |
@@ -644,7 +708,7 @@ All under Mesh's sign-in; a program presents a service token as above.
 | `GET /mesh/api/projects/{project}/telemetry/faults` | the project's faults |
 | `GET /mesh/api/projects/{project}/telemetry/gateway` | the poller's state: backoff, next poll, last success, open fault, last error |
 | `GET /mesh/api/gateway`, `/mesh/api/sources` | the same for the open mesh |
-| `GET /mesh/api/devices` | the devices in the plan, each with `state` (what the device reports, or `pending` / `unconfirmed` while a switch waits), `reported` and `requested` |
+| `GET /mesh/api/devices` | the devices in the plan, each with `state` (what the device reports, or `pending` / `unconfirmed` while a switch waits), `reported`, `requested` and `reachability` (`online` or `unreachable` from an MQTT device's online topic, `""` when not known) |
 | `POST /mesh/api/devices/{id}/switch` | switch a plug, switch or actuator: `state=on` or `off` (anything else is `400`); `200` with `"confirmed":true` once the device reports that state, `202` with `"state":"pending"` (or `"unconfirmed"`) while it has not, `502` when it did not take the command |
 | `GET /mesh/api/projects/{project}/export` | the mesh as a project file without secrets, YAML (`?format=json` for JSON), named `<project>.mesh.yml`; needs a grant that reads the mesh |
 | `POST /mesh/api/projects/{project}/export` | the same with the secrets sealed: form body `passphrase` (at least 12 characters, never in the address; `passphrase2` is checked when sent) and `format`; needs `*` or `mesh:*` and a bearer ticket; `Cache-Control: no-store` |

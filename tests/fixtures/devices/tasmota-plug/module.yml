@@ -1,0 +1,71 @@
+# A Tasmota plug as the devices smoke plans it: the manifest contract between
+# robohub-devices and Mesh for a device that reports over several MQTT topics
+# with ON/OFF words (ADR-0009, robohub-devices ADR-0002), written here so the
+# smoke does not depend on a robohub-devices checkout carrying the real one.
+module:
+  name: robohub-device-tasmota-plug-fixture
+  id: robohub.device.tasmota-plug-fixture
+  type: device
+  version: 0.1.0
+  description: >
+    A smart plug reflashed with Tasmota, as a switch and power meter over MQTT.
+  license: "MIT"
+
+device:
+  kind: plug
+  manufacturer: Tasmota
+  model: Plug (test fixture)
+  summary: A Wi-Fi smart plug running Tasmota.
+  transports: [mqtt]
+
+signals:
+  - id: switch
+    label: Switch
+    direction: output
+    field: state
+    kinds: "toggle button"
+    summary: The plug's relay, on or off.
+  - id: power
+    label: Power
+    direction: input
+    unit: W
+    field: power_w
+    kinds: "numeric chart table"
+    summary: The load the plug is switching, in watts.
+  - id: voltage
+    label: Voltage
+    direction: input
+    unit: V
+    field: voltage_v
+    kinds: "numeric chart table"
+    summary: The mains voltage.
+  - id: energy_today
+    label: Energy today
+    direction: input
+    unit: kWh
+    field: energy_today_kwh
+    kinds: "numeric table"
+    summary: The energy measured today.
+
+telemetry_mqtt:
+  status_topics:                 # several topics merged into one reading
+    - "{prefix}/stat/RESULT"
+    - "{prefix}/stat/POWER"
+    - "{prefix}/tele/STATE"
+    - "{prefix}/tele/SENSOR"
+  online_topic: "{prefix}/tele/LWT"
+  online_up: "Online"
+telemetry_mqtt_fields:
+  # name | field | unit | type | path | scale
+  - "switch|state||onoff|POWER|1"
+  - "switch|state||onoff|$|1"                 # the bare payload of stat/POWER
+  - "power|power_w|W|f32|ENERGY/Power|1"
+  - "voltage|voltage_v|V|f32|ENERGY/Voltage|1"
+  - "current|current_a|A|f32|ENERGY/Current|1"
+  - "energy_today|energy_today_kwh|kWh|f32|ENERGY/Today|1"
+  - "energy_total|energy_total_kwh|kWh|f32|ENERGY/Total|1"
+
+actions:
+  switch:
+    mqtt_topic: "{prefix}/cmnd/POWER"
+    mqtt_payload: "{on}"

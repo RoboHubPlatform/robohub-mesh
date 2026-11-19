@@ -111,6 +111,8 @@
   "device.last": "Last: state {state}, power {power} W at {time}",
   "device.state_pending": "{state} requested, waiting for the device to report it (it reports {reported})",
   "device.state_unconfirmed": "{state} requested, unconfirmed: the device has not reported it (it reports {reported})",
+  "device.reach_online": "Online: its online topic says it is there.",
+  "device.reach_unreachable": "Unreachable: its online topic says it is gone; the values shown are the last it sent.",
   "device.poll": "Poll device",
   "device.switch_off": "Switch off",
   "device.switch_on": "Switch on",

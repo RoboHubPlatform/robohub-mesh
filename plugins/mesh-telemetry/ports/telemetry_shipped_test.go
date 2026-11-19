@@ -29,6 +29,7 @@ func TestTelemetryPortCarriesWhatMeshCalls(t *testing.T) {
 		"func telemetryFaultClear(project string, id uint32) string",
 		"func telemetryFaultPrune(project string, days uint32) string",
 		"func telemetryFaultRows(project string, limit uint32) string",
+		"func telemetryDeviceFields(listing string, topics string, fields string) string",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the telemetry port does not contain %q", want)

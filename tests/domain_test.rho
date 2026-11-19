@@ -21,6 +21,7 @@ include "../src/mesh/domain/production.rho"
 include "../src/mesh/domain/access.rho"
 include "../src/mesh/domain/poll.rho"
 include "../src/mesh/domain/switch.rho"
+include "../src/mesh/domain/device_reading.rho"
 include "../src/mesh/domain/alerting.rho"
 include "../src/mesh/domain/signals.rho"
 
@@ -685,6 +686,57 @@ test fn a_switch_is_shown_as_the_device_reports_it() void {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  A device read from several topics                                         */
+/* -------------------------------------------------------------------------- */
+
+const TASMOTA_MANIFEST: string = "device:\n  kind: plug\ntelemetry_mqtt:\n  status_topics:                 # several\n    - \"{prefix}/stat/RESULT\"\n    - \"{prefix}/stat/POWER\"\n    - '{prefix}/tele/STATE'\n    - {prefix}/tele/SENSOR\n  online_topic: \"{prefix}/tele/LWT\"\n  online_up: \"Online\"\ntelemetry_mqtt_fields:\n  - \"switch|state||onoff|POWER|1\"\n"
+
+// @verifies MESH-0029
+test fn the_status_topics_are_read_from_the_manifest() void {
+    let listed: string = device_block_list(TASMOTA_MANIFEST, "telemetry_mqtt", "status_topics")
+    check(str_eq(listed, "{prefix}/stat/RESULT\n{prefix}/stat/POWER\n{prefix}/tele/STATE\n{prefix}/tele/SENSOR\n"),
+        "a block list under telemetry_mqtt is every topic, in order, without quotes")
+    check(str_eq(device_status_templates("", listed), listed), "a manifest without status_topic reads the list")
+    check(str_eq(device_status_templates("\"{prefix}/status/switch:0\"", ""), "{prefix}/status/switch:0\n"),
+        "the single status_topic of a Shelly is its one topic")
+    let shelly: string = "telemetry_mqtt:\n  status_topic: \"{prefix}/status/switch:0\"\n  online_topic: \"{prefix}/online\"\n"
+    check(str_eq(device_block_list(shelly, "telemetry_mqtt", "status_topics"), ""), "a manifest without the list has none")
+    check(str_eq(device_block_list("telemetry_mqtt:\n  status_topics: [\"a/x\", b/y]\n", "telemetry_mqtt", "status_topics"),
+        "a/x\nb/y\n"), "an inline list is read too")
+    check(str_eq(device_block_list("other:\n  status_topics:\n    - z\ntelemetry_mqtt:\n  online_topic: o\n", "telemetry_mqtt", "status_topics"), ""),
+        "a list under another block is not the device's")
+    print("[PASS] the_status_topics_are_read_from_the_manifest\n")
+}
+
+// @verifies MESH-0029, MESH-0022
+test fn a_reading_answers_the_field_and_its_age() void {
+    let reading: string = "state\t1\t3\t\npower_w\t12.5\t0\t\nbroken\t\t1\tplug/stat/POWER: \"BLINK\" is not on or off\n"
+    check(str_eq(device_reading_part(device_reading_line(reading, "power_w"), 1), "12.5"), "a field's value is read")
+    check(str_eq(device_reading_part(device_reading_line(reading, "state"), 2), "3"), "and the age of its message")
+    check(str_eq(device_reading_line(reading, "voltage_v"), ""), "a field no message carried is not in the reading")
+    check(str_eq(device_reading_part(device_reading_line(reading, "broken"), 1), ""), "a protocol error has no value")
+    check(str_index_of(device_reading_part(device_reading_line(reading, "broken"), 3), "BLINK") >= 0, "but says why")
+    // The switch confirmation: a state heard at or after the request, never before.
+    check(str_eq(device_reported_since(reading, "state", 1000, 990), "1"), "a state heard after the request is a report")
+    check(str_eq(device_reported_since(reading, "state", 1000, 997), "1"), "and one heard the second of the request")
+    check(str_eq(device_reported_since(reading, "state", 1000, 998), ""), "one heard before the request is not")
+    check(str_eq(device_reported_since(reading, "broken", 1000, 0), ""), "a protocol error is no report")
+    check(str_eq(device_reported_since(reading, "voltage_v", 1000, 0), ""), "nor a field nothing carried")
+    print("[PASS] a_reading_answers_the_field_and_its_age\n")
+}
+
+// @verifies MESH-0032
+test fn the_online_topic_says_whether_a_device_is_there() void {
+    check(str_eq(device_online_state("Online", "\"Online\""), "online"), "Tasmota's LWT Online is online")
+    check(str_eq(device_online_state("Offline", "Online"), "unreachable"), "and Offline is unreachable")
+    check(str_eq(device_online_state("online", "Online"), "unreachable"), "the word is compared case-sensitively")
+    check(str_eq(device_online_state("true", ""), "online"), "without online_up, true is online (a Shelly)")
+    check(str_eq(device_online_state("false", ""), "unreachable"), "and false is not")
+    check(str_eq(device_online_state("", "Online"), ""), "a topic that said nothing is not known")
+    print("[PASS] the_online_topic_says_whether_a_device_is_there\n")
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Alerts                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -753,6 +805,9 @@ fn main() void {
     a_gateway_scope_is_for_its_own_gateway_only()
     a_gateway_that_does_not_answer_is_backed_off()
     a_switch_is_shown_as_the_device_reports_it()
+    the_status_topics_are_read_from_the_manifest()
+    a_reading_answers_the_field_and_its_age()
+    the_online_topic_says_whether_a_device_is_there()
     an_alert_is_raised_once_per_cooldown()
     a_switch_function_is_an_output_signal()
     print("mesh domain tests ok\n")
