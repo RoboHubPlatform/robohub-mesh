@@ -38,7 +38,16 @@ fn deployed_get(project: string, key: string) string {
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if rho_str_index_of(line, prefix) == 0 {
-            return rho_str_slice(line, u32(rho_strlen(prefix)), u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+            let value: string = rho_str_slice(line, u32(rho_strlen(prefix)), u32(rho_strlen(line)) - u32(rho_strlen(prefix)))
+            // A record an earlier Mesh wrote has no shape and may hold a Wi-Fi
+            // password in clear (MESH-BUILD-0013). It says nothing a signature
+            // can be compared with (MESH-BUILD-0012), so it is replaced, once,
+            // by a record of shape 1 that says only that.
+            if value != "" && rho_str_index_of(value, "sig=") != 0 {
+                deployed_set(project, key, DEPLOY_SHAPE_UNKNOWN)
+                return DEPLOY_SHAPE_UNKNOWN
+            }
+            return value
         }
     }
     return ""
@@ -88,6 +97,16 @@ fn deployed_key_scope_of(key: string) string {
     return firmware_key_scope(key)
 }
 
+// deployed_wifi_key_of is the key a mesh's Wi-Fi passwords are digested with in
+// its signatures (deploy_wifi_digest): HMAC-SHA256(K_gw, "rh-wifi-sig1"), or ""
+// for no key.
+fn deployed_wifi_key_of(key: string) string {
+    if rho_strlen(key) != 64 {
+        return ""
+    }
+    return rho_hmac_sha256_hex(key, deploy_text_hex(DEPLOY_WIFI_LABEL))
+}
+
 // deployed_key_scope is the scope of a project's gateway key as its key file
 // holds it now. It only reads: a key is made by the build that needs one.
 fn deployed_key_scope(project: string) string {
@@ -117,8 +136,12 @@ fn deployed_above(parent: string) string {
 // its gateway key and where its gateway reports.
 // @req MESH-BUILD-0001
 fn deployed_mesh(project: string) string {
-    return deploy_mesh(project_area_id(project_file(project)), fleet_uplink_port(project), deployed_key_scope(project),
-        deployed_above(link_parent(project)))
+    var key: string = ""
+    if project != "" {
+        key = str_trim(rho_read_text(mesh_gateway_key_file(project)))
+    }
+    return deploy_mesh(project_area_id(project_file(project)), fleet_uplink_port(project), deployed_key_scope_of(key),
+        deployed_wifi_key_of(key), deployed_above(link_parent(project)))
 }
 
 fn deployed_record_gateway(project: string) void {

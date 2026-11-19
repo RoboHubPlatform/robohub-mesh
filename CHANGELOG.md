@@ -561,6 +561,12 @@ board and the gateway out of date, saying "area changed" or "gateway key changed
 A board's key epoch stays out: a rotation reaches the board by REKEY, not by a
 build (MESH-BUILD-0001, MESH-BUILD-0002, ADR-0001 amendment, proposed).
 
+A board's Wi-Fi password was kept in clear in its signature, and so in
+`deployed.txt`, in each job's record and in the apply page's diff; it is now a
+keyed digest, derived from the gateway key, that still changes with the password
+(MESH-BUILD-0013, proposed). A record written by an earlier Mesh is replaced, the
+first time it is read, by one that keeps nothing of it.
+
 Upgrading: a record of what runs written by 0.21.0 or earlier does not say which
 area or key a board was built with, and that cannot be reconstructed, so it is not
 migrated. Every such board and the gateway show out of date once, "recorded by an

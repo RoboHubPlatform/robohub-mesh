@@ -84,8 +84,40 @@ fn deploy_is_board(text: string, index: u32) bool {
     return !str_eq(kind, "module") && !str_eq(kind, "device")
 }
 
+// DEPLOY_WIFI_LABEL is what a Wi-Fi password's digest is keyed and labelled
+// with: "rh-wifi-sig1".
+const DEPLOY_WIFI_LABEL: string = "rh-wifi-sig1"
+
+// deploy_text_hex is a text's bytes as lowercase hex, what an HMAC is taken over.
+fn deploy_text_hex(text: string) string {
+    let digits: string = "0123456789abcdef"
+    var out: string = ""
+    var i: u32 = 0
+    while i < strlen(text) {
+        let b: u32 = u32(str_at(text, i))
+        out = out + str_slice(digits, b / 16, 1) + str_slice(digits, b % 16, 1)
+        i = i + 1
+    }
+    return out
+}
+
+// deploy_wifi_digest is how a signature names a Wi-Fi password: never in clear,
+// but as HMAC-SHA256(K, "rh-wifi-sig1|" ssid "|" password)[0:16 hex], keyed with
+// K = HMAC-SHA256(K_gw, "rh-wifi-sig1") (deploy_mesh's wifikey). It changes with
+// the password and the network, differs between meshes for the same password,
+// and cannot be guessed without the gateway key. A mesh without a gateway key
+// builds its boards without one and keys the digest with the label alone.
+// @req MESH-BUILD-0013
+fn deploy_wifi_digest(mesh: string, ssid: string, password: string) string {
+    if password == "" {
+        return ""
+    }
+    let key: string = deploy_or(plan_value(mesh, "wifikey"), deploy_text_hex(DEPLOY_WIFI_LABEL))
+    return str_slice(rho_hmac_sha256_hex(key, deploy_text_hex(DEPLOY_WIFI_LABEL + "|" + ssid + "|" + password)), 0, 16)
+}
+
 // deploy_link is a row's link and its settings, as one segment's value.
-fn deploy_link(text: string, index: u32) string {
+fn deploy_link(text: string, index: u32, mesh: string) string {
     let link: string = plan_value(text, deploy_node_key(index, "link"))
     var out: string = link
     var rest: string = DEPLOY_LINK_FIELDS
@@ -96,6 +128,14 @@ fn deploy_link(text: string, index: u32) string {
         // A Wi-Fi board without credentials of its own is built with the mesh's.
         if value == "" && str_eq(link, "wifi") && (str_eq(field, "ssid") || str_eq(field, "password")) {
             value = plan_value(text, field)
+        }
+        // A password is in a signature only as its digest (MESH-BUILD-0013).
+        if str_eq(field, "password") {
+            var ssid: string = plan_value(text, deploy_node_key(index, "ssid"))
+            if ssid == "" && str_eq(link, "wifi") {
+                ssid = plan_value(text, "ssid")
+            }
+            value = deploy_wifi_digest(mesh, ssid, value)
         }
         if value != "" {
             out = out + "," + field + ":" + value
@@ -112,6 +152,11 @@ fn deploy_dials_network(link: string) bool {
 
 // DEPLOY_SHAPE is the first segment of every signature this Mesh writes.
 const DEPLOY_SHAPE: string = "sig=2"
+
+// DEPLOY_SHAPE_UNKNOWN is what a record an earlier Mesh wrote, without a shape,
+// is replaced with when it is read: it keeps nothing of the old record, which
+// could hold a Wi-Fi password in clear, and is out of date as DEPLOY_UNKNOWN.
+const DEPLOY_SHAPE_UNKNOWN: string = "sig=1"
 
 // deploy_or is a value, or what a build falls back to when it is empty.
 fn deploy_or(value: string, fallback: string) string {
@@ -143,12 +188,13 @@ fn deploy_dial(text: string, index: u32, mesh: string) string {
 // deploy_mesh is what a mesh gives every image built in it that its plan's own
 // lines may not say, as flat lines: the area and the uplink port a plan without
 // its own falls back to (the fleet's), the scope of the gateway key every
-// board's key is derived from (never the key), and, for a mesh that reports
+// board's key is derived from (never the key), the key Wi-Fi passwords are
+// digested with (deploy_wifi_digest), and, for a mesh that reports
 // through another, where and with what its gateway reports there. The caller
 // reads them from the fleet and the key files.
 // @req MESH-BUILD-0001
-fn deploy_mesh(area: string, uplink: string, key_scope: string, above: string) string {
-    return "area=" + area + "\nuplink=" + uplink + "\nkey=" + key_scope + "\nabove=" + above + "\n"
+fn deploy_mesh(area: string, uplink: string, key_scope: string, wifi_key: string, above: string) string {
+    return "area=" + area + "\nuplink=" + uplink + "\nkey=" + key_scope + "\nwifikey=" + wifi_key + "\nabove=" + above + "\n"
 }
 
 // deploy_node_signature is what a board's image is built from.
@@ -160,7 +206,7 @@ fn deploy_node_signature(text: string, index: u32, mesh: string) string {
         ";board=" + plan_value(text, deploy_node_key(index, "board")) +
         ";role=" + plan_value(text, deploy_node_key(index, "role")) +
         ";parent=" + plan_value(text, deploy_node_key(index, "parent")) +
-        ";link=" + deploy_link(text, index)
+        ";link=" + deploy_link(text, index, mesh)
     var modules: string = ""
     var serves: string = ""
     let count: u32 = deploy_count(text)
@@ -172,7 +218,7 @@ fn deploy_node_signature(text: string, index: u32, mesh: string) string {
                     plan_value(text, deploy_node_key(child, "number")) + ","
             } else if deploy_is_board(text, child) {
                 serves = serves + plan_value(text, deploy_node_key(child, "number")) + ":" +
-                    deploy_link(text, child) + "/"
+                    deploy_link(text, child, mesh) + "/"
             }
         }
         child = child + 1
@@ -204,7 +250,7 @@ fn deploy_gateway_signature(text: string, mesh: string) string {
     while child <= count {
         if deploy_is_board(text, child) && str_eq(plan_value(text, deploy_node_key(child, "parent")), "gateway") {
             serves = serves + plan_value(text, deploy_node_key(child, "number")) + ":" +
-                deploy_link(text, child) + "/"
+                deploy_link(text, child, mesh) + "/"
         }
         child = child + 1
     }

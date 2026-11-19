@@ -245,7 +245,10 @@ def check_editor(base: str, project: Path) -> None:
     deployed_file = project / "deployed.txt"
     held_key = key_file.read_text() if key_file.exists() else None
     key_file.write_text("ab" * 32 + "\n")
-    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["gateway key changed"], "another gateway key")
+    # The Wi-Fi board the relay serves names its password by a digest keyed with
+    # the gateway key, so that link reads as changed too.
+    assert_contains(hx(base, f"/mesh/p/default/node/{relay}"), ["gateway key, a link it serves changed"],
+                    "another gateway key")
     if held_key is None:
         key_file.unlink()
     else:

@@ -155,7 +155,8 @@ programmed. A board whose signature now differs shows as out of date, with what
 changed: a new name changes nothing, a new module puts that board alone out of date,
 a new link puts the board out of date and asks the gateway or relay serving it to
 restart, and another area or another gateway key puts every board and the gateway
-out of date. The key is recorded by its scope, never by itself. Rotating a board's
+out of date. The key is recorded by its scope, never by itself, and a Wi-Fi password
+by a digest keyed with the gateway key, never in clear. Rotating a board's
 key is not a rebuild: the gateway hands the board its new key.
 
 A record written by Mesh 0.21.0 or earlier names neither the area nor the key, so

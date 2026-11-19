@@ -3,7 +3,7 @@ id: ADR-0001
 title: Decide what is out of date by comparing image signatures
 status: proposed
 date: 2026-11-13
-requirements: [MESH-0003, MESH-BUILD-0001, MESH-BUILD-0002, MESH-BUILD-0003, MESH-BUILD-0012]
+requirements: [MESH-0003, MESH-BUILD-0001, MESH-BUILD-0002, MESH-BUILD-0003, MESH-BUILD-0012, MESH-BUILD-0013]
 supersedes: []
 superseded_by: []
 ---
@@ -71,6 +71,16 @@ Mesh 0.21.1:
   HMAC-SHA256(K_gw, "rh-scope1")[0:8], is already written into every image and
   reveals nothing of the key, so `deployed.txt` and a project file's sealed record
   hold no secret they did not hold before.
+- **A Wi-Fi password is in a signature only as a keyed digest.** The link's
+  settings had carried a board's password in clear, so it sat in `deployed.txt`,
+  in each job's record and in the apply page's diff. It is now
+  HMAC-SHA256(K, "rh-wifi-sig1|" ssid "|" password) truncated to 16 hex digits,
+  with K = HMAC-SHA256(K_gw, "rh-wifi-sig1"): it changes whenever the password (the
+  board's own or the mesh's it inherits) or the network does, differs between
+  meshes for the same password, and cannot be tested against guesses without the
+  gateway key. A record an earlier Mesh wrote, which may hold a password, is
+  replaced by `sig=1` the first time it is read (MESH-BUILD-0013). The shape stays
+  `sig=2`: no released Mesh wrote a `sig=2` record with a password in it.
 - **Deliberately left out:** a board's key epoch, since a rotation reaches the
   board by REKEY and is followed on its own (MESH-ACCESS-0005), and the versions of
   the catalog's boards and drivers, which are the catalog's, not the mesh's, and

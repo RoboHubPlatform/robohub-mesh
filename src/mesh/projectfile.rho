@@ -984,7 +984,7 @@ fn projectfile_evaluate(file: string, passphrase: string, mode_in: string, targe
     // What the boards of the new mesh will be compared with: its area and
     // uplink port are in the plan; the key is the file's, when it brought one.
     preview = preview + projectfile_out_of_date(view, deployed,
-        deploy_mesh("", "", deployed_key_scope_of(key), deployed_above(plan_value(view, "mesh_parent"))))
+        deploy_mesh("", "", deployed_key_scope_of(key), deployed_wifi_key_of(key), deployed_above(plan_value(view, "mesh_parent"))))
     return ProjectImport{ 200, "", digest, mode, id, sanitize(name), text, key, deployed,
         str_field(assigned, " ", 0), str_field(assigned, " ", 1), str_field(assigned, " ", 2), preview, false }
 }

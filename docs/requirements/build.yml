@@ -13,7 +13,8 @@ requirements:
       A board's signature shall be made of the mesh's area, the scope of the gateway
       key its key is derived from (never the key itself), its number, board, role,
       parent, link and the link's settings (with the mesh's Wi-Fi name and password
-      when the board has none of its own), its modules, the links it serves, its
+      when the board has none of its own, a password only as its keyed digest,
+      MESH-BUILD-0013), its modules, the links it serves, its
       production toggle when on, and, when it dials the gateway over a network, the
       address it dials as the build resolves it (the plan's, else the fleet's uplink
       port); the gateway's signature shall be made of the area, the gateway key's
@@ -201,3 +202,22 @@ requirements:
     owner: maintainer
     changed: 2026-11-19
     tags: [build, deploy]
+
+  - id: MESH-BUILD-0013
+    title: A signature never holds a Wi-Fi password in clear
+    statement: >
+      A board's or the gateway's signature, and so the record of what runs, a job's
+      record and every diff or preview made from them, shall name a Wi-Fi password,
+      a board's own or the mesh's it inherits, only as a keyed digest that changes
+      whenever the password or the network changes, keyed with a value derived from
+      the mesh's gateway key so that the same password gives different digests in
+      different meshes; a record written before this that holds a password shall be
+      replaced when it is read.
+    rationale: deployed.txt, job records and the apply page's diff are not secrets stores; a password there leaked to anyone who could read them, while a change to it must still put the board out of date.
+    satisfies: [MESH-0003]
+    status: proposed
+    verification: test
+    decided_by: [ADR-0001]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [build, deploy, security]

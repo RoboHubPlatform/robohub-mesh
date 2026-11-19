@@ -343,6 +343,10 @@ def main() -> int:
         send(a, "GET", "/mesh/p/garden", cookie=admin)
         check("node.1111222233334444\tsig=2;area=5;key=" in (alpha.projects / "garden" / "deployed.txt").read_text(),
               "a programmed board is recorded with the area and the key's scope")
+        # @verifies MESH-BUILD-0013, MESH-BUILD-0012
+        recorded = (alpha.projects / "garden" / "deployed.txt").read_text()
+        check(WIFI_NODE not in recorded and WIFI_MESH not in recorded and "node.0123456789abcdef\tsig=1\n" in recorded,
+              "no Wi-Fi password stays in the record of what runs: an older record holding one is replaced once it is read")
 
         # ---------------------------------------------------------- export
         # @verifies MESH-XFER-0001, MESH-XFER-0002, MESH-XFER-0003, MESH-XFER-0009, MESH-0026, MESH-XFER-0024

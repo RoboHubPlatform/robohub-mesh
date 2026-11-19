@@ -29,6 +29,7 @@ include "../src/mesh/domain/signals.rho"
 // lets it be tested here rather than through the pages.
 
 extern fn abort()
+extern fn rho_hmac_sha256_hex(key_hex: string, message_hex: string) string
 
 fn check(condition: bool, what: string) void {
     if !condition {
@@ -159,9 +160,11 @@ const DEPLOY_PLAN: string = "gateway=native\nnode.count=3\n" +
     "node.2.kind=module\nnode.2.number=2\nnode.2.module=ds18b20\nnode.2.parent=node.1\n" +
     "node.3.kind=device\nnode.3.number=3\nnode.3.device=shelly\nnode.3.address=192.0.2.5\nnode.3.parent=gateway\n"
 
+const DEPLOY_WIFI_KEY: string = "5f0a1c2e3d4b6a798812a3b4c5d6e7f80112233445566778899aabbccddeeff0"
+
 // The mesh the plan is built in: the fleet's area and uplink port, the scope of
 // its gateway key, and no mesh above it.
-const DEPLOY_MESH: string = "area=5\nuplink=28500\nkey=00112233aabbccdd\nabove=\n"
+const DEPLOY_MESH: string = "area=5\nuplink=28500\nkey=00112233aabbccdd\nwifikey=" + DEPLOY_WIFI_KEY + "\nabove=\n"
 
 fn deploy_with(text: string, key: string, value: string) string {
     return plan_without(text, key) + key + "=" + value + "\n"
@@ -245,8 +248,8 @@ test fn a_board_flashed_in_another_area_is_out_of_date() void {
         "area changed"), "a board flashed in area 4 is out of date in area 7")
     check(str_eq(deploy_reason(deploy_gateway_signature(in_a, DEPLOY_MESH), deploy_gateway_signature(in_b, DEPLOY_MESH)),
         "area changed"), "and so is the gateway, which is started with the area")
-    let fleet_a: string = deploy_mesh("4", "28500", "00112233aabbccdd", "")
-    let fleet_b: string = deploy_mesh("7", "28500", "00112233aabbccdd", "")
+    let fleet_a: string = deploy_mesh("4", "28500", "00112233aabbccdd", DEPLOY_WIFI_KEY, "")
+    let fleet_b: string = deploy_mesh("7", "28500", "00112233aabbccdd", DEPLOY_WIFI_KEY, "")
     check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, fleet_a), deploy_node_signature(DEPLOY_PLAN, 1, fleet_b)),
         "area changed"), "a plan without its own area follows the fleet's")
     check(str_eq(deploy_node_signature(in_a, 1, fleet_a), deploy_node_signature(in_a, 1, fleet_b)),
@@ -259,13 +262,13 @@ test fn a_board_flashed_in_another_area_is_out_of_date() void {
 // back from elsewhere, puts every board and the gateway out of date.
 // @verifies MESH-0003, MESH-BUILD-0001, MESH-BUILD-0002
 test fn a_board_keyed_to_another_gateway_key_is_out_of_date() void {
-    let old_key: string = deploy_mesh("5", "28500", "00112233aabbccdd", "")
-    let new_key: string = deploy_mesh("5", "28500", "ffeeddccbbaa9988", "")
+    let old_key: string = deploy_mesh("5", "28500", "00112233aabbccdd", DEPLOY_WIFI_KEY, "")
+    let new_key: string = deploy_mesh("5", "28500", "ffeeddccbbaa9988", DEPLOY_WIFI_KEY, "")
     check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, old_key), deploy_node_signature(DEPLOY_PLAN, 1, new_key)),
         "gateway key changed"), "a board keyed to the old gateway key is out of date")
     check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN, old_key), deploy_gateway_signature(DEPLOY_PLAN, new_key)),
         "gateway key changed"), "and so is the gateway, which is started with the key")
-    let no_key: string = deploy_mesh("5", "28500", "", "")
+    let no_key: string = deploy_mesh("5", "28500", "", DEPLOY_WIFI_KEY, "")
     check(str_eq(deploy_reason(deploy_node_signature(DEPLOY_PLAN, 1, no_key), deploy_node_signature(DEPLOY_PLAN, 1, old_key)),
         "gateway key changed"), "a board built with a plain link is out of date once there is a key")
     check(str_index_of(deploy_node_signature(DEPLOY_PLAN, 1, old_key), "00112233aabbccdd") >= 0,
@@ -294,7 +297,7 @@ test fn what_a_build_falls_back_to_is_in_the_signature() void {
     check(str_eq(deploy_node_signature(deploy_with(wifi, "node.1.ssid", "Own"), 1, DEPLOY_MESH),
         deploy_node_signature(deploy_with(deploy_with(wifi, "node.1.ssid", "Own"), "ssid", "Orchard"), 1, DEPLOY_MESH)),
         "a board with its own Wi-Fi does not")
-    let other_port: string = deploy_mesh("5", "28501", "00112233aabbccdd", "")
+    let other_port: string = deploy_mesh("5", "28501", "00112233aabbccdd", DEPLOY_WIFI_KEY, "")
     check(str_eq(deploy_reason(wifi_before, deploy_node_signature(wifi, 1, other_port)), "gateway address changed"),
         "a board that dials the gateway follows the fleet's uplink port")
     check(str_eq(deploy_reason(deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH), deploy_gateway_signature(DEPLOY_PLAN, other_port)),
@@ -302,8 +305,8 @@ test fn what_a_build_falls_back_to_is_in_the_signature() void {
     let own_port: string = deploy_with(wifi, "uplink_port", "29000")
     check(str_eq(deploy_node_signature(own_port, 1, DEPLOY_MESH), deploy_node_signature(own_port, 1, other_port)),
         "a plan's own uplink port is the one a build reads")
-    let relay_a: string = deploy_mesh("5", "28500", "00112233aabbccdd", "192.0.2.1:28400/aaaaaaaaaaaaaaaa")
-    let relay_b: string = deploy_mesh("5", "28500", "00112233aabbccdd", "192.0.2.1:28400/bbbbbbbbbbbbbbbb")
+    let relay_a: string = deploy_mesh("5", "28500", "00112233aabbccdd", DEPLOY_WIFI_KEY, "192.0.2.1:28400/aaaaaaaaaaaaaaaa")
+    let relay_b: string = deploy_mesh("5", "28500", "00112233aabbccdd", DEPLOY_WIFI_KEY, "192.0.2.1:28400/bbbbbbbbbbbbbbbb")
     let relayed: string = deploy_with(DEPLOY_PLAN, "mesh_parent", "farm")
     check(str_eq(deploy_reason(deploy_gateway_signature(relayed, relay_a), deploy_gateway_signature(relayed, relay_b)),
         "the mesh it reports through changed"), "a relay gateway follows the key of the mesh above")
@@ -324,9 +327,39 @@ test fn a_record_without_the_area_and_key_is_not_trusted() void {
     check(str_eq(deploy_reason(old_gateway, deploy_gateway_signature(DEPLOY_PLAN, DEPLOY_MESH)), DEPLOY_UNKNOWN),
         "and so is a gateway")
     check(str_eq(DEPLOY_UNKNOWN, "recorded without its area and key"), "the reason says what is missing")
+    check(str_eq(deploy_reason(DEPLOY_SHAPE_UNKNOWN, deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), DEPLOY_UNKNOWN),
+        "and so is the record such a record is replaced with when it is read")
     check(str_eq(deploy_reason("", deploy_node_signature(DEPLOY_PLAN, 1, DEPLOY_MESH)), "never programmed"),
         "nothing recorded is still never programmed")
     print("[PASS] a_record_without_the_area_and_key_is_not_trusted\n")
+}
+
+// A signature is written to deployed.txt, shown in the apply page's diff and
+// carried in a job's record: a Wi-Fi password is in it only as a keyed digest
+// that changes with the password, the board's own or the mesh's it inherits.
+// @verifies MESH-BUILD-0013, MESH-BUILD-0001, MESH-BUILD-0002
+test fn a_signature_never_holds_a_wifi_password() void {
+    let wifi: string = deploy_with(deploy_with(deploy_with(DEPLOY_PLAN, "node.1.link", "wifi"), "ssid", "Greenhouse"),
+        "password", "mesh-secret-9")
+    let own: string = deploy_with(wifi, "node.1.password", "own-secret-7")
+    let inherited_sig: string = deploy_node_signature(wifi, 1, DEPLOY_MESH)
+    let own_sig: string = deploy_node_signature(own, 1, DEPLOY_MESH)
+    check(str_index_of(inherited_sig, "mesh-secret-9") < 0, "the mesh's password is not in a board's signature")
+    check(str_index_of(own_sig, "own-secret-7") < 0, "nor is a board's own")
+    check(str_index_of(deploy_gateway_signature(own, DEPLOY_MESH), "own-secret-7") < 0 &&
+        str_index_of(deploy_gateway_signature(wifi, DEPLOY_MESH), "mesh-secret-9") < 0, "nor in the gateway's, which serves the link")
+    check(str_index_of(deploy_diff("", own_sig), "own-secret-7") < 0, "nor in a diff a page shows")
+    check(str_eq(deploy_reason(own_sig, deploy_node_signature(deploy_with(own, "node.1.password", "own-secret-8"), 1, DEPLOY_MESH)),
+        "link changed"), "a new password of its own still puts the board out of date")
+    check(str_eq(deploy_reason(inherited_sig, deploy_node_signature(deploy_with(wifi, "password", "mesh-secret-10"), 1, DEPLOY_MESH)),
+        "link changed"), "and so does a new password it inherits")
+    let other_mesh: string = deploy_mesh("5", "28500", "00112233aabbccdd", "aa" + str_slice(DEPLOY_WIFI_KEY, 2, 62), "")
+    check(!str_eq(own_sig, deploy_node_signature(own, 1, other_mesh)), "the same password digests differently in another mesh")
+    check(str_eq(deploy_wifi_digest(DEPLOY_MESH, "Greenhouse", "own-secret-7"),
+        str_slice(rho_hmac_sha256_hex(DEPLOY_WIFI_KEY, deploy_text_hex("rh-wifi-sig1|Greenhouse|own-secret-7")), 0, 16)) &&
+        strlen(deploy_wifi_digest(DEPLOY_MESH, "Greenhouse", "own-secret-7")) == 16, "the digest is the keyed HMAC, 16 hex digits")
+    check(str_eq(deploy_text_hex("rh|"), "72687c"), "taken over the text's bytes")
+    print("[PASS] a_signature_never_holds_a_wifi_password\n")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -705,6 +738,7 @@ fn main() void {
     a_board_keyed_to_another_gateway_key_is_out_of_date()
     what_a_build_falls_back_to_is_in_the_signature()
     a_record_without_the_area_and_key_is_not_trusted()
+    a_signature_never_holds_a_wifi_password()
     the_manifest_lists_every_board_with_its_placement()
     a_rotated_board_is_listed_at_its_key_epoch()
     a_rotation_waits_for_the_board_to_confirm()

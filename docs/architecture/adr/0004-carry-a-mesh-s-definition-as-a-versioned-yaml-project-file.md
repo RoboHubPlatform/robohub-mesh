@@ -158,7 +158,9 @@ Made during implementation and approved in review:
   password; carried in clear it would break MESH-0026. It is therefore part of the
   sealed block (`sealed.data`), and a default export carries no record of what runs.
   An import without the sealed block starts with every board shown as never
-  programmed (MESH-XFER-0013, MESH-XFER-0017).
+  programmed (MESH-XFER-0013, MESH-XFER-0017). Since Mesh 0.21.1 a signature names
+  a Wi-Fi password only as a keyed digest (MESH-BUILD-0013); the record stays sealed
+  all the same, as the safe choice.
 - **Import holds are runtime keys of the plan.** A Wi-Fi board waiting for its
   password and a board missing from the catalog are recorded as
   `import.wifi_needed` and `import.catalog_missing`, so a new mesh stays one staged
