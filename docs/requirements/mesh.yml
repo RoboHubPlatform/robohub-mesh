@@ -330,11 +330,12 @@ requirements:
 
   - id: MESH-0022
     title: A switch shows the state the device reports
-    statement: When Mesh switches a network device it shall record the requested state as pending and show the device's state only from what the device reports after the request (its HTTP status, or a status message on the broker newer than the request); a request the device has not confirmed within 30 seconds, or one to a device whose manifest names no state field for its transport, shall be shown as requested and unconfirmed, never as the device's state, and the API shall answer 200 with the reported state when it is confirmed and 202 with state "pending" while it waits.
+    statement: When Mesh switches a network device it shall record the requested state as pending and show the device's state only from what the device reports after the request (its HTTP status, or the newest status message on the broker that carries the device's state field, from whichever of its status topics carries it, when that message is newer than the request); a request the device has not confirmed within 30 seconds, or one to a device whose manifest names no state field for its transport, shall be shown as requested and unconfirmed, never as the device's state, and the API shall answer 200 with the reported state when it is confirmed and 202 with state "pending" while it waits.
     rationale: A page must never claim a heater is off when it is not; a command that was taken is not a command that was carried out.
     satisfies: [SYS-0025, SYS-0059]
     status: proposed
     verification: test
+    decided_by: [ADR-0009]
     owner: maintainer
     changed: 2026-11-19
     tags: [devices, outputs]
@@ -410,3 +411,51 @@ requirements:
     owner: maintainer
     changed: 2026-11-19
     tags: [transfer, security, access]
+
+  - id: MESH-0029
+    title: A device is read from several status topics as one reading
+    statement: "Mesh shall read an MQTT device whose manifest lists several telemetry_mqtt.status_topics from every one of them as one reading: a status message shall change only the fields whose path it carries, a field no message carries shall keep its last value, and each field shall take its value from the newest message that carries it; a manifest naming one status_topic shall be read as it was."
+    rationale: Firmware such as Tasmota reports a plug's relay on one topic and its power meter on another; one device must still be one set of readings, and the plug Mesh already reads must not change.
+    satisfies: [SYS-0051]
+    status: approved
+    verification: test
+    decided_by: [ADR-0009]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [devices, mqtt]
+
+  - id: MESH-0030
+    title: A field path of $ is the whole payload
+    statement: A field line whose path is $ shall take a status message's whole payload as the field's value when that payload is not a JSON object or array; a message that does not carry a field's path, and a payload that is not JSON for any other path, shall leave the field unchanged rather than be an error, and where two lines name one field with different paths, the path a message carries shall apply.
+    rationale: Some devices publish a bare word (Tasmota's stat/POWER is ON) beside their JSON topics; reading it must not need a protocol of its own.
+    satisfies: [SYS-0051]
+    status: approved
+    verification: test
+    decided_by: [ADR-0009]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [devices, mqtt]
+
+  - id: MESH-0031
+    title: An onoff field reads ON and OFF as a switch state
+    statement: A field of type onoff shall be stored as on (1) for ON, true or 1 and as off (0) for OFF, false or 0, in any letter case, whether the value is a JSON string, boolean or number or a bare payload, and any other value shall be a protocol error for that field, which keeps its last value; the bool type shall go on reading JSON booleans only.
+    rationale: A relay reported as a word must be a switch state the pages and a confirmation can use; a word that is neither must never be read as off.
+    satisfies: [SYS-0051, SYS-0025]
+    status: approved
+    verification: test
+    decided_by: [ADR-0009]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [devices, mqtt, outputs]
+
+  - id: MESH-0032
+    title: A device's online topic says whether it is reachable
+    statement: Mesh shall show an MQTT device whose manifest names a telemetry_mqtt.online_topic as online when the newest payload on that topic equals the manifest's online_up, compared case-sensitively and true when online_up is not given, as unreachable when it is anything else, and as unknown while the topic has said nothing, in the API's device list and on the device's page.
+    rationale: A broker keeps a device's last words after it is gone (Tasmota's LWT is Offline, a Shelly's online is false); the person must see that the values shown are from a device that cannot be reached.
+    satisfies: [SYS-0051]
+    status: approved
+    verification: test
+    decided_by: [ADR-0009]
+    owner: maintainer
+    changed: 2026-11-19
+    tags: [devices, mqtt]
