@@ -722,3 +722,11 @@ Updates over the link (MESH-0039, MESH-0040, robohub ADR-0022).
 - **The update job.** A board whose platform takes images over its link (a Linux host board today; the Pico 2 W and the ESP32 with Phases 2c and 2d) gets "Build and update over the link" beside "Build and flash". The build runs as before; then Mesh writes the update manifest for the image, signs it, hands both to the board's gateway (`POST /api/v1/nodes/{area}/{node}/update`, robohub-gateway 0.9.0), and follows the gateway into the job's log — sending n/m, confirmed — ending done when the board confirmed the image (the deployed signature recorded, as after a flash), failed otherwise, with an alert naming the board and whether it was refused, failed or rolled back. Any other board is flashed.
 - The signing is a port of Mesh's own, `plugins/mesh-update` (`fwupdate_*`), tested in Go: the manifest's layout, its signature, bad arguments refused.
 - `tests/domain_test.rho` covers which boards update over the link and how the gateway's answer is read; `tests/devices_smoke.py` runs an update job through the job runner against a stand-in gateway — the key made owner-only, the manifest signed for the board, confirmed, the deployed signature recorded — and a rolled-back one that is an alert.
+
+## [0.27.0] - 2026-11-20
+
+A Pico 2 W is flashed for A/B and updated over its link (MESH-0041, robohub ADR-0023).
+
+- A board whose manifest gives an A/B flash command (`board.flash.ab_command`: a Pico 2 W's partition table, then the image into partition A) is flashed with it, unless the build is production; Mesh records that it was (`node.N.ab`) and offers "Build and update over the link" only then. A Pico 2 W flashed before is offered a flash, which moves it to A/B.
+- An example that carries robohub-managed is built with the managed layer (`CONFIG_RH_NODE_MANAGED`), so every image Mesh flashes can take the next; an update build is flagged `CONFIG_RH_UPDATE_IMAGE` (a Pico's try-before-you-buy), and the image sent is the partition image beside the ELF (`.bin`) when the build wrote one.
+- `robohub-pico` joins the platforms that take updates over the link.

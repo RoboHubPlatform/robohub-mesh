@@ -272,13 +272,19 @@ fn production_build_script(board: string, dir: string, binary: string, program: 
     return out
 }
 
-// production_flash_script is the body of a board's flash job. A production
+// production_flash_script is the body of a board's flash job: the board's own
+// A/B flash command when it gives one and the build is not production
+// (MESH-0041), else rho flash. A production
 // flash reads the board's name from the `.confirm` file beside the job script,
 // which Mesh writes only with what the person typed; without one it stops before
 // running anything, and rho flash checks the name itself as well.
 // @req MESH-BUILD-0011
-fn production_flash_script(board: string, dir: string, binary: string, program: string, production: bool, otp: bool) string {
+fn production_flash_script(board: string, dir: string, binary: string, program: string, production: bool, otp: bool,
+    ab_command: string) string {
     if !production {
+        if ab_command != "" {
+            return ab_command + "\n"
+        }
         return production_flash_command(board, dir, binary, false, false) + "\n"
     }
     var out: string = "confirm=\"$(cd \"$(dirname \"$0\")\" && pwd)/$(basename \"$0\" .sh).confirm\"\n" +

@@ -571,6 +571,16 @@ fn prepare_node() u32 {
         config = append_kconfig(config, sensor_kconfig_symbols(name))
     }
 
+    // Updates over the link (MESH-0040, MESH-0041): the managed layer, where the
+    // example carries it, so every image Mesh flashes can take the next one;
+    // and an update build flagged as one (a Pico's try-before-you-buy).
+    if rho_str_index_of(example_text, "robohub-managed") >= 0 {
+        config = config + "CONFIG_RH_NODE_MANAGED=y\n"
+    }
+    if jobs_update_image() {
+        config = config + "CONFIG_RH_UPDATE_IMAGE=y\n"
+    }
+
     // A production build, only when the board's toggle is on and its platform
     // has a production mode (production.rho). The symbol burns nothing by
     // itself; `rho flash --production` is what runs the irreversible steps.

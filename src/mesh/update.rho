@@ -82,8 +82,19 @@ fn mesh_update_write_header(target: string, project: string) u32 {
     return 0
 }
 
-// mesh_update_supported: the board's platform takes images over the link.
-// @req MESH-0040
+// mesh_ab_command is a board's A/B flash command (its manifest's
+// `board.flash.ab_command`) with the image and the platform's folder put in, or
+// "" when it gives none (MESH-0041).
+fn mesh_ab_command(template: string, binary: string) string {
+    if template == "" {
+        return ""
+    }
+    return str_replace(template, "{binary}", shell_quote(binary))
+}
+
+// mesh_update_supported: the board's platform takes images over the link, and
+// a board flashed with partitions (a Pico 2 W) was flashed so (MESH-0041).
+// @req MESH-0040, MESH-0041
 fn mesh_update_supported(index: u32) bool {
     let board: string = node_value(index, "board", "")
     var rest: string = board_rows()
@@ -97,7 +108,11 @@ fn mesh_update_supported(index: u32) bool {
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
         }
         if field(line, 0) == board {
-            return update_platform_ok(field(line, 3))
+            if !update_platform_ok(field(line, 3)) {
+                return false
+            }
+            let ab: bool = yaml.value(field(line, 12), "board.flash.ab_command") != ""
+            return update_flashed_ok(ab, node_value(index, "ab", ""))
         }
     }
     return false
@@ -160,8 +175,15 @@ fn mesh_update_send(project: string, seq: string) string {
     var binary: string = first_line(meta)
     let index: u32 = u32(rho_int_from_str(field(str_replace(meta, "\n", "|"), 1)))
     let length: u32 = u32(rho_strlen(binary))
-    if !rho_path_exists(binary) && length > 4 && rho_str_slice(binary, length - 4, 4) == ".elf" {
-        binary = rho_str_slice(binary, 0, u32(rho_strlen(binary)) - 4)
+    if length > 4 && rho_str_slice(binary, length - 4, 4) == ".elf" {
+        // The image a partition takes, when the build wrote one beside the ELF
+        // (a Pico's .bin, PICO-0012); else the executable itself (a Linux host).
+        let stem: string = rho_str_slice(binary, 0, length - 4)
+        if rho_path_exists(stem + ".bin") {
+            binary = stem + ".bin"
+        } else if !rho_path_exists(binary) {
+            binary = stem
+        }
     }
     if index == 0 || !rho_path_exists(binary) {
         return "the built image is not there"

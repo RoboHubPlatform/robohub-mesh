@@ -13,17 +13,26 @@
 module mesh.domain.update
 
 // A board takes an update over its link when its platform implements the update
-// slot (robohub-common COMM-0013): the Linux host boards today (robohub-linux,
-// LNX-0009); the Pico 2 W and the ESP32 when Phases 2c and 2d add theirs. Every
-// other board is offered a flash instead (MESH-0040). src/mesh/update.rho runs
+// slot (robohub-common COMM-0013): the Linux host boards (robohub-linux,
+// LNX-0009) and the Pico 2 W (robohub-pico, PICO-0011) — the ESP32 when Phase 2d
+// adds its slot. A board whose slot needs partitions is offered it only once it
+// was flashed with them (MESH-0041). Every other board is offered a flash
+// instead (MESH-0040). src/mesh/update.rho runs
 // the job; this is what it decides by.
 
-const UPDATE_PLATFORMS: string = " robohub-linux "
+const UPDATE_PLATFORMS: string = " robohub-linux robohub-pico "
 
 // update_platform_ok: a board on this platform can take an image over its link.
 // @req MESH-0040
 fn update_platform_ok(platform: string) bool {
     return platform != "" && str_index_of(UPDATE_PLATFORMS, " " + platform + " ") >= 0
+}
+
+// update_flashed_ok: a board whose manifest gives an A/B flash command takes
+// updates only once it was flashed so (`node.N.ab`); any other, always.
+// @req MESH-0041
+fn update_flashed_ok(needs_ab: bool, flashed_ab: string) bool {
+    return !needs_ab || flashed_ab == "1"
 }
 
 // update_final: the gateway's state for an update that will not move again.

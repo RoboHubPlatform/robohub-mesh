@@ -40,6 +40,20 @@ fn jobs_node() u32 {
     return u32(rho_int_from_str(first_line(rho_read_text(wizard_dir() + "/job-node.txt"))))
 }
 
+// jobs_update_image is whether the board being prepared is built as an update
+// sent over its link (CONFIG_RH_UPDATE_IMAGE), said in a file as the node is.
+fn jobs_update_image() bool {
+    return first_line(rho_read_text(wizard_dir() + "/job-update-image.txt")) == "1"
+}
+
+fn jobs_set_update_image(on: bool) void {
+    var value: string = ""
+    if on {
+        value = "1"
+    }
+    ignore_bool(rho_write_text(wizard_dir() + "/job-update-image.txt", value + "\n"))
+}
+
 fn jobs_set_node(index: u32) void {
     var value: string = ""
     if index > 0 {
@@ -320,7 +334,9 @@ fn jobs_queue_board_as(loc: string, index: u32, over_link: bool) string {
         plan_text_of_board = production_board_plan_text(production_node_board(index))
     }
     jobs_set_node(index)
+    jobs_set_update_image(over_link)
     let prepared: u32 = prepare_node()
+    jobs_set_update_image(false)
     let dir: string = node_dir()
     let board: string = node_board()
     let binary: string = node_binary()
@@ -362,9 +378,20 @@ fn jobs_queue_board_as(loc: string, index: u32, over_link: bool) string {
             signature, build, binary, index))
         return ""
     }
+    // A board whose manifest says how it is flashed for updates over the link
+    // (`flash.ab_command`: a Pico 2 W's partition table, then the image into A)
+    // is flashed so, unless it is a production build (MESH-0041).
+    var ab_command: string = ""
+    if !production {
+        ab_command = yaml.value(board_manifest(board), "board.flash.ab_command")
+    }
     let flash: string = jobs_add(id, "flash", target, flash_label,
-        jobs_script_header("flash " + name) + production_flash_script(board, dir, binary, program, production, otp) + send,
+        jobs_script_header("flash " + name) + production_flash_script(board, dir, binary, program, production, otp,
+            mesh_ab_command(ab_command, binary)) + send,
         signature, build, programming_instruction(loc, board))
+    if ab_command != "" {
+        ignore_bool(rho_write_text(jobs_path(id, flash, "ab"), "1\n"))
+    }
     if production {
         // What the inspector shows before the flash may run, and the name that
         // has to be typed for it.
@@ -468,6 +495,15 @@ fn jobs_finish(project: string) bool {
                     // flash does (MESH-0040).
                     save_setting_at(file, key, "programmed")
                     deployed_set(project, target, signature)
+                    if kind == "flash" {
+                        // Flashed for A/B, or not: what the update offer goes by
+                        // (MESH-0041).
+                        var ab: string = ""
+                        if jobs_exists(project, seq, "ab") {
+                            ab = "1"
+                        }
+                        save_setting_at(file, "node." + rho_int_to_str(index) + ".ab", ab)
+                    }
                 } else if !ok && jobs_state(project, seq) == "failed" {
                     save_setting_at(file, key, "failed")
                 }

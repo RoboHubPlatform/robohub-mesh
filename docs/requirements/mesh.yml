@@ -595,3 +595,20 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [updates, jobs]
+
+  - id: MESH-0041
+    title: Mesh flashes a Pico 2 W for A/B and updates it over its link
+    statement: >
+      Mesh shall flash a Pico 2 W with the partition table and its image in
+      partition A, record that the board was flashed so, build an update for it as
+      a try-before-you-buy image, and offer "Build and update over the link" for a
+      Pico 2 W only once it was flashed for A/B; a Pico 2 W flashed before shall be
+      offered a flash.
+    rationale: The next USB flash moves a board to A/B (robohub ADR-0023, 6); an update sent to a board without partitions would be refused as not updatable anyway, and the person should not be offered it.
+    satisfies: [SYS-0072]
+    decided_by: [robohub:ADR-0023]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, pico, jobs]

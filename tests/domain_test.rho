@@ -492,9 +492,13 @@ test fn the_production_job_scripts() void {
     let plain_build: string = production_build_script("pico2w", dir, bin, "node_3", false, "/k/key.pem", true, dir + "/plan.txt")
     check(str_eq(plain_build, "cd '/m/p/boards/node_3'\nrho build -target 'pico2w' .\n"),
         "a plain build is the build as it was, with no key and no plan")
-    check(str_eq(production_flash_script("pico2w", dir, bin, "node_3", false, true),
+    check(str_eq(production_flash_script("pico2w", dir, bin, "node_3", false, true, ""),
         "rho flash -target 'pico2w' -project '/m/p/boards/node_3' '/m/p/boards/node_3/build/output/node_3.elf'\n"),
         "a plain flash is the flash as it was")
+    check(str_eq(production_flash_script("pico2w", dir, bin, "node_3", false, true, "sh /w/flash_ab.sh 'x.elf'"),
+        "sh /w/flash_ab.sh 'x.elf'\n"), "a board with an A/B flash command is flashed with it (MESH-0041)")
+    check(str_index_of(production_flash_script("pico2w", dir, bin, "node_3", true, true, "sh /w/flash_ab.sh 'x.elf'"),
+        "--production") >= 0, "but a production flash stays rho flash --production")
     let build: string = production_build_script("pico2w", dir, bin, "node_3", true, "/k/key.pem", true, dir + "/plan.txt")
     check(str_index_of(build, "export RH_SECURE_BOOT_SIGNING_KEY='/k/key.pem'\nrho build -target 'pico2w' .\n") >= 0,
         "a production build is given the key by its path before it builds")
@@ -508,7 +512,7 @@ test fn the_production_job_scripts() void {
     let stm: string = production_build_script("nucleo-h753zi", dir, bin, "node_3", true, "", false, dir + "/plan.txt")
     check(str_index_of(stm, "RH_SECURE_BOOT_SIGNING_KEY") < 0 && str_index_of(stm, "--dry-run") >= 0,
         "an STM32 build has no key but still prints its plan")
-    let flash: string = production_flash_script("pico2w", dir, bin, "node_3", true, true)
+    let flash: string = production_flash_script("pico2w", dir, bin, "node_3", true, true, "")
     check(str_index_of(flash, "if [ ! -s \"$confirm\" ]; then echo 'no board name was typed: nothing was run'; exit 1; fi\n") >= 0,
         "a production flash stops when no name was typed")
     check(str_index_of(flash, "export RH_PICO_OTP_JSON='/m/p/boards/node_3/build/output/node_3.otp.json'\n") >= 0,
@@ -516,7 +520,7 @@ test fn the_production_job_scripts() void {
     check(str_index_of(flash, "'/m/p/boards/node_3/build/output/node_3.elf' --production < \"$confirm\"\n") >= 0,
         "and runs rho flash --production with the typed name on its input")
     check(str_index_of(flash, "--dry-run") < 0, "the flash itself is not a dry run")
-    check(str_index_of(production_flash_script("lolin32-lite", dir, bin, "node_3", true, false), "RH_PICO_OTP_JSON") < 0,
+    check(str_index_of(production_flash_script("lolin32-lite", dir, bin, "node_3", true, false, ""), "RH_PICO_OTP_JSON") < 0,
         "an ESP32 flash has no OTP file")
     check(str_eq(production_quote("it's"), "'it'\\''s'"), "a quote in a value stays one word")
     // The toggle is part of what a board is built from.
@@ -1074,11 +1078,14 @@ test fn a_boards_health_is_read_and_a_bad_reset_alerts() void {
 
 // Which boards take an update over the link, a gateway's answer read into the
 // job's log, which states are final, and the alert's words.
-// @verifies MESH-0040
+// @verifies MESH-0040, MESH-0041
 test fn an_update_job_reads_the_gateway_and_says_what_happened() void {
     check(update_platform_ok("robohub-linux"), "a Linux host board takes updates over its link")
-    check(!update_platform_ok("robohub-pico") && !update_platform_ok("robohub-avr") && !update_platform_ok(""),
+    check(update_platform_ok("robohub-pico"), "a Pico 2 W does too (Phase 2c)")
+    check(!update_platform_ok("robohub-esp32") && !update_platform_ok("robohub-avr") && !update_platform_ok(""),
         "other platforms are flashed, until their slot exists")
+    check(update_flashed_ok(false, "") && update_flashed_ok(true, "1"), "a board that needs partitions, flashed with them")
+    check(!update_flashed_ok(true, ""), "but not one flashed before it had them (MESH-0041)")
     check(str_eq(update_progress("{\"id\":5,\"state\":\"sending\",\"reason\":\"\",\"next\":12,\"chunks\":27}"),
         "update: sending 12/27"), "sending, with the chunks the board has")
     check(str_eq(update_progress("{\"state\":\"refused\",\"reason\":\"downgrade\",\"next\":0}"),
