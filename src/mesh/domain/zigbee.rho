@@ -93,6 +93,14 @@ fn zigbee_address_from(given: string) string {
     return out
 }
 
+// zigbee_quiet_too_long is whether a Zigbee2MQTT started at `started` (seconds
+// since the epoch, 0 when not known) has had more than a minute to bring its
+// bridge online by `now`.
+// @req MESH-ZB-0009
+fn zigbee_quiet_too_long(now: u32, started: u32) bool {
+    return started > 0 && now > started && now - started > 60
+}
+
 // zigbee_card_status is a coordinator's pill, as "css|label", from what its
 // bridge says: online, not answering when it said offline, no data when it has
 // said nothing.

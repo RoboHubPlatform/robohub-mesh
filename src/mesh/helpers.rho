@@ -1,0 +1,191 @@
+//
+// @file helpers.rho
+// @brief Asking the keeper to run Mesh's long-running programs as helpers: whether it offers them, a helper's state, starting, stopping and removing one.
+//
+// @module mesh.helpers
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.helpers
+
+// When the keeper runs Mesh, it can run Mesh's long-running programs — a mesh's
+// native gateway, a native coordinator's Zigbee2MQTT — as units of their own
+// (`rh-mesh-<name>.service`), which a restart or redeploy of Mesh leaves alone
+// and systemd restarts when they fail (robohub ADR-0018, MESH-0037, keeper
+// KEEP-APPS-0020). Mesh asks for them over the keeper's helpers API, on this
+// machine only, as itself: `Authorization: App <client id>:<client secret>`,
+// the secret read from the file the keeper named in RHO_CLIENT_SECRET_FILE and
+// handed to curl in an owner-only header file, never on a command line. Without
+// a keeper that answers the API — Mesh started by hand, CI, an older keeper —
+// nothing here is used and Mesh runs the programs as processes, as it always
+// has. The rules are in src/mesh/domain/helpers.rho.
+
+// helpers_keeper is the keeper Mesh asks for helpers: the one it was started
+// with, and only on this machine, since the keeper answers helpers on its
+// loopback alone; "" when Mesh was not started by a keeper on this machine.
+// @req MESH-0037
+fn helpers_keeper() string {
+    if mesh_keeper_url() == "" {
+        return ""
+    }
+    let keeper: string = nodekey_keeper()
+    if rho_str_starts_with(keeper, "http://127.0.0.1") || rho_str_starts_with(keeper, "http://localhost") {
+        return keeper
+    }
+    return ""
+}
+
+// helpers_app is the name Mesh is a client of the keeper under.
+fn helpers_app() string {
+    let id: string = getenv("RHO_CLIENT_ID")
+    if id == "" || !helpers_name_ok(id) {
+        return "mesh"
+    }
+    return id
+}
+
+// helpers_secret_file is the file holding Mesh's client secret, when the keeper
+// gave Mesh one that is a single line; "" otherwise.
+fn helpers_secret_file() string {
+    let path: string = getenv("RHO_CLIENT_SECRET_FILE")
+    if path == "" {
+        return ""
+    }
+    let secret: string = str_trim(rho_read_text(path))
+    if secret == "" || rho_str_index_of(secret, "\n") >= 0 || rho_str_index_of(secret, "\r") >= 0 {
+        return ""
+    }
+    return path
+}
+
+// helpers_configured is whether Mesh was started by a keeper that could offer
+// helpers: a client secret and a keeper on this machine.
+fn helpers_configured() bool {
+    return helpers_keeper() != "" && helpers_secret_file() != ""
+}
+
+// helpers_call asks the keeper's helpers API as Mesh and answers the status; the
+// answer's body is left in `out`. The credential is in a header file only Mesh's
+// user can read, removed once curl has read it; no proxy is asked.
+// @req MESH-0037
+fn helpers_call(method: string, path: string, body: string, out: string) u32 {
+    let keeper: string = helpers_keeper()
+    let secret_file: string = helpers_secret_file()
+    ignore_bool(rho_write_text(out, ""))
+    if keeper == "" || secret_file == "" {
+        return 0
+    }
+    let header: string = wizard_dir() + "/helpers-" + rho_random_hex(8) + ".hdr"
+    if !rho_write_secret(header, "Authorization: App " + helpers_app() + ":" + str_trim(rho_read_text(secret_file)) + "\n") {
+        return 0
+    }
+    var args: string = "-sS\n-m\n60\n--noproxy\n*\n-X\n" + method + "\n-H\n@" + header + "\n-o\n" + out + "\n-w\n%{http_code}\n"
+    if body != "" {
+        args = args + "-H\nContent-Type: application/json\n--data-binary\n" + body + "\n"
+    }
+    let report: string = wizard_report("helpers-status")
+    ignore_u32(mesh_curl(args + keeper + path + "\n", report))
+    ignore_u32(rho_exec_args("rm", "-f\n--\n" + header + "\n", wizard_report("helpers-rm")))
+    return u32(rho_int_from_str(first_line(rho_read_text(report))))
+}
+
+// helpers_list is the keeper's list of Mesh's helpers as it answered it, or ""
+// when the keeper does not offer helpers: Mesh was not started by one, it is
+// not answering, or it is a keeper without the API (404). An empty list is
+// still an answer, never "".
+// @req MESH-0037
+fn helpers_list() string {
+    if !helpers_configured() {
+        return ""
+    }
+    let out: string = wizard_report("helpers-list")
+    if helpers_call("GET", "/api/v1/helpers", "", out) != 200 {
+        return ""
+    }
+    let answer: string = rho_read_text(out)
+    if str_trim(answer) == "" {
+        return ""
+    }
+    return answer
+}
+
+// helpers_keeper_said is what the keeper said when it refused, in its own
+// words when it gave some, else its status.
+fn helpers_keeper_said(status: u32, answer: string) string {
+    let said: string = json_text(json_member(answer, "error"))
+    if said != "" {
+        return said
+    }
+    if status == 0 {
+        return "no answer"
+    }
+    return "HTTP " + rho_int_to_str(status)
+}
+
+// helpers_run asks the keeper to run a helper from its definition (writing its
+// unit and starting it, or restarting it when it runs). "" when it did, or what
+// the keeper said.
+// @req MESH-0037
+fn helpers_run(definition: string) string {
+    let out: string = wizard_report("helpers-run")
+    let status: u32 = helpers_call("POST", "/api/v1/helpers", definition, out)
+    if status == 200 {
+        return ""
+    }
+    return helpers_keeper_said(status, rho_read_text(out))
+}
+
+// helpers_act asks the keeper to start, stop or restart a helper it runs for
+// Mesh, and answers the status.
+// @req MESH-0037
+fn helpers_act(name: string, action: string) u32 {
+    if !helpers_name_ok(name) {
+        return 0
+    }
+    return helpers_call("POST", "/api/v1/helpers/" + name + "/" + action, "", wizard_report("helpers-act"))
+}
+
+// helpers_remove asks the keeper to stop a helper and remove its unit, and
+// answers the status (404 for one it never ran).
+// @req MESH-0037
+fn helpers_remove(name: string) u32 {
+    if !helpers_name_ok(name) {
+        return 0
+    }
+    return helpers_call("DELETE", "/api/v1/helpers/" + name, "", wizard_report("helpers-remove"))
+}
+
+// helpers_env_program is the `env` a helper whose environment holds a file
+// path under a refused name is run through, or "".
+fn helpers_env_program() string {
+    if rho_path_exists("/usr/bin/env") {
+        return "/usr/bin/env"
+    }
+    if rho_path_exists("/bin/env") {
+        return "/bin/env"
+    }
+    return ""
+}
+
+// helpers_shell_run is the shell command that asks the keeper to run a helper
+// from its definition, for a job that runs later (a gateway's start is part of
+// its job, after its build). The header is made when the job runs, in an
+// owner-only file, from the secret file's content — the secret is never a
+// word of any command — and removed once curl has read it; the command fails,
+// saying what the keeper answered, unless the keeper ran the helper.
+// @req MESH-0037
+fn helpers_shell_run(name: string, definition: string) string {
+    let dir: string = wizard_dir()
+    return "h=$(mktemp " + shell_quote(dir + "/helpers-XXXXXXXX.hdr") + ") || exit 1; o=$(mktemp " + shell_quote(dir + "/helpers-XXXXXXXX.out") +
+        ") || { rm -f \"$h\"; exit 1; }; " +
+        "{ printf '%s' " + shell_quote("Authorization: App " + helpers_app() + ":") + "; tr -d '\\r\\n' < " + shell_quote(helpers_secret_file()) +
+        "; printf '\\n'; } > \"$h\"; " +
+        "c=$(curl -sS -m 60 --noproxy '*' -X POST -H \"@$h\" -H 'Content-Type: application/json' --data-binary " + shell_quote(definition) +
+        " -o \"$o\" -w '%{http_code}' " + shell_quote(helpers_keeper() + "/api/v1/helpers") + "); rm -f \"$h\"; " +
+        "if [ \"$c\" != 200 ]; then echo " + shell_quote("the keeper did not run helper " + name + ":") + " \"$c\" \"$(head -c 400 \"$o\")\"; " +
+        "rm -f \"$o\"; exit 1; fi; echo " + shell_quote("helper " + name + ":") + " \"$(head -c 400 \"$o\")\"; rm -f \"$o\""
+}

@@ -83,7 +83,11 @@ fn mesh_scoped(req: Request, project: string) bool {
         return false
     }
     let revoked: bool = mesh_subject_revoked(project, header_str(req, "X-Rho-Subject"))
-    return mesh_api_grant(audience, mesh_scopes(req), project, revoked)
+    // GET and HEAD read; anything else may change something and needs a grant
+    // that is not read-only.
+    let method: string = request_method(req)
+    let write: bool = !rho_str_eq(method, "GET") && !rho_str_eq(method, "HEAD")
+    return mesh_api_grant(audience, mesh_scopes(req), project, revoked, write)
 }
 
 fn mesh_scope_denied() Response {
@@ -543,6 +547,7 @@ fn telemetry_worker() void {
     var ticks: u32 = 0
     var device_ticks: u32 = 0
     var check_ticks: u32 = 0
+    var zigbee_ticks: u32 = 0
     let checkpoint_every: u32 = mesh_retention_setting("checkpoint_minutes", 5) * 30
     let prune_every: u32 = mesh_retention_setting("prune_hours", 6) * 1800
     while true {
@@ -552,6 +557,13 @@ fn telemetry_worker() void {
         if device_ticks >= 3 {
             device_ticks = 0
             telemetry_device_poll_once()
+        }
+        // Every minute, a native coordinator that is wanted and not running is
+        // started again (MESH-ZB-0006).
+        zigbee_ticks = zigbee_ticks + 1
+        if zigbee_ticks >= 30 {
+            zigbee_ticks = 0
+            zigbee_start_wanted()
         }
         if device_ticks == 0 {
             mesh_fault_emit_once()

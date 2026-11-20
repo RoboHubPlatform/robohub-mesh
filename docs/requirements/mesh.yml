@@ -524,3 +524,21 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [devices, outputs, ui]
+
+  - id: MESH-0037
+    title: Mesh's long-running programs are keeper helpers that outlive Mesh
+    statement: >
+      When the keeper runs Mesh, Mesh shall run a mesh's native gateway and each
+      native coordinator's Zigbee2MQTT as keeper helpers (`gateway-<mesh>`,
+      `z2m-<mesh>-<coordinator>`, keeper KEEP-APPS-0020), declared in its
+      manifest's `helpers:`, read their state from the keeper, and stop and
+      remove them through it; run on its own, it shall run them as processes as
+      before. A restart or redeploy of Mesh shall not stop them.
+    rationale: Every Mesh redeploy killed the gateway and the Zigbee network, and their crashes waited for Mesh to notice; as units they are restarted by systemd and started at boot without Mesh (robohub ADR-0018).
+    satisfies: [SYS-0070]
+    decided_by: [robohub:ADR-0018]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [services, helpers, gateway, zigbee]

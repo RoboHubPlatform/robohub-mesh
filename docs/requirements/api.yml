@@ -25,14 +25,15 @@ requirements:
     title: A service token must name the mesh it reads
     statement: >
       Every `/mesh/api` handler for a mesh shall require a verified audience and a
-      scope `mesh:<mesh>`, `mesh:*` or `*`, and shall refuse with 403 a subject
-      revoked in that mesh's token records.
-    rationale: An application asks for a token for the one mesh it reads; it must open no other.
+      scope `mesh:<mesh>`, `mesh:*` or `*` — or, for a GET or HEAD request, the
+      read-only `mesh:<mesh>:read` or `mesh:read` — and shall refuse with 403 a
+      subject revoked in that mesh's token records.
+    rationale: An application asks for a token for the one mesh it reads; it must open no other, and one that only shows readings (robohub-feed) must be able to read with a grant that changes nothing.
     satisfies: [MESH-0013]
-    status: proposed
+    status: approved
     verification: test
     owner: maintainer
-    changed: 2026-11-19
+    changed: 2026-11-20
     tags: [security, api, least-privilege]
 
   - id: MESH-API-0003

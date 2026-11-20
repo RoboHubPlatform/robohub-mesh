@@ -56,8 +56,11 @@ requirements:
       patterns of its manifest, and shall accept a port typed by hand only as an
       absolute path under `/dev/` without spaces, `..` or shell characters; on
       this machine Mesh shall say,
-      before starting the coordinator, when the port does not exist or this user
-      cannot read and write it, naming the group that owns it.
+      before starting the coordinator, when the port does not exist, when this
+      user cannot read and write it, naming the group that owns it, and when it
+      exists but does not answer being opened within 3 s (a USB link that went
+      away, as a usbipd attachment after a standby), rather than start
+      Zigbee2MQTT on it.
     rationale: Behind usbipd or a VM the by-id name can differ from the vendor's, so the person picks from what is there. A wrong port is the first thing that goes wrong with a USB radio (an unplugged dongle, a WSL machine where it was not attached, a user not in dialout); it must be said in words, and the path is passed to a program, so it must be a path and nothing else.
     satisfies: [MESH-0033]
     decided_by: [ADR-0010]
@@ -75,8 +78,10 @@ requirements:
       user for it limited to its base topic `zigbee/<mesh>/<coordinator>`
       (keeper KEEP-PROV-0006), keep the password owner-only in the mesh's folder
       and hand it to Zigbee2MQTT only through an owner-only secret file, never on
-      a command line, in the plan, in a log or in an unsealed export; removing
-      the coordinator or the mesh shall remove the user.
+      a command line, in the plan, in a log or in an unsealed export; when the
+      keeper cannot be reached at all, Mesh shall start the coordinator with the
+      user it was issued before, if it has one; removing the coordinator or the
+      mesh shall remove the user.
     rationale: Zigbee2MQTT must reach only its own coordinator's topics, and must not carry Mesh's own broker credential, least of all to another board (SYS-0028, SYS-0033).
     satisfies: [MESH-0033]
     decided_by: [ADR-0010, robohub-keeper:ADR-0006]
@@ -116,12 +121,16 @@ requirements:
     title: On this machine Zigbee2MQTT runs as a process Mesh starts and stops
     statement: >
       For a coordinator under the native gateway, Mesh shall start Zigbee2MQTT —
+      as a keeper helper when the keeper runs Mesh (MESH-0037), otherwise as follows —
       the version the plugin pins, from `~/.rho/toolchains/zigbee2mqtt/<version>`,
       with the Node.js the plugin requires and `ZIGBEE2MQTT_DATA` set to the
       coordinator's data folder — as a process with its data folder,
       its log and its process id in the mesh's folder, as it starts the native
       gateway; it shall stop it by that process id only when the process is that
-      Zigbee2MQTT, and starting or restarting the gateway shall not restart it.
+      Zigbee2MQTT, killing it when it has not ended 15 s after being asked to;
+      starting or restarting the gateway shall not restart it; and a coordinator
+      Mesh started and was not told to stop shall be started again when Mesh
+      starts and, while it is not running, every minute after.
     rationale: A native gateway already runs this way; the coordinator is the mesh's, not the keeper's, and a gateway rebuild must not drop the Zigbee network.
     satisfies: [MESH-0033]
     decided_by: [ADR-0010, robohub:ADR-0017]

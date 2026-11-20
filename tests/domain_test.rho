@@ -24,6 +24,7 @@ include "../src/mesh/domain/switch.rho"
 include "../src/mesh/domain/json_read.rho"
 include "../src/mesh/domain/device_reading.rho"
 include "../src/mesh/domain/zigbee.rho"
+include "../src/mesh/domain/helpers.rho"
 include "../src/mesh/domain/alerting.rho"
 include "../src/mesh/domain/signals.rho"
 
@@ -576,8 +577,8 @@ test fn a_request_nobody_authenticated_is_refused_everywhere() void {
     check(!mesh_grant_every_mesh("", "*"), "the whole fleet without an audience")
     check(!mesh_grant_admin("", ""), "the token page with nothing")
     check(!mesh_grant_admin("", "*"), "the token page without an audience")
-    check(!mesh_api_grant("", "", "Sec", false), "the API with nothing")
-    check(!mesh_api_grant("", "*", "Sec", false), "the API without an audience")
+    check(!mesh_api_grant("", "", "Sec", false, false), "the API with nothing")
+    check(!mesh_api_grant("", "*", "Sec", false, false), "the API without an audience")
     check(!mesh_grant("mesh", "", "Sec", false, false), "an authenticated request with no scopes has no grant")
     print("[PASS] a_request_nobody_authenticated_is_refused_everywhere\n")
 }
@@ -609,14 +610,18 @@ test fn grants_decide_reading_and_changing_a_mesh() void {
 // read-only grant, or one with no mesh scope at all is refused.
 // @verifies MESH-API-0002
 test fn the_api_refuses_a_token_without_the_mesh_scope() void {
-    check(mesh_api_grant("mesh", "mesh:Sec", "Sec", false), "mesh:Sec reads Sec through the API")
-    check(mesh_api_grant("mesh", "mesh:*", "Sec", false), "mesh:* reads any mesh")
-    check(mesh_api_grant("mesh", "*", "Sec", false), "* reads any mesh")
-    check(!mesh_api_grant("mesh", "mesh:Other", "Sec", false), "a token for another mesh")
-    check(!mesh_api_grant("mesh", "energy:read,aquarium:*", "Sec", false), "a token with no mesh scope")
-    check(!mesh_api_grant("mesh", "mesh:Sec:read", "Sec", false), "a read grant is a person's, not a service token's")
-    check(!mesh_api_grant("mesh", "mesh:Sec", "", false), "no mesh is no grant")
-    check(!mesh_api_grant("mesh", "mesh:Sec", "Sec", true), "a revoked subject")
+    check(mesh_api_grant("mesh", "mesh:Sec", "Sec", false, false), "mesh:Sec reads Sec through the API")
+    check(mesh_api_grant("mesh", "mesh:*", "Sec", false, false), "mesh:* reads any mesh")
+    check(mesh_api_grant("mesh", "*", "Sec", false, false), "* reads any mesh")
+    check(!mesh_api_grant("mesh", "mesh:Other", "Sec", false, false), "a token for another mesh")
+    check(!mesh_api_grant("mesh", "energy:read,aquarium:*", "Sec", false, false), "a token with no mesh scope")
+    check(mesh_api_grant("mesh", "mesh:Sec:read", "Sec", false, false), "mesh:Sec:read reads Sec through the API")
+    check(!mesh_api_grant("mesh", "mesh:Sec:read", "Sec", false, true), "but changes nothing in it")
+    check(mesh_api_grant("mesh", "mesh:read", "Sec", false, false) && !mesh_api_grant("mesh", "mesh:read", "Sec", false, true), "mesh:read reads every mesh and changes none")
+    check(!mesh_api_grant("mesh", "mesh:Other:read", "Sec", false, false), "a read grant for another mesh")
+    check(mesh_api_grant("mesh", "mesh:Sec", "Sec", false, true), "mesh:Sec may change Sec")
+    check(!mesh_api_grant("mesh", "mesh:Sec", "", false, false), "no mesh is no grant")
+    check(!mesh_api_grant("mesh", "mesh:Sec", "Sec", true, false), "a revoked subject")
     print("[PASS] the_api_refuses_a_token_without_the_mesh_scope\n")
 }
 
@@ -632,8 +637,8 @@ test fn a_gateway_scope_is_for_its_own_gateway_only() void {
     check(!mesh_grant("mesh", held, "Sec", true, false), "nor change it")
     check(!mesh_grant("mesh", held, "", false, false), "nor read Mesh's overview")
     check(!mesh_grant_every_mesh("mesh", held) && !mesh_grant_admin("mesh", held), "nor the fleet or the tokens")
-    check(!mesh_api_grant("mesh", held, "Sec", false), "nor Sec through the API")
-    check(!mesh_api_grant("mesh", "gateway:*", "Other", false), "gateway:* opens no mesh's API")
+    check(!mesh_api_grant("mesh", held, "Sec", false, false), "nor Sec through the API")
+    check(!mesh_api_grant("mesh", "gateway:*", "Other", false, false), "gateway:* opens no mesh's API")
     check(!mesh_grant("mesh", "gateway:mesh:*", "", false, false), "a gateway of a mesh named mesh is not a mesh: grant")
     print("[PASS] a_gateway_scope_is_for_its_own_gateway_only\n")
 }
@@ -833,6 +838,8 @@ test fn a_coordinator_card_says_what_its_bridge_says() void {
     check(str_eq(zigbee_card_status("online"), "online|online"), "online when its bridge is")
     check(str_eq(zigbee_card_status("offline"), "warn|not answering"), "not answering when it said offline")
     check(str_eq(zigbee_card_status(""), "|no data"), "no data while it said nothing")
+    check(!zigbee_quiet_too_long(1000, 950) && zigbee_quiet_too_long(1000, 900), "quiet for over a minute is too long")
+    check(!zigbee_quiet_too_long(1000, 0), "not when the start is not known")
     print("[PASS] a_coordinator_card_says_what_its_bridge_says\n")
 }
 
@@ -970,6 +977,68 @@ test fn the_program_is_checked_and_the_container_command_is_one_command() void {
     print("[PASS] the_program_is_checked_and_the_container_command_is_one_command\n")
 }
 
+// @verifies MESH-0037
+test fn a_helper_is_named_after_its_mesh_and_coordinator() void {
+    check(str_eq(helpers_gateway_name("Home"), "gateway-Home"), "the gateway's helper")
+    check(str_eq(helpers_z2m_name("Home", "zb1"), "z2m-Home-zb1"), "a coordinator's helper")
+    check(str_eq(helpers_gateway_name("ho me"), "") && str_eq(helpers_gateway_name(""), "") &&
+        str_eq(helpers_z2m_name("Home", "a/b"), "") && str_eq(helpers_z2m_name("Home", ""), ""),
+        "no helper for a name the keeper would refuse")
+    check(helpers_name_ok("z2m-a_b-1") && !helpers_name_ok("") && !helpers_name_ok("a.b") && !helpers_name_ok("a b"),
+        "letters, digits, - and _ only")
+    let lengthy: string = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    check(str_eq(helpers_z2m_name(lengthy, "zb1"), ""), "and at most 64 of them")
+    print("[PASS] a_helper_is_named_after_its_mesh_and_coordinator\n")
+}
+
+// @verifies MESH-0037
+test fn a_secret_never_goes_into_a_helper() void {
+    check(helpers_env_key_ok("ZIGBEE2MQTT_DATA") && helpers_env_key_ok("_X") && !helpers_env_key_ok("1X") &&
+        !helpers_env_key_ok("lower") && !helpers_env_key_ok("A-B") && !helpers_env_key_ok(""), "a variable's name")
+    check(helpers_env_refused("ROBOHUB_BUS_PASSWORD_FILE") && helpers_env_refused("RHO_CLIENT_SECRET_FILE") &&
+        helpers_env_refused("API_TOKEN") && helpers_env_refused("GATEWAY_KEY_FILE") && !helpers_env_refused("PATH"),
+        "a name that says secret, password, token or key is refused")
+    let defined: string = helpers_definition("z2m-Home-zb1", "/n/bin/node", "/z/index.js\n", "/z",
+        "ZIGBEE2MQTT_DATA=/m/zb1\nZ2M_ONBOARD_NO_SERVER=1\nPATH=/n/bin:/usr/bin\nRHO_CLIENT_SECRET_FILE=/s\nMQTT_PASSWORD=hunter2\n", "/usr/bin/env")
+    check(str_eq(defined, "{\"name\":\"z2m-Home-zb1\",\"program\":\"/n/bin/node\",\"args\":[\"/z/index.js\"],\"dir\":\"/z\"," +
+        "\"env\":{\"ZIGBEE2MQTT_DATA\":\"/m/zb1\",\"Z2M_ONBOARD_NO_SERVER\":\"1\",\"PATH\":\"/n/bin:/usr/bin\"}}"),
+        "Zigbee2MQTT's definition carries no secret: " + defined)
+    let gateway: string = helpers_definition("gateway-Home", "/g/build/robohub-gateway", "", "/g",
+        "GATEWAY_MODE=master\nGATEWAY_KEY_FILE=/m/gateway.key\nRHO_TLS_KEY=relative.pem\n", "/usr/bin/env")
+    check(str_eq(gateway, "{\"name\":\"gateway-Home\",\"program\":\"/usr/bin/env\",\"args\":[\"GATEWAY_KEY_FILE=/m/gateway.key\"," +
+        "\"/g/build/robohub-gateway\"],\"dir\":\"/g\",\"env\":{\"GATEWAY_MODE\":\"master\"}}"),
+        "a key file's path is passed through env, never in the environment, and only as an absolute path: " + gateway)
+    check(str_eq(helpers_definition("gateway-Home", "/g/x", "", "/g", "GATEWAY_KEY_FILE=/k\n", ""), ""),
+        "and without an env to pass it with there is no definition")
+    check(str_eq(helpers_json_text("a\"b\\c"), "\"a\\\"b\\\\c\""), "a value is JSON-quoted")
+    print("[PASS] a_secret_never_goes_into_a_helper\n")
+}
+
+// @verifies MESH-0037
+test fn the_gateway_environment_is_read_as_a_shell_reads_it() void {
+    check(str_eq(helpers_shell_words("A='x y' B=plain C='it'\\''s' D=\"q\\\"d\""), "A=x y\nB=plain\nC=it's\nD=q\"d\n"),
+        "quoted words, as shell_quote writes them")
+    check(str_eq(helpers_shell_words("A='open"), ""), "an unclosed quote is no words")
+    check(str_eq(helpers_env_lines("GATEWAY_MODE='master' REST_PORT='8090' GATEWAY_MODE=relay notanassignment lower=x"),
+        "REST_PORT=8090\nGATEWAY_MODE=relay\n"), "assignments only, the last value of a name kept")
+    check(str_eq(helpers_env_set("A=1\nB=2\n", "A=3"), "B=2\nA=3\n"), "setting a variable again replaces it")
+    print("[PASS] the_gateway_environment_is_read_as_a_shell_reads_it\n")
+}
+
+// @verifies MESH-0037
+test fn a_helpers_state_is_read_from_the_keepers_list() void {
+    let answer: string = "{\"helpers\":[{\"name\":\"gateway-Home\",\"unit\":\"rh-mesh-gateway-Home.service\",\"state\":\"active\"," +
+        "\"log\":\"/w/helpers/gateway-Home.log\"},{\"name\":\"z2m-Home-zb1\",\"unit\":\"rh-mesh-z2m-Home-zb1.service\",\"state\":\"inactive\"," +
+        "\"log\":\"/w/helpers/z2m-Home-zb1.log\"}]}"
+    check(str_eq(helpers_field(answer, "gateway-Home", "state"), "active") &&
+        str_eq(helpers_field(answer, "z2m-Home-zb1", "log"), "/w/helpers/z2m-Home-zb1.log"), "a helper's state and log")
+    check(str_eq(helpers_entry(answer, "z2m-Home-zb2"), "") && str_eq(helpers_field("{\"helpers\":[]}", "x", "state"), ""),
+        "a helper the keeper does not list has no state")
+    check(helpers_running("active") && helpers_running("activating") && !helpers_running("inactive") &&
+        !helpers_running("failed") && !helpers_running(""), "active or about to be is running")
+    print("[PASS] a_helpers_state_is_read_from_the_keepers_list\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -1022,5 +1091,9 @@ fn main() void {
     the_bridge_state_and_info_are_read()
     joined_devices_are_listed_matched_and_answered()
     the_program_is_checked_and_the_container_command_is_one_command()
+    a_helper_is_named_after_its_mesh_and_coordinator()
+    a_secret_never_goes_into_a_helper()
+    the_gateway_environment_is_read_as_a_shell_reads_it()
+    a_helpers_state_is_read_from_the_keepers_list()
     print("mesh domain tests ok\n")
 }

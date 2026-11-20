@@ -627,6 +627,7 @@
   "zigbee.mesh_level": "This mesh's id is not a valid topic level (letters, digits, - and _ only), so it cannot have a coordinator.",
   "zigbee.name": "Name",
   "zigbee.topic_level": "This mesh's id or the coordinator's address is not a topic level (letters, digits, - and _), so it has no base topic.",
+  "zigbee.not_reaching": "Zigbee2MQTT has been running for over a minute without reaching the dongle. On WSL, attach it again from Windows (usbipd detach, then usbipd attach --wsl --auto-attach), then Stop and Start here.",
   "zigbee.name.chars": "A name is up to 64 characters, without quotes, backslashes or line breaks.",
   "zigbee.name.taken": "Another node of this mesh already has that name.",
   "zigbee.name_help": "Any name. Its address — the topic it is reached on — is made from it: Plug z becomes plug-z.",
@@ -652,6 +653,7 @@
   "zigbee.place.notboard": "a coordinator hangs under the gateway or a board",
   "zigbee.place.refused": "The coordinator cannot go there: {reason}.",
   "zigbee.place.taken": "that board has a coordinator already",
+  "zigbee.port.unresponsive": "{port} is there but does not answer: the dongle's USB link went away. On WSL, attach it again from Windows (usbipd detach, then usbipd attach --wsl --auto-attach); Mesh starts the coordinator within a minute once it answers.",
   "zigbee.port.absent": "{port} does not exist: plug the dongle in (on WSL, attach it with usbipd).",
   "zigbee.port.choose": "Choose a port",
   "zigbee.port.denied": "This user cannot read and write {port}: add it to the {group} group and log in again.",
@@ -689,5 +691,10 @@
   "zigbee.version": "Zigbee2MQTT",
   "zigbee.where.container": "a container on its board",
   "zigbee.where.native": "a process on this machine",
+  "zigbee.where.helper": "a keeper helper on this machine ({unit})",
+  "zigbee.log": "Log",
+  "zigbee.log.recent": "Recent lines",
+  "helpers.refused": "The keeper did not run {name}: {reason}.",
+  "helpers.keeper_down": "This coordinator runs as a keeper helper and the keeper is not answering, so nothing is started beside it; Mesh asks again every minute.",
   "zigbee.which": "Coordinator"
 }

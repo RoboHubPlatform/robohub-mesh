@@ -729,6 +729,31 @@ fn handler_start_native() u32 {
     let scheme: string = gateway_scheme(current_project())
     // The gateway admits the boards its manifest lists; it is read beside the key.
     ignore_bool(mesh_manifest_write(current_project(), true))
+    // When the keeper runs Mesh and offers helpers, the gateway is the helper
+    // gateway-<mesh>: a unit of its own that a restart of Mesh leaves running
+    // (MESH-0037). The keeper restarts it when it runs, so it runs what was just
+    // built.
+    let helper: string = helpers_gateway_name(current_project())
+    if helper != "" && helpers_list() != "" {
+        let env: string = gateway_helper_env(mesh_gateway_key_path(current_project()), jobs_local_relay_key())
+        var definition: string = ""
+        if env != "" {
+            definition = helpers_definition(helper, project + "/build/robohub-gateway", "", project, env, helpers_env_program())
+        }
+        if definition == "" {
+            return run_shell("echo " + shell_quote("gateway: its environment cannot be given to a keeper helper") + "; exit 1", "start-gateway")
+        }
+        let started: u32 = run_shell(prefix +
+            "echo 'gateway: " + scheme + "://127.0.0.1:" + rest + " (this host)'; " +
+            "echo 'gateway: " + scheme + "://" + address + ":" + rest + " (network)'; " +
+            // One this Mesh started as a process before is stopped: it holds the port.
+            fleet_stop_command(current_project()) + "; " + helpers_shell_run(helper, definition) + "; printf '%s\\n' " +
+            shell_quote(helper) + " > " + shell_quote(fleet_helper_file(current_project())), "start-gateway")
+        if started != 0 {
+            return started
+        }
+        return gateway_probe_native(scheme, rest)
+    }
     let command: string = prefix +
         "echo 'gateway: " + scheme + "://127.0.0.1:" + rest + " (this host)'; " +
         "echo 'gateway: " + scheme + "://" + address + ":" + rest + " (network)'; " +
@@ -742,6 +767,41 @@ fn handler_start_native() u32 {
     if started != 0 {
         return started
     }
+    return gateway_probe_native(scheme, rest)
+}
+
+// gateway_helper_env is the environment a native gateway started as a keeper
+// helper is given, as KEY=value lines: what gateway_env starts it with, and —
+// since a unit inherits nothing from Mesh, as a process did — where the keeper
+// is, for the keeper's public key and sign-in. Nothing in it is a secret: the
+// keys are files the gateway reads, named by path.
+// @req MESH-0037, MESH-BUILD-0007
+fn gateway_helper_env(key_file: string, relay_key: string) string {
+    var out: string = ""
+    var names: string = "RHO_KEEPER_PORT\nRHO_AUTH_URL\nRHO_HOME\n"
+    while names != "" {
+        let name: string = first_line(names)
+        names = rho_str_slice(names, u32(rho_strlen(name)) + 1, u32(rho_strlen(names)) - u32(rho_strlen(name)) - 1)
+        let value: string = getenv(name)
+        if value != "" && rho_str_index_of(value, "\n") < 0 {
+            out = helpers_env_set(out, name + "=" + value)
+        }
+    }
+    var rest: string = helpers_env_lines(gateway_env(key_file, relay_key))
+    if rest == "" {
+        return ""
+    }
+    while rest != "" {
+        let line: string = first_line(rest)
+        rest = rho_str_slice(rest, u32(rho_strlen(line)) + 1, u32(rho_strlen(rest)) - u32(rho_strlen(line)) - 1)
+        out = helpers_env_set(out, line)
+    }
+    return out
+}
+
+// gateway_probe_native waits for this machine's own gateway to answer, and
+// records it as the gateway Mesh reads.
+fn gateway_probe_native(scheme: string, rest: string) u32 {
     // The probe asks this machine's own gateway whether it is up and sends
     // nothing; a certificate made for the gateway's network name does not name
     // 127.0.0.1, so it is not checked here.

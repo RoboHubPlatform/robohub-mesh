@@ -665,3 +665,47 @@ MESH-ZB-0001..0017).
 The Zigbee smoke runs a broker, a keeper and a Zigbee2MQTT of its own and opens no
 serial port.
 
+
+## [0.24.0] - 2026-11-20
+
+Supervision: when the keeper runs Mesh, a mesh's native gateway and each native
+coordinator's Zigbee2MQTT are keeper helpers — units of their own that a restart
+or redeploy of Mesh leaves running and systemd restarts when they fail (robohub
+ADR-0018, MESH-0037, keeper KEEP-APPS-0020).
+
+- **The manifest declares `helpers: [gateway-*, z2m-*]`** and
+  `deploy.limits: {memory: 4G, tasks: 4096}`: Mesh builds firmware and the
+  gateway inside its own unit, which needs more than the keeper's defaults.
+- **Helpers when the keeper offers them.** With `RHO_CLIENT_SECRET_FILE` and a
+  keeper on this machine that answers `GET /api/v1/helpers`, Mesh asks the keeper
+  (`Authorization: App mesh:<client secret>`, read by curl from an owner-only
+  header file, never a word of a command line; on loopback, without proxy
+  headers) to run the gateway as `gateway-<mesh>` and a coordinator's Zigbee2MQTT
+  as `z2m-<mesh>-<coordinator>`. Starting is `POST /api/v1/helpers` with the
+  program, its arguments, folder and environment — no secret in any of them: the
+  broker password stays in `secret.yaml`, and the gateway's key files, whose
+  variable names the keeper refuses, are passed as paths through `env` on the
+  helper's command line. A coordinator's state is the helper's state, stopping it
+  is `POST …/stop`, removing it or its mesh is `DELETE`; the gateway's start is
+  part of its job, after the build, and its stop and its mesh's deletion go
+  through the keeper too. The Zigbee tab says the coordinator runs as a helper,
+  names its unit and shows its log — the helper's log the keeper answered, or
+  `mesh-z2m.log` for a process.
+- **A restart of Mesh leaves helpers alone**: the once-a-minute start of wanted
+  coordinators asks the keeper, leaves a helper that runs, and starts one that
+  was stopped behind Mesh's back. A coordinator that ran as a helper is not
+  started as a process while the keeper that runs Mesh is not answering.
+- **Run on its own** (by hand, CI, a keeper without the API), Mesh runs both as
+  processes with their pid and log beside the mesh, exactly as before.
+- **Zigbee after a standby**: a serial port that exists but does not answer
+  being opened within 3 s (a usbipd attachment lost in a standby) is said before
+  Zigbee2MQTT is started on it; a Zigbee2MQTT running for over a minute without
+  its bridge online is said on the tab; a wanted coordinator is started again
+  every minute while it is not running, and with the broker user it was issued
+  before when the keeper cannot be reached at all.
+
+The new helpers smoke runs Mesh under a stand-in keeper offering the helpers API
+and checks the definitions, the credential, the state, stop, removal and that a
+restart of Mesh stops nothing.
+
+`/mesh/api` accepts the read-only `mesh:<project>:read` and `mesh:read` for the requests that only read (GET, HEAD), so an application that only shows readings — robohub-feed — reads with a grant that changes nothing; writing still needs `mesh:<project>`, `mesh:*` or `*` (MESH-API-0002).

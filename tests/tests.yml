@@ -102,3 +102,13 @@ suites:
     kind: command
     tags: [smoke, devices, zigbee]
     command: [python3, tests/zigbee_smoke.py]
+  # Mesh run as the keeper runs it, beside a stand-in keeper offering the helpers
+  # API (keeper KEEP-APPS-0020): a coordinator's Zigbee2MQTT and the gateway asked
+  # for as helpers with the right definition, Mesh's App credential and no secret,
+  # their state read from the keeper, stopped and removed through it, the
+  # helper's log on the tab, and a restart of Mesh that stops nothing.
+  # @verifies MESH-0037, MESH-ZB-0006, MESH-BUILD-0007, MESH-BUILD-0008
+  - name: helpers-smoke
+    kind: command
+    tags: [smoke, helpers, zigbee]
+    command: [python3, tests/helpers_smoke.py]

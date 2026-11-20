@@ -407,9 +407,10 @@ fn mesh_project_delete(req: Request) Response {
         return mesh_redirect("/mesh")
     }
     let was_current: bool = id == current_project()
-    // The project's own gateway goes with it, by its process id; another
-    // mesh's gateway keeps running.
-    ignore_u32(fleet_stop_gateway(id))
+    // The project's own gateway goes with it — by its process id, or as the
+    // keeper's helper, whose unit is removed (MESH-0037); another mesh's gateway
+    // keeps running.
+    fleet_remove_gateway(id)
     // Its coordinators stop and their broker users go (MESH-ZB-0004).
     zigbee_forget_mesh(id)
     fleet_forget(id)

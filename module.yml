@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.23.0
+  version: 0.24.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -143,6 +143,18 @@ deploy:
   service: mesh
   # The services it calls; keeper registers it as a client for these alone.
   calls: [gateway, energy]
+  # What its unit may use (robohub ADR-0018, keeper KEEP-APPS-0019). Mesh
+  # builds firmware and the gateway inside its own cgroup, which needs more than
+  # the keeper's defaults (2G, 1024 tasks).
+  limits:
+    memory: 4G
+    tasks: 4096
+
+# The helpers the keeper may run for Mesh (keeper KEEP-APPS-0020): a mesh's
+# native gateway (gateway-<mesh>) and each native coordinator's Zigbee2MQTT
+# (z2m-<mesh>-<coordinator>), as units of their own that a restart of Mesh
+# leaves running (MESH-0037). Run by hand, Mesh runs them as processes.
+helpers: [gateway-*, z2m-*]
 
 docs:
   title: The RoboHub Mesh application

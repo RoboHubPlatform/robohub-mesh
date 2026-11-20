@@ -378,7 +378,9 @@ The **Zigbee** tab starts, restarts and stops the coordinator. A start:
    onboarding page is never served; its pid (`mesh-z2m.pid`) and log
    (`mesh-z2m.log`) are in the data folder, it is stopped by that pid only while
    the process is that Zigbee2MQTT, and the gateway's start and stop leave it
-   alone. Node.js must be of a major the plugin names (22 or 24): one `rho keeper
+   alone. Under the keeper it is instead the keeper helper
+   `z2m-<mesh>-<coordinator>`, with the keeper's log (see *The gateway and
+   Zigbee2MQTT outlive Mesh* below). Node.js must be of a major the plugin names (22 or 24): one `rho keeper
    sync` fetched into `~/.rho/toolchains`, or the one on PATH. When it or the
    pinned Zigbee2MQTT is missing the tab says so; **Install Zigbee2MQTT** runs a
    job that downloads the release source, unpacks it and runs `corepack pnpm
@@ -944,6 +946,52 @@ argument.
 file. A gateway's and a job runner's own logs sit beside the mesh and keep their last
 megabyte once they pass five.
 
+### The gateway and Zigbee2MQTT outlive Mesh
+
+A mesh's native gateway and each native coordinator's Zigbee2MQTT run for as long as
+the mesh needs them, not as long as Mesh runs (robohub:ADR-0018, MESH-0037).
+
+**Under the keeper**, Mesh asks the keeper to run them as **helpers** — systemd user
+units the keeper writes, `rh-mesh-gateway-<mesh>.service` and
+`rh-mesh-z2m-<mesh>-<coordinator>.service`, with the keeper's restart policy
+(always, every 5 s) and `NoNewPrivileges`. A restart or redeploy of Mesh leaves them
+running; a crash is restarted by systemd, not by Mesh noticing it; at boot systemd
+starts them without waiting for Mesh or the keeper. Mesh's manifest declares the
+names it may ask for (`helpers: [gateway-*, z2m-*]`), and the keeper's page for Mesh
+lists them with their state.
+
+| | |
+| --- | --- |
+| When | `RHO_CLIENT_SECRET_FILE` is set and the keeper (`ROBOHUB_KEEPER_URL`, on `127.0.0.1`) answers `GET /api/v1/helpers` |
+| Credential | `Authorization: App mesh:<client secret>`, read by curl from an owner-only header file; never on a command line |
+| Start | `POST /api/v1/helpers` with the program, arguments, folder and environment; the keeper restarts a helper that runs |
+| State | the helper's state in `GET /api/v1/helpers` (a coordinator runs while it is `active`) |
+| Stop, remove | `POST /api/v1/helpers/<name>/stop`; `DELETE /api/v1/helpers/<name>` when a coordinator or its mesh is removed |
+| Logs | the keeper's, in Mesh's workspace under `helpers/<name>.log`; the Zigbee tab shows the coordinator's |
+
+No secret is in a helper's definition: Zigbee2MQTT is `node index.js` with
+`ZIGBEE2MQTT_DATA`, `Z2M_ONBOARD_NO_SERVER=1` and `PATH` (its Node.js's folder, then
+`/usr/local/bin:/usr/bin:/bin`), its broker password staying
+in `secret.yaml`; the gateway gets the environment it always had (mode, area, ports,
+serial port, uplink, relay), plus `RHO_KEEPER_PORT`, `RHO_AUTH_URL` and `RHO_HOME`
+since a unit inherits nothing from Mesh. Its key files are named by path only, and
+because the keeper refuses any variable named like a secret (`…KEY…`), those paths
+(`GATEWAY_KEY_FILE`, `RELAY_KEY_FILE`, `RHO_TLS_KEY`) are passed through `env` on the
+helper's command line rather than in its environment. The gateway's start is part of
+its job, after the build; its unit is restarted on every start, so it runs what was
+just built. Once a minute Mesh asks the keeper about the coordinators it was not told
+to stop: one whose helper runs is left alone, one that was stopped is started again.
+While the keeper that runs Mesh does not answer, a coordinator that ran as a helper is
+not started as a process beside it (the tab says so).
+
+**On its own** — started by hand, in CI, or under a keeper without the helpers API —
+Mesh runs both as processes, as it always has: `gateway.pid` and `gateway.log` beside
+the mesh, `mesh-z2m.pid` and `mesh-z2m.log` in the coordinator's data folder, each
+stopped by its pid only while the process is still that program.
+
+Mesh's own unit asks for more than the keeper's default limits, since it builds
+firmware and the gateway inside it: `deploy.limits: {memory: 4G, tasks: 4096}`.
+
 **Backup.** Copy `~/.rho/mesh` (the meshes, their keys and the telemetry store) and
 Mesh's workspace. A mesh's `gateway.key` is what every board's key is derived from:
 lose it and every board must be rebuilt and flashed.
@@ -998,4 +1046,9 @@ problem, the import's decisions), hold the published schema to them, run the
 projectfile port's Go tests (sealing, JSON, digests), and walk export and import over
 HTTP across several running Meshes: round trips in YAML and JSON, sealed secrets,
 the three modes, conflicts, the preview, an overwrite and its revision, invalid
-files, grants and form tokens, and an import interrupted before its rename.
+files, grants and form tokens, and an import interrupted before its rename. The
+helpers smoke runs Mesh under a stand-in keeper with the helpers API, which runs what
+it is asked to as processes of its own: a coordinator's Zigbee2MQTT and the gateway
+asked for as helpers with the right definition and Mesh's App credential and no
+secret, their state read from the keeper, a stop and a removal through it, the
+helper's log on the tab, and a restart of Mesh that stops nothing.

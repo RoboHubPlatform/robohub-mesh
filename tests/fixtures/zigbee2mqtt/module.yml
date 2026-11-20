@@ -6,7 +6,7 @@
 #
 module:
   name: robohub-zigbee2mqtt
-  id: robohub.plugin.zigbee2mqtt
+  id: robohub.test.zigbee2mqtt-fixture
   type: plugin
   version: 0.0.0
 

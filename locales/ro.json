@@ -627,6 +627,7 @@
   "zigbee.mesh_level": "Id-ul acestei rețele nu este un nivel de topic valid (doar litere, cifre, - și _), deci nu poate avea un coordonator.",
   "zigbee.name": "Nume",
   "zigbee.topic_level": "Id-ul acestei rețele sau adresa coordonatorului nu este un nivel de topic (litere, cifre, - și _), deci nu are topic de bază.",
+  "zigbee.not_reaching": "Zigbee2MQTT rulează de peste un minut fără să ajungă la dongle. Pe WSL, atașați-l din nou din Windows (usbipd detach, apoi usbipd attach --wsl --auto-attach), apoi Stop și Start aici.",
   "zigbee.name.chars": "Un nume are cel mult 64 de caractere, fără ghilimele, backslash sau rânduri noi.",
   "zigbee.name.taken": "Alt nod al acestei rețele are deja acest nume.",
   "zigbee.name_help": "Orice nume. Adresa lui — topicul pe care este găsit — se face din el: Plug z devine plug-z.",
@@ -652,6 +653,7 @@
   "zigbee.place.notboard": "un coordonator stă sub gateway sau sub o placă",
   "zigbee.place.refused": "Coordonatorul nu poate sta acolo: {reason}.",
   "zigbee.place.taken": "placa are deja un coordonator",
+  "zigbee.port.unresponsive": "{port} există dar nu răspunde: legătura USB a dongle-ului a dispărut. Pe WSL, atașați-l din nou din Windows (usbipd detach, apoi usbipd attach --wsl --auto-attach); Mesh pornește coordonatorul în cel mult un minut după ce răspunde.",
   "zigbee.port.absent": "{port} nu există: conectați dongle-ul (în WSL, atașați-l cu usbipd).",
   "zigbee.port.choose": "Alegeți un port",
   "zigbee.port.denied": "Acest utilizator nu poate citi și scrie {port}: adăugați-l în grupul {group} și autentificați-vă din nou.",
@@ -689,5 +691,10 @@
   "zigbee.version": "Zigbee2MQTT",
   "zigbee.where.container": "un container pe placa lui",
   "zigbee.where.native": "un proces pe această mașină",
+  "zigbee.where.helper": "un helper al keeper-ului pe această mașină ({unit})",
+  "zigbee.log": "Jurnal",
+  "zigbee.log.recent": "Ultimele rânduri",
+  "helpers.refused": "Keeper-ul nu a pornit {name}: {reason}.",
+  "helpers.keeper_down": "Acest coordonator rulează ca helper al keeper-ului, iar keeper-ul nu răspunde, așa că nu se pornește nimic alături de el; Mesh întreabă din nou în fiecare minut.",
   "zigbee.which": "Coordonator"
 }

@@ -121,17 +121,27 @@ fn mesh_grant_admin(audience: string, scopes: string) bool {
 
 // mesh_api_grant is whether a service token may read or act on one mesh through
 // /mesh/api: it must name that mesh (`mesh:<mesh>`), all of Mesh (`mesh:*`) or
-// everything (`*`). A gateway's scope (`gateway:<mesh>:*`) is the scope Mesh
+// everything (`*`) — or, for a request that only reads, carry a read-only grant
+// for it (`mesh:<mesh>:read`, `mesh:read`). A gateway's scope (`gateway:<mesh>:*`) is the scope Mesh
 // presents to a gateway, never one Mesh accepts.
 // @req MESH-API-0002
-fn mesh_api_grant(audience: string, scopes: string, project: string, revoked: bool) bool {
+fn mesh_api_grant(audience: string, scopes: string, project: string, revoked: bool, write: bool) bool {
     if audience == "" || revoked {
         return false
     }
     if mesh_scope_listed(scopes, "*") || mesh_scope_listed(scopes, "mesh:*") {
         return true
     }
-    return project != "" && mesh_scope_listed(scopes, "mesh:" + project)
+    if project == "" {
+        return false
+    }
+    if mesh_scope_listed(scopes, "mesh:" + project) {
+        return true
+    }
+    // A read-only grant reads: `mesh:<mesh>:read` that mesh, `mesh:read` every
+    // mesh, and neither changes anything. An application that only shows
+    // readings — robohub-feed — asks for no more (MESH-API-0002).
+    return !write && (mesh_scope_listed(scopes, "mesh:" + project + ":read") || mesh_scope_listed(scopes, "mesh:read"))
 }
 
 // mesh_gateway_scope is what Mesh asks a token for when it speaks to one mesh's

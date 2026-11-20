@@ -1,0 +1,376 @@
+//
+// @file helpers.rho
+// @brief Keeper helpers as rules: their names, the environment a helper may be given, its definition as JSON, and its state read from the keeper's answer.
+//
+// @module mesh.domain.helpers
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.helpers
+
+// When the keeper runs Mesh, a mesh's native gateway and each native
+// coordinator's Zigbee2MQTT are keeper helpers: units the keeper writes and
+// runs on Mesh's behalf, so they outlive a restart of Mesh (robohub ADR-0018,
+// MESH-0037, keeper KEEP-APPS-0020). This module is the part of that which is a
+// rule: what a helper is called, which variables of a program's environment the
+// keeper may be given and which never, how a definition is written, and how the
+// keeper's list is read. Nothing here asks the keeper, so all of it is tested on
+// its own (tests/domain_test.rho); src/mesh/helpers.rho does the asking.
+
+// HELPERS_PATH_NAMES are the variables the gateway is started with whose names
+// the keeper refuses in a helper's environment — a name with KEY in it is taken
+// for a secret — but whose values are paths to a file, never the key itself.
+// They are passed through `env` on the helper's command line instead, where a
+// path may be.
+const HELPERS_PATH_NAMES: string = " GATEWAY_KEY_FILE RELAY_KEY_FILE RHO_TLS_KEY RHO_AUTH_PUBLIC_KEY "
+
+/* -------------------------------------------------------------------------- */
+/*  Names                                                                     */
+/* -------------------------------------------------------------------------- */
+
+// helpers_name_ok is whether a name is one the keeper takes for a helper:
+// letters, digits, `-` and `_`, 1 to 64 of them.
+// @req MESH-0037
+fn helpers_name_ok(name: string) bool {
+    let n: u32 = strlen(name)
+    if n == 0 || n > 64 {
+        return false
+    }
+    let allowed: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+    var i: u32 = 0
+    while i < n {
+        if str_index_of(allowed, str_slice(name, i, 1)) < 0 {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// helpers_gateway_name is the helper a mesh's native gateway runs as,
+// `gateway-<mesh>`, or "" when that is not a helper's name.
+// @req MESH-0037
+fn helpers_gateway_name(mesh: string) string {
+    let name: string = "gateway-" + mesh
+    if mesh == "" || !helpers_name_ok(name) {
+        return ""
+    }
+    return name
+}
+
+// helpers_z2m_name is the helper a native coordinator's Zigbee2MQTT runs as,
+// `z2m-<mesh>-<coordinator>`, or "" when that is not a helper's name.
+// @req MESH-0037, MESH-ZB-0006
+fn helpers_z2m_name(mesh: string, coordinator: string) string {
+    let name: string = "z2m-" + mesh + "-" + coordinator
+    if mesh == "" || coordinator == "" || !helpers_name_ok(name) {
+        return ""
+    }
+    return name
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The environment                                                           */
+/* -------------------------------------------------------------------------- */
+
+// helpers_env_key_ok is whether a variable's name is one the keeper takes:
+// upper-case letters, digits and `_`, not starting with a digit.
+fn helpers_env_key_ok(key: string) bool {
+    let n: u32 = strlen(key)
+    if n == 0 {
+        return false
+    }
+    let upper: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+    let digits: string = "0123456789"
+    var i: u32 = 0
+    while i < n {
+        let c: string = str_slice(key, i, 1)
+        if str_index_of(upper, c) < 0 && (i == 0 || str_index_of(digits, c) < 0) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// helpers_env_refused is whether a variable's name says it holds a secret —
+// SECRET, PASSWORD, TOKEN or KEY in it — which never goes into a helper's
+// environment: the keeper refuses it, and Mesh does not ask.
+// @req MESH-0037
+fn helpers_env_refused(key: string) bool {
+    return str_index_of(key, "SECRET") >= 0 || str_index_of(key, "PASSWORD") >= 0 ||
+        str_index_of(key, "TOKEN") >= 0 || str_index_of(key, "KEY") >= 0
+}
+
+// helpers_path_name is whether a refused name is one of the gateway's file
+// paths (HELPERS_PATH_NAMES).
+fn helpers_path_name(key: string) bool {
+    return key != "" && str_index_of(HELPERS_PATH_NAMES, " " + key + " ") >= 0
+}
+
+// helpers_shell_words are the words of a command's text as a shell reads them,
+// one per line: unquoted runs, '…' kept as written, "…" with \" and \\ read,
+// and a backslash outside quotes taking the next character as it is. "" when a
+// quote is not closed or a word holds a line break.
+// @req MESH-0037
+fn helpers_shell_words(text: string) string {
+    let n: u32 = strlen(text)
+    var out: string = ""
+    var word: string = ""
+    var in_word: bool = false
+    var i: u32 = 0
+    while i < n {
+        let c: string = str_slice(text, i, 1)
+        if c == "'" {
+            let close: i32 = str_index_of(str_slice(text, i + 1, n - i - 1), "'")
+            if close < 0 {
+                return ""
+            }
+            word = word + str_slice(text, i + 1, u32(close))
+            in_word = true
+            i = i + u32(close) + 2
+            continue
+        }
+        if c == "\"" {
+            var j: u32 = i + 1
+            var closed: bool = false
+            while j < n {
+                let d: string = str_slice(text, j, 1)
+                if d == "\"" {
+                    closed = true
+                    break
+                }
+                if d == "\\" && j + 1 < n && (str_slice(text, j + 1, 1) == "\"" || str_slice(text, j + 1, 1) == "\\") {
+                    word = word + str_slice(text, j + 1, 1)
+                    j = j + 2
+                    continue
+                }
+                word = word + d
+                j = j + 1
+            }
+            if !closed {
+                return ""
+            }
+            in_word = true
+            i = j + 1
+            continue
+        }
+        if c == "\\" && i + 1 < n {
+            word = word + str_slice(text, i + 1, 1)
+            in_word = true
+            i = i + 2
+            continue
+        }
+        if c == " " || c == "\t" {
+            if in_word {
+                out = out + word + "\n"
+            }
+            word = ""
+            in_word = false
+            i = i + 1
+            continue
+        }
+        if c == "\n" || c == "\r" {
+            return ""
+        }
+        word = word + c
+        in_word = true
+        i = i + 1
+    }
+    if in_word {
+        out = out + word + "\n"
+    }
+    if str_index_of(out, "\r") >= 0 {
+        return ""
+    }
+    return out
+}
+
+// helpers_env_set is a list of KEY=value lines with `line` set in it: a
+// variable named twice keeps the last value, as `env` does.
+fn helpers_env_set(lines: string, line: string) string {
+    let eq: i32 = str_index_of(line, "=")
+    if eq <= 0 {
+        return lines
+    }
+    let key: string = str_slice(line, 0, u32(eq) + 1)
+    var out: string = ""
+    var rest: string = lines
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var each: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            each = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if each != "" && !str_starts_with(each, key) {
+            out = out + each + "\n"
+        }
+    }
+    return out + line + "\n"
+}
+
+// helpers_env_lines are the KEY=value assignments in the text of a command's
+// environment (`K='v' K2=v`), one per line, a variable named twice keeping its
+// last value; words that are not an assignment of a valid name are left out.
+// "" when the text cannot be read as words.
+// @req MESH-0037
+fn helpers_env_lines(text: string) string {
+    var rest: string = helpers_shell_words(text)
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        let word: string = str_slice(rest, 0, u32(at))
+        rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        let eq: i32 = str_index_of(word, "=")
+        if eq > 0 && helpers_env_key_ok(str_slice(word, 0, u32(eq))) {
+            out = helpers_env_set(out, word)
+        }
+    }
+    return out
+}
+
+/* -------------------------------------------------------------------------- */
+/*  The definition                                                            */
+/* -------------------------------------------------------------------------- */
+
+// helpers_json_text is a value as a JSON string.
+fn helpers_json_text(value: string) string {
+    var out: string = ""
+    let n: u32 = strlen(value)
+    var i: u32 = 0
+    while i < n {
+        let c: string = str_slice(value, i, 1)
+        if c == "\"" || c == "\\" {
+            out = out + "\\" + c
+        } else if c == "\n" {
+            out = out + "\\n"
+        } else if c == "\r" {
+            out = out + "\\r"
+        } else if c == "\t" {
+            out = out + "\\t"
+        } else {
+            out = out + c
+        }
+        i = i + 1
+    }
+    return "\"" + out + "\""
+}
+
+// helpers_json_list is lines as a JSON list of strings.
+fn helpers_json_list(lines: string) string {
+    var out: string = ""
+    var rest: string = lines
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var each: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            each = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if each == "" {
+            continue
+        }
+        if out != "" {
+            out = out + ","
+        }
+        out = out + helpers_json_text(each)
+    }
+    return "[" + out + "]"
+}
+
+// helpers_definition is what Mesh asks the keeper to run, as the JSON of
+// `POST /api/v1/helpers`: a program and its arguments (one per line), the folder
+// it runs in, and its environment (KEY=value lines). A variable whose name says
+// it holds a secret is never in it: one of the gateway's file paths
+// (HELPERS_PATH_NAMES) is passed as an argument of `env_program` — the helper
+// then runs `env K=/path … <program> <args>`, with no shell — and any other is
+// left out. "" when a path has to be passed and there is no `env` to pass it
+// with.
+// @req MESH-0037
+fn helpers_definition(name: string, program: string, args: string, dir: string, env: string, env_program: string) string {
+    var plain: string = ""
+    var passed: string = ""
+    var rest: string = env
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        let eq: i32 = str_index_of(line, "=")
+        if eq <= 0 {
+            continue
+        }
+        let key: string = str_slice(line, 0, u32(eq))
+        let value: string = str_slice(line, u32(eq) + 1, strlen(line) - u32(eq) - 1)
+        if !helpers_env_key_ok(key) || str_index_of(value, "\r") >= 0 {
+            continue
+        }
+        if helpers_env_refused(key) {
+            if helpers_path_name(key) && str_starts_with(value, "/") {
+                passed = passed + line + "\n"
+            }
+            continue
+        }
+        if plain != "" {
+            plain = plain + ","
+        }
+        plain = plain + helpers_json_text(key) + ":" + helpers_json_text(value)
+    }
+    var exe: string = program
+    var argv: string = args
+    if passed != "" {
+        if env_program == "" {
+            return ""
+        }
+        exe = env_program
+        argv = passed + program + "\n" + args
+    }
+    return "{\"name\":" + helpers_json_text(name) + ",\"program\":" + helpers_json_text(exe) +
+        ",\"args\":" + helpers_json_list(argv) + ",\"dir\":" + helpers_json_text(dir) + ",\"env\":{" + plain + "}}"
+}
+
+/* -------------------------------------------------------------------------- */
+/*  What the keeper answers                                                   */
+/* -------------------------------------------------------------------------- */
+
+// helpers_entry is a helper's entry in the keeper's `GET /api/v1/helpers`
+// answer, as raw JSON, or "" when the keeper lists no helper of that name.
+// @req MESH-0037
+fn helpers_entry(answer: string, name: string) string {
+    var rest: string = json_items(json_member(answer, "helpers"))
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        let item: string = str_slice(rest, 0, u32(at))
+        rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        if name != "" && json_text(json_member(item, "name")) == name {
+            return item
+        }
+    }
+    return ""
+}
+
+// helpers_field is one field of a helper's entry (`state`, `unit`, `log`), ""
+// when it is not listed.
+fn helpers_field(answer: string, name: string, key: string) string {
+    return json_text(json_member(helpers_entry(answer, name), key))
+}
+
+// helpers_running is whether a unit's state is one of a helper that runs or is
+// about to: systemd's active, activating or reloading.
+// @req MESH-0037
+fn helpers_running(state: string) bool {
+    return state == "active" || state == "activating" || state == "reloading"
+}

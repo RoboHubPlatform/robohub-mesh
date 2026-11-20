@@ -337,6 +337,10 @@ def main() -> int:
         env = dict(os.environ)
         env.pop("RHO_CLIENT_ID", None)
         env.pop("RHO_AUTH_URL", None)
+        # Without a client secret Mesh is not run by a keeper that offers helpers:
+        # Zigbee2MQTT is a process of Mesh's own (tests/helpers_smoke.py runs the
+        # other way).
+        env.pop("RHO_CLIENT_SECRET_FILE", None)
         env["ROBOHUB_WORKSPACE"] = str(PROJECTS)
         env["RHO_MESH_STATE_DIR"] = str(state)
         env["ROBOHUB_MESH_PROJECTS"] = str(projects)
@@ -443,6 +447,33 @@ def main() -> int:
               "a restart keeps the network key and PAN ids Zigbee2MQTT made")
         check(len([r for r in Keeper.requests if r[0] == "POST"]) == 2 and len(broker.issued) == 1, "and asks the keeper again for the same user")
         check(wait(lambda: "Bridge online" in call(base, "GET", tab)[1]), "the bridge is online again")
+
+        # @verifies MESH-ZB-0004, MESH-ZB-0006
+        # A machine's boot: Mesh starts before the keeper answers. The coordinator
+        # it had started still starts, with the broker user it was issued before.
+        process.terminate()
+        process.wait(timeout=20)
+        pid_file = data / "mesh-z2m.pid"
+        old_pid = pid_file.read_text().strip() if pid_file.exists() else ""
+        if old_pid:
+            subprocess.run(["kill", old_pid], check=False)
+            wait(lambda: not Path(f"/proc/{old_pid}").exists(), 20)
+        asked_before = len([r for r in Keeper.requests if r[0] == "POST"])
+        down_env = dict(env, ROBOHUB_KEEPER_URL=f"http://127.0.0.1:{free_port()}")
+        process = subprocess.Popen([str(binary)], cwd=MESH, env=down_env, stdout=log, stderr=subprocess.STDOUT, text=True)
+        wait_for(base)
+        new_pid = lambda: pid_file.read_text().strip() if pid_file.exists() else ""
+        check(wait(lambda: new_pid() not in ("", old_pid) and Path(f"/proc/{new_pid()}").exists(), 20) and
+              len([r for r in Keeper.requests if r[0] == "POST"]) == asked_before and
+              "issued before" in log_path.read_text(),
+              "with the keeper not up yet, Mesh starts the coordinator with the broker user it kept")
+        check(wait(lambda: "Bridge online" in call(base, "GET", tab)[1]), "and its bridge comes online")
+        process.terminate()
+        process.wait(timeout=20)
+        process = subprocess.Popen([str(binary)], cwd=MESH, env=env, stdout=log, stderr=subprocess.STDOUT, text=True)
+        wait_for(base)
+        found = re.search(r'name="csrf" value="([^"]*)"', call(base, "GET", "/settings?tab=alerts", hx=False)[1])
+        csrf = found.group(1) if found else csrf
         status, _ = call(base, "POST", f"/mesh/p/Home/node/{coordinator_id}",
                          {"tab": "node", "name": "zb1", "device": "robohub-device-sonoff-zbdongle-e", "serial_port_typed": "/dev/null",
                           "channel": "25", "parent": "gateway"})

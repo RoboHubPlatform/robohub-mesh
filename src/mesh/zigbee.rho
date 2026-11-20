@@ -491,8 +491,11 @@ fn zigbee_keeper_problem(loc: string, status: u32, answer: string) string {
 
 // zigbee_broker_issue asks the keeper for a coordinator's broker user, confined
 // to its base topic, and keeps the answer owner-only in the mesh's folder;
-// asking again answers the same user and password. "" when it is kept, or what
-// went wrong in words.
+// asking again answers the same user and password. When the keeper cannot be
+// reached at all — Mesh started a moment before it, as at a machine's boot —
+// the answer kept from before is used: the keeper keeps the users it issued, so
+// the broker knows it. "" when there is a user to start with, or what went
+// wrong in words.
 // @req MESH-ZB-0004
 fn zigbee_broker_issue(loc: string, project: string, index: u32) string {
     let coordinator: string = project_node_value(project_file(project), index, "address", "")
@@ -507,6 +510,11 @@ fn zigbee_broker_issue(loc: string, project: string, index: u32) string {
     ignore_bool(rho_write_text(out, ""))
     let user: string = json_str_field(answer, "user")
     let password: string = json_str_field(answer, "password")
+    if status == 0 && zigbee_broker_value(project, coordinator, "user") != "" &&
+        zigbee_broker_value(project, coordinator, "password") != "" {
+        info("mesh", "the keeper could not be reached; coordinator " + coordinator + " of " + project + " starts with the broker user it was issued before")
+        return ""
+    }
     if status != 200 || user == "" || password == "" {
         return zigbee_keeper_problem(loc, status, answer)
     }
@@ -683,6 +691,34 @@ fn zigbee_pid_file(project: string, coordinator: string) string {
     return zigbee_dir(project, coordinator) + "/mesh-z2m.pid"
 }
 
+// zigbee_helper_file says that a native coordinator's Zigbee2MQTT was last
+// started as a keeper helper rather than as a process (MESH-0037).
+fn zigbee_helper_file(project: string, coordinator: string) string {
+    return zigbee_dir(project, coordinator) + "/mesh-helper"
+}
+
+// zigbee_helper is the keeper helper a native coordinator's Zigbee2MQTT runs as
+// when the keeper runs Mesh, or "".
+// @req MESH-0037
+fn zigbee_helper(project: string, coordinator: string) string {
+    if !zigbee_level_ok(coordinator) {
+        return ""
+    }
+    return helpers_z2m_name(project, coordinator)
+}
+
+// zigbee_started_at is when a native coordinator's Zigbee2MQTT was started, in
+// seconds since the epoch, from its process id file, or from the mark a start
+// as a keeper helper leaves; 0 when it is not known.
+fn zigbee_started_at(project: string, coordinator: string) u32 {
+    var file: string = zigbee_pid_file(project, coordinator)
+    if !rho_path_exists(file) {
+        file = zigbee_helper_file(project, coordinator)
+    }
+    let said: string = first_line(rho_exec_capture("stat", "-c\n%Y\n--\n" + file + "\n"))
+    return u32(rho_int_from_str(str_trim(said)))
+}
+
 fn zigbee_log_file(project: string, coordinator: string) string {
     return zigbee_dir(project, coordinator) + "/mesh-z2m.log"
 }
@@ -696,9 +732,16 @@ fn zigbee_is_ours_command() string {
         shell_quote(zigbee_toolchains() + "/zigbee2mqtt/")
 }
 
-// zigbee_running is whether a native coordinator's Zigbee2MQTT runs.
-// @req MESH-ZB-0006
-fn zigbee_running(project: string, coordinator: string) bool {
+// zigbee_running_in is whether a native coordinator's Zigbee2MQTT runs, with
+// the keeper's list of Mesh's helpers in hand (helpers_list): "" when the
+// keeper offers none, and the process is asked; otherwise the state the keeper
+// answered for its helper.
+// @req MESH-ZB-0006, MESH-0037
+fn zigbee_running_in(helpers: string, project: string, coordinator: string) bool {
+    let name: string = zigbee_helper(project, coordinator)
+    if helpers != "" && name != "" {
+        return helpers_running(helpers_field(helpers, name, "state"))
+    }
     let pid: string = zigbee_pid_file(project, coordinator)
     if zigbee_dir(project, coordinator) == "" || !rho_path_exists(pid) {
         return false
@@ -744,7 +787,25 @@ fn zigbee_port_problem(port: string) string {
     return said
 }
 
+// zigbee_port_responds is whether a serial port on this machine answers being
+// opened within 3 s. A USB device whose link went away — on WSL, a dongle whose
+// usbipd attachment did not survive a standby — keeps its device file, and
+// opening it then hangs: Zigbee2MQTT started on it would hang with it, saying
+// nothing. It is asked only before a start, when nothing holds the port.
+// @req MESH-ZB-0003
+fn zigbee_port_responds(port: string) bool {
+    if !zigbee_port_ok(port) {
+        return false
+    }
+    // Only running out of time is a port that hangs (timeout answers 124); a
+    // port that refuses at once — not a terminal — is left to Zigbee2MQTT to say.
+    return rho_exec_args("timeout", "3\nstty\n-F\n" + port + "\n", zigbee_report("port-probe")) != 124
+}
+
 fn zigbee_port_text(loc: string, port: string, problem: string) string {
+    if problem == "unresponsive" {
+        return mesh_fill(mesh_t(loc, "zigbee.port.unresponsive"), "port", port)
+    }
     if problem == "absent" {
         return mesh_fill(mesh_t(loc, "zigbee.port.absent"), "port", port)
     }
@@ -785,22 +846,37 @@ fn zigbee_missing(loc: string) string {
 
 // zigbee_start_native starts a coordinator's Zigbee2MQTT on this machine: the
 // broker user, the configuration, the port checked, then `node index.js` from
-// the pinned install with its data folder, Z2M_ONBOARD_NO_SERVER set and its
-// pid and log beside its data. It is a process of its own, which the gateway's
-// start and stop leave alone. "" when it started, or why not in words.
-// @req MESH-ZB-0004, MESH-ZB-0005, MESH-ZB-0006, MESH-ZB-0008, MESH-ZB-0003
+// the pinned install with its data folder and Z2M_ONBOARD_NO_SERVER set. When
+// the keeper runs Mesh and offers helpers it is the helper
+// `z2m-<mesh>-<coordinator>`, whose unit the keeper writes and whose log is
+// the keeper's (MESH-0037); otherwise it is a process of its own, its pid and
+// log beside its data. Either way the gateway's start and stop leave it alone.
+// The broker password stays in secret.yaml: nothing secret is in the helper's
+// definition or on a command line. "" when it started, or why not in words.
+// @req MESH-ZB-0004, MESH-ZB-0005, MESH-ZB-0006, MESH-ZB-0008, MESH-ZB-0003, MESH-0037
 fn zigbee_start_native(loc: string, project: string, index: u32) string {
     let file: string = project_file(project)
     let coordinator: string = project_node_value(file, index, "address", "")
     if zigbee_base_topic(project, coordinator) == "" {
         return mesh_t(loc, "zigbee.topic_level")
     }
+    let helpers: string = helpers_list()
+    let name: string = zigbee_helper(project, coordinator)
+    // Started as a helper before, and the keeper that runs Mesh not answering:
+    // the unit may well be running, so a process started now would find the
+    // serial port taken. Nothing is started until the keeper answers.
+    if helpers == "" && helpers_configured() && rho_path_exists(zigbee_helper_file(project, coordinator)) {
+        return mesh_t(loc, "helpers.keeper_down")
+    }
     let missing: string = zigbee_missing(loc)
     if missing != "" {
         return missing
     }
     let port: string = project_node_value(file, index, "serial_port", "")
-    let problem: string = zigbee_port_problem(port)
+    var problem: string = zigbee_port_problem(port)
+    if problem == "" && !zigbee_running_in(helpers, project, coordinator) && !zigbee_port_responds(port) {
+        problem = "unresponsive"
+    }
     if problem != "" {
         return zigbee_port_text(loc, port, problem)
     }
@@ -816,6 +892,25 @@ fn zigbee_start_native(loc: string, project: string, index: u32) string {
     let node: string = zigbee_node()
     let install: string = zigbee_install_dir()
     let dir: string = zigbee_dir(project, coordinator)
+    if helpers != "" && name != "" {
+        // A Zigbee2MQTT this Mesh started as a process before the keeper offered
+        // helpers is stopped first: it holds the serial port. A unit inherits
+        // nothing from Mesh, so its PATH is said: its Node.js, then the system's.
+        ignore_u32(rho_exec_args("sh", "-c\n" + zigbee_stop_command(project, coordinator) + "\n", zigbee_report("stop")))
+        let definition: string = helpers_definition(name, node, install + "/index.js\n", install,
+            "ZIGBEE2MQTT_DATA=" + dir + "\nZ2M_ONBOARD_NO_SERVER=1\nPATH=" + zigbee_dirname(node) + ":/usr/local/bin:/usr/bin:/bin\n", "")
+        let refused: string = helpers_run(definition)
+        if refused != "" {
+            warn("mesh", "the keeper did not run " + name + ": " + refused)
+            return mesh_fill(mesh_fill(mesh_t(loc, "helpers.refused"), "name", name), "reason", refused)
+        }
+        ignore_bool(rho_write_text(zigbee_helper_file(project, coordinator), name + "\n"))
+        ignore_bool(rho_write_text(dir + "/mesh-started", rho_int_to_str(mesh_now_seconds()) + "\n"))
+        ignore_bool(rho_write_text(dir + "/mesh-wanted", "1\n"))
+        info("mesh", "Zigbee2MQTT started for coordinator " + coordinator + " of " + project + " as keeper helper " + name)
+        return ""
+    }
+    ignore_u32(rho_exec_args("rm", "-f\n--\n" + zigbee_helper_file(project, coordinator) + "\n", zigbee_report("rm")))
     let command: string = zigbee_stop_command(project, coordinator) + "; cd " + shell_quote(install) + " || exit 1; umask 077; " +
         "nohup env ZIGBEE2MQTT_DATA=" + shell_quote(dir) + " Z2M_ONBOARD_NO_SERVER=1 PATH=" + shell_quote(zigbee_dirname(node)) +
         ":\"$PATH\" " + shell_quote(node) + " " + shell_quote(install + "/index.js") + " >> " + shell_quote(zigbee_log_file(project, coordinator)) +
@@ -830,15 +925,36 @@ fn zigbee_start_native(loc: string, project: string, index: u32) string {
 }
 
 // zigbee_stop_native stops a native coordinator, and Mesh no longer starts it
-// when it starts.
-// @req MESH-ZB-0006
+// when it starts: its helper through the keeper when the keeper runs one, its
+// process otherwise.
+// @req MESH-ZB-0006, MESH-0037
 fn zigbee_stop_native(project: string, coordinator: string) void {
     let dir: string = zigbee_dir(project, coordinator)
     if dir == "" {
         return
     }
+    let helpers: string = helpers_list()
+    let name: string = zigbee_helper(project, coordinator)
+    if helpers != "" && name != "" && helpers_entry(helpers, name) != "" {
+        ignore_u32(helpers_act(name, "stop"))
+    }
     ignore_u32(rho_exec_args("sh", "-c\n" + zigbee_stop_command(project, coordinator) + "\n", zigbee_report("stop")))
     ignore_u32(rho_exec_args("rm", "-f\n--\n" + dir + "/mesh-wanted\n", zigbee_report("rm")))
+}
+
+// zigbee_remove_native is what removing a native coordinator, or its mesh, does
+// to its Zigbee2MQTT: stopped, and its helper's unit removed by the keeper when
+// the keeper runs one.
+// @req MESH-ZB-0006, MESH-0037
+fn zigbee_remove_native(project: string, coordinator: string) void {
+    zigbee_stop_native(project, coordinator)
+    let name: string = zigbee_helper(project, coordinator)
+    if name != "" && helpers_list() != "" {
+        let status: u32 = helpers_remove(name)
+        if status == 200 || status == 404 {
+            ignore_u32(rho_exec_args("rm", "-f\n--\n" + zigbee_helper_file(project, coordinator) + "\n", zigbee_report("rm")))
+        }
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1221,7 +1337,12 @@ fn zigbee_remove_device(loc: string, project: string, index: u32) string {
 // coordinator put back keeps its network.
 // @req MESH-ZB-0004, MESH-ZB-0006
 fn zigbee_forget_coordinator(loc: string, project: string, index: u32) void {
-    zigbee_stop(loc, project, index)
+    let file: string = project_file(project)
+    if zigbee_native(file, index) {
+        zigbee_remove_native(project, project_node_value(file, index, "address", ""))
+    } else {
+        zigbee_stop(loc, project, index)
+    }
     ignore_bool(zigbee_broker_remove(project, index))
 }
 
@@ -1236,7 +1357,7 @@ fn zigbee_forget_mesh(project: string) void {
         if zigbee_is_coordinator(file, index) {
             let coordinator: string = project_node_value(file, index, "address", "")
             if zigbee_native(file, index) {
-                zigbee_stop_native(project, coordinator)
+                zigbee_remove_native(project, coordinator)
             } else if zigbee_level_ok(coordinator) && zigbee_remote_prefix(file, index) != "" {
                 // The mesh's folder, where its jobs run, goes next: the container
                 // is stopped now rather than in a job.
@@ -1250,10 +1371,18 @@ fn zigbee_forget_mesh(project: string) void {
     }
 }
 
-// zigbee_start_wanted starts again, when Mesh starts, the native coordinators
-// it had started and not been told to stop, as it does a native gateway.
-// @req MESH-ZB-0006
+// zigbee_start_wanted starts again the native coordinators Mesh had started and
+// not been told to stop, as it does a native gateway: when Mesh starts, and
+// every minute after (telemetry_worker), so one that could not start — the
+// keeper not up yet, the dongle not attached yet — starts once it can. A
+// failure is said once per reason, not every minute. When the keeper runs them
+// as helpers it is the keeper that is asked: a helper that runs is left alone —
+// a restart of Mesh does not restart it — and one that was stopped behind
+// Mesh's back is started again.
+// @req MESH-ZB-0006, MESH-0037
 fn zigbee_start_wanted() void {
+    let helpers: string = helpers_list()
+    let keeper_down: bool = helpers == "" && helpers_configured()
     var rest: string = project_ids()
     while rest != "" {
         let project: string = first_line(rest)
@@ -1266,12 +1395,18 @@ fn zigbee_start_wanted() void {
         let count: u32 = project_node_count_at(file)
         while index <= count {
             let coordinator: string = project_node_value(file, index, "address", "")
+            // A helper the keeper is not answering about is not started as a
+            // process beside it.
             if zigbee_is_coordinator(file, index) && zigbee_native(file, index) && zigbee_level_ok(coordinator) &&
-                rho_path_exists(zigbee_dir(project, coordinator) + "/mesh-wanted") && !zigbee_running(project, coordinator) {
+                rho_path_exists(zigbee_dir(project, coordinator) + "/mesh-wanted") &&
+                !(keeper_down && rho_path_exists(zigbee_helper_file(project, coordinator))) &&
+                !zigbee_running_in(helpers, project, coordinator) {
                 let said: string = zigbee_start_native("en", project, index)
-                if said != "" {
+                let last: string = zigbee_dir(project, coordinator) + "/mesh-start-problem"
+                if said != "" && !rho_str_eq(str_trim(rho_read_text(last)), said) {
                     warn("mesh", "coordinator " + coordinator + " of " + project + " was not started again: " + said)
                 }
+                ignore_bool(rho_write_text(last, said + "\n"))
             }
             index = index + 1
         }
@@ -1608,7 +1743,19 @@ fn zigbee_tab(loc: string, id: string, index: u32) string {
     } else if state == "offline" {
         pill = "<span class=\"ag-pill warn\">" + mesh_t(loc, "zigbee.state.offline") + "</span>"
     }
+    // Asked once for the whole tab: the keeper's list of Mesh's helpers, "" when
+    // it runs none (MESH-0037).
+    var helpers: string = ""
+    if native {
+        helpers = helpers_list()
+    }
+    let helper: string = zigbee_helper(id, coordinator)
+    let as_helper: bool = helpers != "" && helper != ""
+    let running: bool = native && zigbee_running_in(helpers, id, coordinator)
     var where: string = mesh_t(loc, "zigbee.where.native")
+    if as_helper {
+        where = mesh_fill(mesh_t(loc, "zigbee.where.helper"), "unit", "rh-" + helpers_app() + "-" + helper + ".service")
+    }
     if !native {
         where = mesh_t(loc, "zigbee.where.container")
     }
@@ -1621,6 +1768,13 @@ fn zigbee_tab(loc: string, id: string, index: u32) string {
         agora_fact(loc, mesh_t(loc, "zigbee.channel"), str_field(info_line, "|", 2)) + "</dl>"
     var notes: string = ""
     var actions: string = ""
+    // Running for over a minute without its bridge coming online is Zigbee2MQTT
+    // that has not reached the dongle — on WSL, most often a dongle whose usbipd
+    // attachment did not survive a standby — which it never says by itself.
+    if native && state != "online" && running &&
+        zigbee_quiet_too_long(rho_now_s(), zigbee_started_at(id, coordinator)) {
+        notes = notes + "<p class=\"notice bad\">" + escape_html(mesh_t(loc, "zigbee.not_reaching")) + "</p>"
+    }
     if native {
         let missing: string = zigbee_missing(loc)
         if missing != "" {
@@ -1641,7 +1795,7 @@ fn zigbee_tab(loc: string, id: string, index: u32) string {
         if problem != "" {
             notes = notes + "<p class=\"notice bad\">" + escape_html(zigbee_port_text(loc, port, problem)) + "</p>"
         }
-        if zigbee_running(id, coordinator) {
+        if running {
             actions = actions + "<span class=\"ag-pill online\">" + mesh_t(loc, "zigbee.running") + "</span>" +
                 zigbee_action_form(loc, id, index, "start", "", mesh_t(loc, "zigbee.restart"), "") +
                 zigbee_action_form(loc, id, index, "stop", "", mesh_t(loc, "zigbee.stop"), "quiet")
@@ -1707,7 +1861,21 @@ fn zigbee_tab(loc: string, id: string, index: u32) string {
     if rows == "" {
         rows = "<p class=\"ins-help\">" + mesh_t(loc, "zigbee.none_joined") + "</p>"
     }
-    return "<div class=\"ins-state\">" + pill + "</div>" + facts + notes + "<div class=\"actions\">" + actions + "</div>" +
+    // Its log: the keeper's for a helper (the path the keeper answered), Mesh's
+    // own beside its data for a process.
+    var log_view: string = ""
+    if native {
+        var log: string = zigbee_log_file(id, coordinator)
+        if as_helper {
+            log = helpers_field(helpers, helper, "log")
+        }
+        if log != "" && rho_path_exists(log) {
+            log_view = "<div class=\"ins-section\">" + mesh_t(loc, "zigbee.log") + "</div><p class=\"ins-help\"><code>" + escape_html(log) +
+                "</code></p><details><summary>" + mesh_t(loc, "zigbee.log.recent") + "</summary><pre class=\"zigbee-log\">" +
+                escape_html(rho_exec_capture("tail", "-n\n40\n--\n" + log + "\n")) + "</pre></details>"
+        }
+    }
+    return "<div class=\"ins-state\">" + pill + "</div>" + facts + notes + "<div class=\"actions\">" + actions + "</div>" + log_view +
         "<div class=\"ins-section\">" + mesh_t(loc, "zigbee.pairing") + "</div>" + joining +
         "<div class=\"ins-section\">" + mesh_t(loc, "zigbee.joined") + "</div><div class=\"ins-rows\">" + rows + "</div>"
 }

@@ -71,13 +71,14 @@ fn agora_gateway_kind(id: string) string {
 
 // agora_gateway_started is whether a mesh's gateway is one anything should
 // expect to answer. A native gateway runs only when Mesh started it, which the
-// process id beside the project says; a board's runs on the board.
-// @req MESH-BUILD-0008
+// process id beside the project says, or the mark a start as the keeper's
+// helper leaves there (MESH-0037); a board's runs on the board.
+// @req MESH-BUILD-0008, MESH-0037
 fn agora_gateway_started(id: string) bool {
     if agora_gateway_kind(id) != "native" {
         return true
     }
-    return rho_path_exists(fleet_pid_file(id))
+    return rho_path_exists(fleet_pid_file(id)) || rho_path_exists(fleet_helper_file(id))
 }
 
 fn agora_gateway_host(id: string) string {

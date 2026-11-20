@@ -191,6 +191,37 @@ fn fleet_stop_command(id: string) string {
         "rm -f " + shell_quote(pid) + "; fi"
 }
 
+// fleet_helper_file says that this mesh's native gateway was started as the
+// keeper helper gateway-<mesh> (MESH-0037): it then runs without a pid of
+// Mesh's, as a unit the keeper runs.
+fn fleet_helper_file(id: string) string {
+    return project_location(id) + "/gateway.helper"
+}
+
+// fleet_stop_gateway stops this mesh's native gateway: through the keeper when
+// it runs as a helper, by its process id otherwise. The helper's mark is kept
+// while the keeper cannot be asked, so the gateway is still taken for started.
+// @req MESH-BUILD-0007, MESH-0037
 fn fleet_stop_gateway(id: string) u32 {
+    let helper: string = helpers_gateway_name(id)
+    if helper != "" && rho_path_exists(fleet_helper_file(id)) && helpers_list() != "" {
+        let status: u32 = helpers_act(helper, "stop")
+        if status == 200 || status == 404 {
+            ignore_u32(rho_exec_args("rm", "-f\n--\n" + fleet_helper_file(id) + "\n", wizard_report("rm-gateway-helper")))
+        }
+    }
     return run_shell(fleet_stop_command(id), "stop-gateway")
+}
+
+// fleet_remove_gateway is what deleting a mesh does to its native gateway:
+// stopped, and its helper's unit removed by the keeper when the keeper runs
+// Mesh's helpers.
+// @req MESH-0037
+fn fleet_remove_gateway(id: string) void {
+    let helper: string = helpers_gateway_name(id)
+    if helper != "" && helpers_list() != "" {
+        ignore_u32(helpers_remove(helper))
+        ignore_u32(rho_exec_args("rm", "-f\n--\n" + fleet_helper_file(id) + "\n", wizard_report("rm-gateway-helper")))
+    }
+    ignore_u32(fleet_stop_gateway(id))
 }
