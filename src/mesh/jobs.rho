@@ -289,6 +289,12 @@ fn jobs_board_dir(index: u32) string {
 // its programming mode.
 // @req MESH-BUILD-0005, MESH-BUILD-0006
 fn jobs_queue_board(loc: string, index: u32) string {
+    return jobs_queue_board_as(loc, index, false)
+}
+
+// jobs_queue_board_as is the same, with the board's image sent over its link
+// instead of flashed when `over_link` (MESH-0040).
+fn jobs_queue_board_as(loc: string, index: u32, over_link: bool) string {
     let id: string = current_project()
     let nid: string = project_node_id(wizard_file(), index)
     let target: string = "node." + nid
@@ -350,6 +356,11 @@ fn jobs_queue_board(loc: string, index: u32) string {
         send = jobs_script_header("send the node list to the gateway") + "if [ -f " +
             shell_quote(mesh_manifest_file(id)) + " ]; then (" + manifest_command +
             ") || echo 'the gateway could not be sent its node list; restart the gateway to apply it'; fi\n"
+    }
+    if over_link {
+        ignore_string(mesh_update_queue_job(id, target, mesh_fill(mesh_t(loc, "jobs.label.update"), "name", name),
+            signature, build, binary, index))
+        return ""
     }
     let flash: string = jobs_add(id, "flash", target, flash_label,
         jobs_script_header("flash " + name) + production_flash_script(board, dir, binary, program, production, otp) + send,
@@ -452,7 +463,9 @@ fn jobs_finish(project: string) bool {
                 let key: string = "status.node." + rho_int_to_str(index)
                 if ok && kind == "build" {
                     save_setting_at(file, key, "built")
-                } else if ok && kind == "flash" {
+                } else if ok && (kind == "flash" || kind == "update") {
+                    // An update the board confirmed runs what was built, as a
+                    // flash does (MESH-0040).
                     save_setting_at(file, key, "programmed")
                     deployed_set(project, target, signature)
                 } else if !ok && jobs_state(project, seq) == "failed" {
@@ -489,8 +502,13 @@ fn jobs_finish(project: string) bool {
             // A build or flash that failed leaves a board without what it was
             // meant to run: the person hears it on their alert channels too,
             // once per board and kind of job within the cooldown.
-            ignore_bool(mesh_alert(project, "job-" + kind + "-" + target, "ERROR",
-                jobs_meta(project, seq, "label") + " failed"))
+            if kind == "update" {
+                // Said with what the board said: refused, failed or rolled back.
+                mesh_update_alert(project, seq, target, jobs_update_board_name(project, target))
+            } else {
+                ignore_bool(mesh_alert(project, "job-" + kind + "-" + target, "ERROR",
+                    jobs_meta(project, seq, "label") + " failed"))
+            }
         }
         ignore_bool(rho_write_text(jobs_path(project, seq, "done"), "\n"))
         changed = true
@@ -505,6 +523,17 @@ fn jobs_finish(project: string) bool {
 }
 
 // jobs_tick finishes every mesh's jobs; the background worker calls it.
+// jobs_update_board_name is a board's name for an update's alert.
+fn jobs_update_board_name(project: string, target: string) string {
+    let file: string = project_file(project)
+    let index: u32 = project_node_by_id(file, rho_str_slice(target, 5, u32(rho_strlen(target)) - 5))
+    let name: string = project_node_value(file, index, "name", "")
+    if name == "" {
+        return target
+    }
+    return name
+}
+
 fn jobs_tick() void {
     var rest: string = agora_project_ids()
     while rest != "" {
@@ -515,6 +544,10 @@ fn jobs_tick() void {
         } else {
             id = rho_str_slice(rest, 0, u32(at))
             rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if id != "" && rho_path_exists(jobs_dir(id)) {
+            // Update jobs are moved by Mesh itself: signed, sent, followed.
+            mesh_update_tick(id)
         }
         if id != "" && rho_path_exists(jobs_dir(id)) && jobs_finish(id) && rho_str_eq(id, current_project()) {
             agora_publish_mesh(id)
@@ -898,6 +931,21 @@ fn jobs_answer(req: Request, id: string, selection: string, notice: string) Resp
 fn jobs_apply(loc: string, id: string, only: string) string {
     var problems: string = ""
     var queued: u32 = 0
+    if rho_str_index_of(only, "update:") == 0 {
+        // A board's build, then its image over the link (MESH-0040).
+        let index: u32 = project_node_by_id(project_file(id), rho_str_slice(only, 7, u32(rho_strlen(only)) - 7))
+        var failure: string = mesh_t(loc, "jobs.update_unsupported")
+        if index > 0 && editor_is_board(index) && mesh_update_supported(index) {
+            failure = jobs_queue_board_as(loc, index, true)
+        }
+        if failure == "" {
+            queued = queued + 1
+            jobs_start(id)
+        } else {
+            problems = problems + " " + failure
+        }
+        return rho_int_to_str(queued) + "|" + problems
+    }
     if only == "" || rho_str_index_of(only, "node:") == 0 {
         var rest: string = deployed_out_of_date(id)
         if rho_str_index_of(only, "node:") == 0 {

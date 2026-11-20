@@ -704,5 +704,8 @@
   "health.firmware": "Firmware",
   "health.fault": "Fault before",
   "health.task": "task {task}",
-  "health.reported": "Reported"
+  "health.reported": "Reported",
+  "editor.deploy.update": "Build and update over the link",
+  "jobs.label.update": "Update {name} over the link",
+  "jobs.update_unsupported": "This board cannot take an update over its link; build and flash it instead."
 }

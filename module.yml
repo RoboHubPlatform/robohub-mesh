@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.25.0
+  version: 0.26.0
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -35,11 +35,13 @@ main: src/main.rho
 
 # The host ports that supply the foreign functions Mesh declares: docs_* from the
 # documentation store, telemetry_* from Mesh's telemetry port, projectfile_*
-# from Mesh's project-file port (JSON, sealing, digests; ADR-0007).
+# from Mesh's project-file port (JSON, sealing, digests; ADR-0007), fwupdate_*
+# from Mesh's update port (the update key, signed manifests; MESH-0039).
 ports:
   - docstore
   - telemetry
   - projectfile
+  - fwupdate
 
 build:
   language: go

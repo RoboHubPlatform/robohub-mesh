@@ -713,3 +713,12 @@ restart of Mesh stops nothing.
 ## [0.25.0] - 2026-11-20
 
 A board's health (MESH-0038, robohub ADR-0021). After a poll of a mesh's gateway succeeds, Mesh reads its node listing — at most every 30 s, under the outbox poll's grant — for each board's last `HEALTH` report (robohub-gateway 0.8.0), keeps the newest beside the plan (`health-<number>.txt`), and raises an alert for a new one whose reason is the watchdog or a fault, naming the board, the reason, the fault, its task and its program counter; a board resetting in a loop is one alert per cooldown. The board's Data tab shows the last report: the reset reason, boots since power-on, the firmware, the fault before, and when it came. The rules are `src/mesh/domain/health.rho`, tested in `tests/domain_test.rho`; `tests/devices_smoke.py` runs it against a stand-in gateway.
+
+## [0.26.0] - 2026-11-20
+
+Updates over the link (MESH-0039, MESH-0040, robohub ADR-0022).
+
+- **An update key per mesh.** Ed25519, made the first time a mesh needs one, its seed kept owner-only in `update-key.txt` beside the plan and never in it, apart from the secure-boot key. Its public half goes into every board's build as `robohub_update_key.h`, beside `robohub_secret.h`.
+- **The update job.** A board whose platform takes images over its link (a Linux host board today; the Pico 2 W and the ESP32 with Phases 2c and 2d) gets "Build and update over the link" beside "Build and flash". The build runs as before; then Mesh writes the update manifest for the image, signs it, hands both to the board's gateway (`POST /api/v1/nodes/{area}/{node}/update`, robohub-gateway 0.9.0), and follows the gateway into the job's log — sending n/m, confirmed — ending done when the board confirmed the image (the deployed signature recorded, as after a flash), failed otherwise, with an alert naming the board and whether it was refused, failed or rolled back. Any other board is flashed.
+- The signing is a port of Mesh's own, `plugins/mesh-update` (`fwupdate_*`), tested in Go: the manifest's layout, its signature, bad arguments refused.
+- `tests/domain_test.rho` covers which boards update over the link and how the gateway's answer is read; `tests/devices_smoke.py` runs an update job through the job runner against a stand-in gateway — the key made owner-only, the manifest signed for the board, confirmed, the deployed signature recorded — and a rolled-back one that is an alert.

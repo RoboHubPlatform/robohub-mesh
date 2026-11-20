@@ -30,7 +30,12 @@ space in it, beside a stand-in Shelly plug on the loopback, and checks:
   be sent to its gateway is an alert too;
 - a board's health (MESH-0038), from a stand-in gateway whose listing carries a
   watchdog report: one alert naming the board, the reason, the task and the
-  code, and the report on the board's Data tab.
+  code, and the report on the board's Data tab;
+- an update over the link (MESH-0039, MESH-0040): an update job whose build is
+  done is run by the job runner; Mesh makes the mesh's update key (owner-only),
+  signs the manifest for the image, hands both to the stand-in gateway, follows
+  it to confirmed and records the deployed signature; a second update the board
+  rolls back is an alert naming the board.
 
     python3 tests/devices_smoke.py
 """
@@ -306,17 +311,42 @@ def device(base: str, index: int) -> dict:
 
 
 class Gateway:
-    """A gateway's listing and outbox, as much of them as Mesh's poll reads."""
+    """A gateway's listing and outbox, as much of them as Mesh's poll reads,
+    and an update's resource: taken, then sending, then how it ended."""
     nodes = []
+    updates = []         # (offer bytes, image bytes) as Mesh posted them
+    update_end = "confirmed"
+    update_polls = 0
 
 
 class GatewayHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        url = urllib.parse.urlparse(self.path)
+        if url.path.endswith("/update"):
+            offer = bytes.fromhex(urllib.parse.parse_qs(url.query).get("offer", [""])[0])
+            image = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            Gateway.updates.append((offer, image))
+            Gateway.update_polls = 0
+            data = json.dumps({"id": 1, "state": "offered", "next": 0, "chunks": 2}).encode()
+            self.send_response(202)
+        else:
+            data = b"{}"
+            self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         url = urllib.parse.urlparse(self.path)
         if url.path == "/api/v1/telemetry/outbox":
             body = []
         elif url.path == "/api/v1/nodes":
             body = Gateway.nodes
+        elif url.path.endswith("/update"):
+            Gateway.update_polls += 1
+            state = "sending" if Gateway.update_polls < 2 else Gateway.update_end
+            body = {"id": 1, "state": state, "reason": "", "next": 1, "chunks": 2}
         else:
             self.send_response(404)
             self.end_headers()
@@ -664,6 +694,71 @@ def main() -> int:
             status, page = call(base, "GET", "/mesh/p/Watched/node/00112233aabbccdd?tab=data", hx=True)
             check(status == 200 and "power-on" in page and "Fault before" not in page,
                   f"a power-on report shows no fault ({status})")
+
+            # --- An update over the link ----------------------------------
+            # @verifies MESH-0039, MESH-0040
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+            jobs = watched / "jobs"
+            jobs.mkdir(exist_ok=True)
+            image_path = root / "sensor-image"
+            image_bytes = bytes(range(256)) * 3
+            image_path.write_bytes(image_bytes)
+
+            def update_job(seq, label):
+                # An update job whose build is done, as Mesh queues one: its
+                # script waits for Mesh's tick, as mesh_update_script writes it.
+                result, progress = jobs / f"{seq}.result", jobs / f"{seq}.progress"
+                (jobs / f"{seq}.sh").write_text(
+                    f"last=''\nwhile [ ! -f '{result}' ]; do\n"
+                    f"  if [ -f '{progress}' ]; then now=$(cat '{progress}'); if [ \"$now\" != \"$last\" ]; then echo \"$now\"; last=\"$now\"; fi; fi\n"
+                    f"  sleep 1\ndone\n[ -f '{progress}' ] && cat '{progress}'\nexit \"$(cat '{result}')\"\n")
+                (jobs / f"{seq}.image").write_text(f"{image_path}\n1\n")
+                (jobs / f"{seq}.job").write_text(
+                    f"kind=update\ntarget=node.fedcba9876543210\nlabel={label}\nsignature=sig-{seq}\ncreated=1\n")
+
+            def wait_exit(seq, timeout=60.0):
+                end = time.time() + timeout
+                while time.time() < end and not (jobs / f"{seq}.exit").exists():
+                    time.sleep(0.5)
+                return (jobs / f"{seq}.exit").read_text().strip() if (jobs / f"{seq}.exit").exists() else ""
+
+            update_job("000901", "Update Sensor over the link")
+            code = wait_exit("000901")
+            job_log = (jobs / "000901.log").read_text() if (jobs / "000901.log").exists() else ""
+            key_file = watched / "update-key.txt"
+            check(code == "0" and "update: confirmed" in job_log, f"the update job ends done when the board confirms ({code}): {job_log[-300:]}")
+            check(key_file.exists() and (key_file.stat().st_mode & 0o077) == 0,
+                  "the mesh's update key was made, owner-only")
+            ok_signed = False
+            if Gateway.updates and key_file.exists():
+                offer, posted = Gateway.updates[0]
+                seed = bytes.fromhex(key_file.read_text().strip())
+                public = Ed25519PrivateKey.from_private_bytes(seed).public_key()
+                manifest = offer[1:58]
+                try:
+                    public.verify(offer[58:122], b"rh-update1" + manifest)
+                    ok_signed = (len(offer) == 122 and posted == image_bytes and
+                                 manifest[5:13] == bytes.fromhex("fedcba9876543210") and
+                                 int.from_bytes(manifest[19:23], "little") == len(image_bytes) and
+                                 manifest[23:55] == __import__("hashlib").sha256(image_bytes).digest())
+                except Exception:  # noqa: BLE001
+                    ok_signed = False
+            check(ok_signed, "the gateway got the image and a manifest for this board signed with the mesh's key")
+            deployed = (watched / "deployed.txt").read_text() if (watched / "deployed.txt").exists() else ""
+            end = time.time() + 10
+            while time.time() < end and "sig-000901" not in deployed:
+                time.sleep(0.5)
+                deployed = (watched / "deployed.txt").read_text() if (watched / "deployed.txt").exists() else ""
+            check("sig-000901" in deployed, "the board's deployed signature is the updated image's")
+            Gateway.update_end = "rolled_back"
+            update_job("000902", "Update Sensor over the link")
+            code = wait_exit("000902")
+            end = time.time() + 10
+            while time.time() < end and not alerts("update of board Sensor"):
+                time.sleep(0.5)
+            rolled = alerts("update of board Sensor")
+            check(code == "1" and len(rolled) == 1 and "was rolled back" in rolled[0],
+                  f"an update the board rolled back fails, and says so ({code} {rolled})")
 
             # --- Deleting a mesh whose path has a space -------------------
             # @verifies MESH-0024

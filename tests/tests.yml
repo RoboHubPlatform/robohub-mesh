@@ -53,7 +53,7 @@ suites:
   # holding Mesh to its manifest's broker grants: four topics merged into one
   # reading, a switch confirmed only by stat/RESULT or stat/POWER, a stuck relay
   # pending then unconfirmed, a refused word kept out, LWT Offline unreachable.
-  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010, MESH-0029, MESH-0030, MESH-0031, MESH-0032, MESH-0038
+  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010, MESH-0029, MESH-0030, MESH-0031, MESH-0032, MESH-0038, MESH-0039, MESH-0040
   - name: devices-smoke
     kind: command
     tags: [smoke, devices, alerts]
@@ -84,6 +84,14 @@ suites:
     kind: command
     tags: [unit, go, transfer]
     command: [go, -C, plugins/mesh-projectfile/ports, test, -count=1, ./...]
+  # The fwupdate port's own tests: a key and its public half, an update manifest
+  # laid out as PROTO-0008 says and signed over "rh-update1" and its bytes, bad
+  # arguments refused, the header carrying the key.
+  # @verifies MESH-0039, MESH-0040
+  - name: fwupdate-port
+    kind: command
+    tags: [unit, go, updates]
+    command: [go, -C, plugins/mesh-update/ports, test, -count=1, ./...]
   # Exporting and importing over HTTP, across several running Meshes: what a
   # file carries, sealed secrets, the three modes, conflicts, the preview, an
   # overwrite, invalid files, grants and form tokens, the pages, and an import

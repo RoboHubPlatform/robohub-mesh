@@ -559,3 +559,39 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [health, alerts, boards]
+
+  - id: MESH-0039
+    title: Each mesh has an update key of its own
+    statement: >
+      Mesh shall make each mesh an Ed25519 update key when the mesh first needs
+      one, keep its private half owner-only beside the plan and never in it, apart
+      from the secure-boot key, and compile its public half into every firmware it
+      builds for that mesh.
+    rationale: Updates are signed with a key of their own, so one stolen key cannot do the other's work (robohub ADR-0021, 3; ADR-0022, 1); keys stay owner-only on the installation's machine (SYS-0033).
+    satisfies: [SYS-0033, SYS-0072]
+    decided_by: [robohub:ADR-0021, robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, keys, security]
+
+  - id: MESH-0040
+    title: A board's firmware can be updated over its link from Mesh
+    statement: >
+      Mesh shall offer, beside build and flash, an update job for a board whose
+      platform takes updates over the link: build its image, write its update
+      manifest (update id, the board's uid, firmware version, security version,
+      size, SHA-256, chunk size) and sign it with the mesh's update key, hand both
+      to the board's gateway, show the job's progress and outcome, record the
+      deployed signature when the board confirms the image, and raise an alert
+      when it is refused, fails or is rolled back; a board that cannot take
+      updates over the link shall be offered a flash instead.
+    rationale: Updates are run from the installation's edge (RNODE-0012, SYS-0001); the person sees what happened to each board (robohub ADR-0022, 7).
+    satisfies: [SYS-0072, SYS-0001]
+    decided_by: [robohub:ADR-0022]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, jobs]

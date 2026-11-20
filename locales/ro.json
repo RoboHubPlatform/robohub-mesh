@@ -704,5 +704,8 @@
   "health.firmware": "Firmware",
   "health.fault": "Defect anterior",
   "health.task": "task {task}",
-  "health.reported": "Raportat"
+  "health.reported": "Raportat",
+  "editor.deploy.update": "Construiește și actualizează prin legătură",
+  "jobs.label.update": "Actualizează {name} prin legătură",
+  "jobs.update_unsupported": "Placa aceasta nu poate primi o actualizare prin legătură; construiește și programeaz-o."
 }

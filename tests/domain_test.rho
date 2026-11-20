@@ -28,6 +28,7 @@ include "../src/mesh/domain/helpers.rho"
 include "../src/mesh/domain/alerting.rho"
 include "../src/mesh/domain/signals.rho"
 include "../src/mesh/domain/health.rho"
+include "../src/mesh/domain/update.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -1071,6 +1072,29 @@ test fn a_boards_health_is_read_and_a_bad_reset_alerts() void {
     print("[PASS] a_boards_health_is_read_and_a_bad_reset_alerts\n")
 }
 
+// Which boards take an update over the link, a gateway's answer read into the
+// job's log, which states are final, and the alert's words.
+// @verifies MESH-0040
+test fn an_update_job_reads_the_gateway_and_says_what_happened() void {
+    check(update_platform_ok("robohub-linux"), "a Linux host board takes updates over its link")
+    check(!update_platform_ok("robohub-pico") && !update_platform_ok("robohub-avr") && !update_platform_ok(""),
+        "other platforms are flashed, until their slot exists")
+    check(str_eq(update_progress("{\"id\":5,\"state\":\"sending\",\"reason\":\"\",\"next\":12,\"chunks\":27}"),
+        "update: sending 12/27"), "sending, with the chunks the board has")
+    check(str_eq(update_progress("{\"state\":\"refused\",\"reason\":\"downgrade\",\"next\":0}"),
+        "update: refused (downgrade)"), "refused, with the reason")
+    check(str_eq(update_progress("not json"), ""), "an answer that is not one says nothing")
+    check(update_final("confirmed") && update_final("rolled_back") && update_final("refused") &&
+        update_final("failed") && update_final("cancelled"), "the states that end an update")
+    check(!update_final("sending") && !update_final("verified") && !update_final("offered"), "and those that do not")
+    check(str_eq(update_alert_text("Sensor", "rolled_back", ""), "the update of board Sensor was rolled back"),
+        "rolled back")
+    check(str_eq(update_alert_text("Sensor", "refused", "signature"), "the update of board Sensor was refused (signature)"),
+        "refused, why")
+    check(str_eq(update_alert_text("Sensor", "failed", "hash"), "the update of board Sensor failed (hash)"), "failed, why")
+    print("[PASS] an_update_job_reads_the_gateway_and_says_what_happened\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -1128,5 +1152,6 @@ fn main() void {
     the_gateway_environment_is_read_as_a_shell_reads_it()
     a_helpers_state_is_read_from_the_keepers_list()
     a_boards_health_is_read_and_a_bad_reset_alerts()
+    an_update_job_reads_the_gateway_and_says_what_happened()
     print("mesh domain tests ok\n")
 }

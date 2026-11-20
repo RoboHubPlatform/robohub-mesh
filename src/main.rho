@@ -63,6 +63,8 @@ include "mesh/production.rho"
 include "mesh/alerts.rho"
 include "mesh/domain/health.rho"
 include "mesh/health.rho"
+include "mesh/domain/update.rho"
+include "mesh/update.rho"
 include "mesh/projectfile.rho"
 
 import std.web.http

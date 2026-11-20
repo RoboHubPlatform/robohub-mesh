@@ -1,0 +1,281 @@
+//
+// @file update.rho
+// @brief Updates over the link: the mesh's update key, the key's header in every build, and the update job beside build and flash.
+//
+// @module mesh.update
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.update
+
+// Each mesh has an Ed25519 update key of its own (MESH-0039, robohub ADR-0022):
+// made the first time the mesh needs one, its seed kept owner-only in
+// update-key.txt beside the plan and never in it, apart from the secure-boot key.
+// Its public half is compiled into every firmware Mesh builds for the mesh
+// (robohub_update_key.h, beside robohub_secret.h).
+//
+// The update job (MESH-0040): for a board whose platform takes images over the
+// link (src/mesh/domain/update.rho), "build and update over the link" queues the
+// board's build and an update job. The update job's script only waits: once it
+// runs, Mesh's job tick writes the update manifest for the built image, signs it
+// with the mesh's key (the fwupdate port), hands both to the board's gateway, and
+// follows the gateway's answer into the job's log until it ends — done when the
+// board confirmed the image (and the deployed signature recorded, as after a
+// flash), failed otherwise, with an alert.
+
+extern fn fwupdate_keygen() string
+extern fn fwupdate_public(seed_hex: string) string
+extern fn fwupdate_offer(seed_hex: string, update_id: string, uid_hex: string, firmware: string, security: string, chunk: string, image: string) string
+extern fn fwupdate_header(public_hex: string) string
+
+const UPDATE_CHUNK_SIZE: string = "192"
+const UPDATE_JOB_LIMIT_S: u32 = 1800
+const UPDATE_POLL_S: u32 = 2
+
+fn mesh_update_key_file(project: string) string {
+    return project_location(project) + "/update-key.txt"
+}
+
+// mesh_update_seed is the mesh's update key, made the first time it is needed.
+// @req MESH-0039
+fn mesh_update_seed(project: string) string {
+    let path: string = mesh_update_key_file(project)
+    if rho_path_exists(path) {
+        let seed: string = first_line(rho_read_text(path))
+        if fwupdate_public(seed) != "" {
+            return seed
+        }
+    }
+    let pair: string = fwupdate_keygen()
+    let at: i32 = rho_str_index_of(pair, "|")
+    if at < 0 {
+        return ""
+    }
+    let seed: string = rho_str_slice(pair, 0, u32(at))
+    if !rho_write_secret(path, seed + "\n") {
+        return ""
+    }
+    info("mesh", project + ": an update key was made for this mesh")
+    return seed
+}
+
+fn mesh_update_public(project: string) string {
+    let seed: string = mesh_update_seed(project)
+    if seed == "" {
+        return ""
+    }
+    return fwupdate_public(seed)
+}
+
+// mesh_update_write_header puts the mesh's update public key into a board's
+// build. A board built without it refuses every update as not provisioned.
+// @req MESH-0039
+fn mesh_update_write_header(target: string, project: string) u32 {
+    let header: string = fwupdate_header(mesh_update_public(project))
+    if header == "" || !rho_write_text(target + "/src/robohub_update_key.h", header) {
+        return 1
+    }
+    return 0
+}
+
+// mesh_update_supported: the board's platform takes images over the link.
+// @req MESH-0040
+fn mesh_update_supported(index: u32) bool {
+    let board: string = node_value(index, "board", "")
+    var rest: string = board_rows()
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if field(line, 0) == board {
+            return update_platform_ok(field(line, 3))
+        }
+    }
+    return false
+}
+
+// mesh_update_script is the update job's script: it waits for Mesh's job tick
+// and says what the gateway says, then ends as the update did.
+fn mesh_update_script(project: string, seq: string) string {
+    let result: string = shell_quote(jobs_path(project, seq, "result"))
+    let progress: string = shell_quote(jobs_path(project, seq, "progress"))
+    return "echo 'Mesh signs the update and hands it to the gateway'\nlast=''\n" +
+        "while [ ! -f " + result + " ]; do\n" +
+        "  if [ -f " + progress + " ]; then now=$(cat " + progress + "); if [ \"$now\" != \"$last\" ]; then echo \"$now\"; last=\"$now\"; fi; fi\n" +
+        "  sleep 1\ndone\n" +
+        "[ -f " + progress + " ] && cat " + progress + "\n" +
+        "exit \"$(cat " + result + ")\"\n"
+}
+
+// mesh_update_queue_job is the update job after a board's build, queued by
+// jobs_queue_board when the person asked for an update over the link.
+// @req MESH-0040
+fn mesh_update_queue_job(project: string, target: string, label: string, signature: string, build: string,
+    binary: string, index: u32) string {
+    let seq: string = jobs_add(project, "update", target, label, "", signature, build, "")
+    // No `set -e`: the script ends with the update's own code.
+    ignore_bool(rho_write_text(jobs_path(project, seq, "sh"), "umask 077\n" + mesh_update_script(project, seq)))
+    ignore_bool(rho_write_text(jobs_path(project, seq, "image"), binary + "\n" + rho_int_to_str(index) + "\n"))
+    return seq
+}
+
+fn mesh_update_finish(project: string, seq: string, code: string, line: string) void {
+    if line != "" {
+        ignore_bool(rho_write_text(jobs_path(project, seq, "progress"), line + "\n"))
+    }
+    ignore_bool(rho_write_text(jobs_path(project, seq, "result"), code + "\n"))
+}
+
+// The gateway is asked as the outbox poll asks it: with the poll's token, or
+// none when Mesh runs without a keeper to issue one.
+fn mesh_update_request(project: string, method: string, path: string, body: string, report: string) u32 {
+    let base: string = mesh_project_gateway(project)
+    if base == "" {
+        return 0
+    }
+    let token: string = mesh_poll_token(project)
+    var audience: string = ""
+    var scope: string = ""
+    if token != "" {
+        audience = "gateway"
+        scope = mesh_gateway_scope(project)
+    }
+    return rho_http_request(method, mesh_http_base(base) + path, body, "application/octet-stream", audience, scope, report)
+}
+
+// mesh_update_send writes and signs the manifest for the built image and hands
+// both to the gateway. Answers "" when it was taken, or why not.
+// @req MESH-0039, MESH-0040
+fn mesh_update_send(project: string, seq: string) string {
+    let meta: string = rho_read_text(jobs_path(project, seq, "image"))
+    var binary: string = first_line(meta)
+    let index: u32 = u32(rho_int_from_str(field(str_replace(meta, "\n", "|"), 1)))
+    let length: u32 = u32(rho_strlen(binary))
+    if !rho_path_exists(binary) && length > 4 && rho_str_slice(binary, length - 4, 4) == ".elf" {
+        binary = rho_str_slice(binary, 0, u32(rho_strlen(binary)) - 4)
+    }
+    if index == 0 || !rho_path_exists(binary) {
+        return "the built image is not there"
+    }
+    let image: string = rho_read_text(binary)
+    let seed: string = mesh_update_seed(project)
+    let uid: string = mesh_node_uid(project, index)
+    if seed == "" || uid == "" {
+        return "the mesh has no update key, or the board no id"
+    }
+    let file: string = project_file(project)
+    let row: string = "node." + rho_int_to_str(index) + "."
+    var firmware: string = state_value_in(file, row + "firmware_version")
+    if firmware == "" {
+        firmware = "1"
+    }
+    var security: string = state_value_in(file, row + "security_version")
+    if security == "" {
+        security = "1"
+    }
+    let update_id: string = rho_int_to_str(mesh_now_seconds())
+    let offer: string = fwupdate_offer(seed, update_id, uid, firmware, security, UPDATE_CHUNK_SIZE, image)
+    if offer == "" {
+        return "the update manifest could not be written"
+    }
+    let area: string = project_area_id(file)
+    let number: string = rho_int_to_str(project_node_number(file, index))
+    let report: string = jobs_path(project, seq, "answer")
+    let status: u32 = mesh_update_request(project, "POST",
+        "/api/v1/nodes/" + area + "/" + number + "/update?offer=" + offer, image, report)
+    if status != 202 {
+        return "the gateway did not take it (" + rho_int_to_str(status) + "): " + first_line(rho_read_text(report))
+    }
+    ignore_bool(rho_write_text(jobs_path(project, seq, "sent"), rho_int_to_str(mesh_now_seconds()) + "\n" +
+        area + "\n" + number + "\n"))
+    ignore_bool(rho_write_text(jobs_path(project, seq, "progress"), "update " + update_id + ": offered to the board\n"))
+    return ""
+}
+
+// mesh_update_follow reads the gateway's answer about a sent update into the
+// job's log, and ends the job when the update ended.
+// @req MESH-0040
+fn mesh_update_follow(project: string, seq: string) void {
+    let sent: string = str_replace(rho_read_text(jobs_path(project, seq, "sent")), "\n", "|")
+    let since: u32 = u32(rho_int_from_str(field(sent, 0)))
+    let now: u32 = mesh_now_seconds()
+    let last_poll: u32 = u32(rho_int_from_str(first_line(rho_read_text(jobs_path(project, seq, "polled")))))
+    if now - last_poll < UPDATE_POLL_S {
+        return
+    }
+    ignore_bool(rho_write_text(jobs_path(project, seq, "polled"), rho_int_to_str(now) + "\n"))
+    let report: string = jobs_path(project, seq, "answer")
+    let status: u32 = mesh_update_request(project, "GET",
+        "/api/v1/nodes/" + field(sent, 1) + "/" + field(sent, 2) + "/update", "", report)
+    let answer: string = rho_read_text(report)
+    if status == 200 {
+        let line: string = update_progress(answer)
+        let state: string = json_text(json_member(answer, "state"))
+        if update_final(state) {
+            var code: string = "1"
+            if state == "confirmed" {
+                code = "0"
+            }
+            ignore_bool(rho_write_text(jobs_path(project, seq, "outcome"), state + "\n" +
+                json_text(json_member(answer, "reason")) + "\n"))
+            mesh_update_finish(project, seq, code, line)
+            return
+        }
+        if line != "" {
+            ignore_bool(rho_write_text(jobs_path(project, seq, "progress"), line + "\n"))
+        }
+    }
+    if now - since > UPDATE_JOB_LIMIT_S {
+        mesh_update_finish(project, seq, "1", "update: the board did not finish within 30 minutes")
+    }
+}
+
+// mesh_update_tick moves every update job of a mesh that is running.
+// @req MESH-0040
+fn mesh_update_tick(project: string) void {
+    var rest: string = jobs_list(project)
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var seq: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            seq = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if seq == "" || jobs_meta(project, seq, "kind") != "update" || jobs_state(project, seq) != "running" ||
+            jobs_exists(project, seq, "result") {
+            continue
+        }
+        if !jobs_exists(project, seq, "sent") {
+            let refused: string = mesh_update_send(project, seq)
+            if refused != "" {
+                ignore_bool(rho_write_text(jobs_path(project, seq, "outcome"), "failed\n" + refused + "\n"))
+                mesh_update_finish(project, seq, "1", "update: " + refused)
+            }
+            continue
+        }
+        mesh_update_follow(project, seq)
+    }
+}
+
+// mesh_update_alert raises the alert for an update job that did not end
+// confirmed: refused, failed or rolled back, with the board's name.
+// @req MESH-0040
+fn mesh_update_alert(project: string, seq: string, target: string, name: string) void {
+    let outcome: string = str_replace(rho_read_text(jobs_path(project, seq, "outcome")), "\n", "|")
+    var state: string = field(outcome, 0)
+    if state == "" {
+        state = "failed"
+    }
+    ignore_bool(mesh_alert(project, "update-" + target, "ERROR", update_alert_text(name, state, field(outcome, 1))))
+}

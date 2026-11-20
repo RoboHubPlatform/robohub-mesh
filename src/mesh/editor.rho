@@ -249,6 +249,14 @@ fn editor_deploy_line(loc: string, id: string, index: u32) string {
             editor_base(id) + "/apply\" hx-target=\"#agora-inspector\">" +
             editor_hidden("only", "node:" + editor_node_id(id, index)) +
             "<button type=\"submit\" class=\"ag-btn small\">" + label + "</button></form>"
+        // A board whose platform takes images over its link is offered that too
+        // (MESH-0040); any other is flashed.
+        if mesh_update_supported(index) {
+            action = action + "<form class=\"inline\" method=\"post\" action=\"" + editor_base(id) + "/apply\" hx-post=\"" +
+                editor_base(id) + "/apply\" hx-target=\"#agora-inspector\">" +
+                editor_hidden("only", "update:" + editor_node_id(id, index)) +
+                "<button type=\"submit\" class=\"ag-btn small\">" + mesh_t(loc, "editor.deploy.update") + "</button></form>"
+        }
     }
     if reason == "" {
         return "<span class=\"ag-pill online\">" + mesh_t(loc, "editor.deploy.runs_planned") + "</span>" + action

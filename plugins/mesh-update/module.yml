@@ -1,0 +1,39 @@
+#
+# mesh-update — what an update over the link needs that the Rho runtime does
+# not have, as the Go port Mesh is built with (MESH-0039, MESH-0040, robohub
+# ADR-0022).
+#
+# A mesh's update key is Ed25519; an update manifest is signed with it. This port
+# makes a key, gives its public half, writes and signs an UPDATE_OFFER for an
+# image, and writes the C header a build compiles the public key from. It holds no
+# state and touches no file: Mesh's Rho code reads and writes every file, the key
+# owner-only.
+#
+# It lives here, in Mesh's repository and versioned with Mesh, as mesh-telemetry
+# and mesh-projectfile do: its changes are recorded in Mesh's CHANGELOG.
+module:
+  name: mesh-update
+  id: robohub.mesh.update
+  type: plugin
+  version: 0.1.0
+  description: >
+    Mesh's updates over the link — an Ed25519 update key, a signed update
+    manifest for an image, and the header a build compiles the public key from —
+    as the Go port Mesh is built with.
+  maintainer: "Aurel Miron"
+  license: "MIT"
+  created: "2026-11-20"
+
+main: ports/fwupdate.go
+
+serves:
+  - robohub
+
+integration:
+  ecosystem: robohub
+  provides:
+    ports: ports/
+
+package:
+  include:
+    - ports/

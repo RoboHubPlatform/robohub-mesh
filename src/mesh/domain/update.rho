@@ -1,0 +1,67 @@
+//
+// @file update.rho
+// @brief Updates over the link as rules: which boards take them, what the gateway says read into a job's progress and outcome, and the alert's words.
+//
+// @module mesh.domain.update
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.update
+
+// A board takes an update over its link when its platform implements the update
+// slot (robohub-common COMM-0013): the Linux host boards today (robohub-linux,
+// LNX-0009); the Pico 2 W and the ESP32 when Phases 2c and 2d add theirs. Every
+// other board is offered a flash instead (MESH-0040). src/mesh/update.rho runs
+// the job; this is what it decides by.
+
+const UPDATE_PLATFORMS: string = " robohub-linux "
+
+// update_platform_ok: a board on this platform can take an image over its link.
+// @req MESH-0040
+fn update_platform_ok(platform: string) bool {
+    return platform != "" && str_index_of(UPDATE_PLATFORMS, " " + platform + " ") >= 0
+}
+
+// update_final: the gateway's state for an update that will not move again.
+fn update_final(state: string) bool {
+    return state == "confirmed" || state == "rolled_back" || state == "refused" || state == "failed" ||
+        state == "cancelled"
+}
+
+// update_progress is one line of the job's log from the gateway's answer: the
+// state, and while it is sending, how many chunks the board has.
+// @req MESH-0040
+fn update_progress(answer: string) string {
+    let state: string = json_text(json_member(answer, "state"))
+    if state == "" {
+        return ""
+    }
+    var line: string = "update: " + state
+    if state == "sending" || state == "offered" {
+        line = line + " " + str_trim(json_member(answer, "next")) + "/" + str_trim(json_member(answer, "chunks"))
+    }
+    let reason: string = json_text(json_member(answer, "reason"))
+    if reason != "" {
+        line = line + " (" + reason + ")"
+    }
+    return line
+}
+
+// update_alert_text is what the alert says for an update that did not end
+// confirmed: the board, what happened and why.
+// @req MESH-0040
+fn update_alert_text(board: string, state: string, reason: string) string {
+    var what: string = "was " + str_replace(state, "_", " ")
+    if state == "failed" {
+        what = "failed"
+    }
+    var text: string = "the update of board " + board + " " + what
+    if reason != "" {
+        text = text + " (" + reason + ")"
+    }
+    return text
+}

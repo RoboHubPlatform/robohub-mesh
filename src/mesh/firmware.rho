@@ -392,6 +392,9 @@ fn firmware_write_secret(target: string, project: string, node: u32) u32 {
     if !rho_write_secret(target + "/src/robohub_secret.h", header) {
         return 1
     }
+    // The mesh's update public key beside it (MESH-0039): not secret, and a
+    // build without it takes no update over the link.
+    ignore_u32(mesh_update_write_header(target, project))
     return 0
 }
 
