@@ -696,5 +696,13 @@
   "zigbee.log.recent": "Ultimele rânduri",
   "helpers.refused": "Keeper-ul nu a pornit {name}: {reason}.",
   "helpers.keeper_down": "Acest coordonator rulează ca helper al keeper-ului, iar keeper-ul nu răspunde, așa că nu se pornește nimic alături de el; Mesh întreabă din nou în fiecare minut.",
-  "zigbee.which": "Coordonator"
+  "zigbee.which": "Coordonator",
+  "health.title": "Sănătate",
+  "health.none": "Niciun raport încă: placa trimite unul după pornire, după ce legătura cu gateway-ul e activă.",
+  "health.reason": "Ultima repornire",
+  "health.boot_count": "Porniri de la alimentare",
+  "health.firmware": "Firmware",
+  "health.fault": "Defect anterior",
+  "health.task": "task {task}",
+  "health.reported": "Raportat"
 }

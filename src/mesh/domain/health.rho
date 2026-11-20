@@ -1,0 +1,160 @@
+//
+// @file health.rho
+// @brief A board's health as rules: the gateway's reports read into lines, which are new, which alert, and how one is said.
+//
+// @module mesh.domain.health
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.health
+
+// A board says once per boot why it restarted (HEALTH, robohub PROTO-0007), and
+// its gateway keeps the last report in the board's entry of /api/v1/nodes
+// (robohub-gateway GW-0015):
+//
+//     "health":{"reset_reason":"watchdog","reset_code":2,"boot_count":5,
+//               "firmware_version":7,"received_at_ms":1795192172963,
+//               "fault":{"code":2,"task":3,"pc":268440116,"uptime_ms":61000}}
+//
+// with "fault":null when the boot before left no record. Mesh keeps each board's
+// newest report beside the plan and raises an alert for a new one whose reason is
+// the watchdog or a fault (MESH-0038). This is the part of that which is a rule;
+// src/mesh/health.rho reads the gateway and keeps the files.
+//
+// A report is one line, `|`-separated:
+//
+//     node|received_at_ms|reason|boot_count|firmware|fault_code|fault_task|fault_pc|fault_uptime_ms
+//
+// with the fault fields empty when there was no fault.
+
+const HEALTH_NO_TASK: string = "65535"
+
+// health_reports are the reports in a gateway's node listing for one area, one
+// line per board that has one.
+// @req MESH-0038
+fn health_reports(nodes: string, area: string) string {
+    var out: string = ""
+    var rest: string = json_items(nodes)
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var item: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            item = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, strlen(rest) - u32(at) - 1)
+        }
+        if str_trim(json_member(item, "area_id")) != area {
+            continue
+        }
+        let health: string = json_member(item, "health")
+        if health == "" || str_trim(health) == "null" {
+            continue
+        }
+        let line: string = health_line(str_trim(json_member(item, "node_id")), health)
+        if line != "" {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+// health_line is one report as a line, or "" when it says nothing usable.
+fn health_line(node: string, health: string) string {
+    let received: string = str_trim(json_member(health, "received_at_ms"))
+    let reason: string = json_text(json_member(health, "reset_reason"))
+    if node == "" || received == "" || reason == "" {
+        return ""
+    }
+    var line: string = node + "|" + received + "|" + reason + "|" +
+        str_trim(json_member(health, "boot_count")) + "|" + str_trim(json_member(health, "firmware_version")) + "|"
+    let fault: string = str_trim(json_member(health, "fault"))
+    if fault == "" || fault == "null" {
+        return line + "|||"
+    }
+    return line + str_trim(json_member(fault, "code")) + "|" + str_trim(json_member(fault, "task")) + "|" +
+        str_trim(json_member(fault, "pc")) + "|" + str_trim(json_member(fault, "uptime_ms"))
+}
+
+fn health_part(line: string, index: u32) string {
+    return str_field(line, "|", index)
+}
+
+// health_is_new: a report is new when the gateway received it at another time
+// than the one kept — a board that reported again, or the first one seen.
+// @req MESH-0038
+fn health_is_new(line: string, kept: string) bool {
+    return health_part(line, 1) != "" && health_part(line, 1) != health_part(kept, 1)
+}
+
+// health_alerts: a reset the board did not choose — the watchdog, or a fault.
+// @req MESH-0038
+fn health_alerts(line: string) bool {
+    let reason: string = health_part(line, 2)
+    return reason == "watchdog" || reason == "fault"
+}
+
+// health_has_fault: the boot before left a fault record.
+fn health_has_fault(line: string) bool {
+    return health_part(line, 5) != "" && health_part(line, 5) != "0"
+}
+
+// health_fault_name is a fault code as robohub-common names it (robohub/health.h
+// rh_fault_code); an application's own codes, 0x100 on, by number.
+fn health_fault_name(code: string) string {
+    if code == "1" { return "hard fault" }
+    if code == "2" { return "watchdog warning" }
+    if code == "3" { return "stack overflow" }
+    if code == "4" { return "allocation failure" }
+    if code == "5" { return "assertion" }
+    return "fault " + code
+}
+
+// health_task_text is the task a fault was in, or "" between tasks.
+fn health_task_text(task: string) string {
+    if task == "" || task == HEALTH_NO_TASK {
+        return ""
+    }
+    return task
+}
+
+// health_hex is a program counter as a person reads it in a map file.
+fn health_hex(value: string) string {
+    var n: u32 = u32(int_from_str(value))
+    if n == 0 {
+        return ""
+    }
+    let digits: string = "0123456789abcdef"
+    var out: string = ""
+    var i: u32 = 0
+    while i < 8 {
+        out = str_slice(digits, n & 15, 1) + out
+        n = n >> 4
+        i = i + 1
+    }
+    return "0x" + out
+}
+
+// health_alert_text is what the alert says: the board, the reason, and the fault
+// with its task and code when the board left one.
+// @req MESH-0038
+fn health_alert_text(board: string, line: string) string {
+    var text: string = "board " + board + " restarted: " + health_part(line, 2) +
+        " (boot " + health_part(line, 3) + ")"
+    if health_has_fault(line) {
+        text = text + "; " + health_fault_name(health_part(line, 5)) + " (code " + health_part(line, 5) + ")"
+        let task: string = health_task_text(health_part(line, 6))
+        if task != "" {
+            text = text + " in task " + task
+        }
+        let pc: string = health_hex(health_part(line, 7))
+        if pc != "" {
+            text = text + " at " + pc
+        }
+    }
+    return text
+}

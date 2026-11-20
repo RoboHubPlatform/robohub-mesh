@@ -1,0 +1,146 @@
+//
+// @file health.rho
+// @brief Each board's health from its gateway: kept beside the plan, shown on the board's Data tab, and a bad reset raised as an alert.
+//
+// @module mesh.health
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-20
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.health
+
+// A board reports once per boot why it restarted, and its gateway keeps the
+// last report in the board's entry of /api/v1/nodes (robohub PROTO-0007,
+// robohub-gateway GW-0015). After a poll of a mesh's gateway succeeds, Mesh reads
+// that listing — at most every MESH_HEALTH_POLL_S — keeps each board's newest
+// report in health-<number>.txt beside the plan (so the Data tab shows it while
+// the gateway is down), and raises an alert for a new one whose reason is the
+// watchdog or a fault (MESH-0038). The rules — reading the listing, what is new,
+// what alerts, the alert's words — are src/mesh/domain/health.rho.
+//
+// An alert's subject is the board, so a board resetting in a loop is one alert
+// per cooldown, not one per boot.
+
+const MESH_HEALTH_POLL_S: u32 = 30
+
+fn mesh_health_file(project: string, number: string) string {
+    return project_location(project) + "/health-" + sanitize(number) + ".txt"
+}
+
+// mesh_health_kept is a board's kept report — the domain's line, then `|` and
+// when Mesh first saw it — or "" when none has been seen.
+fn mesh_health_kept(project: string, number: string) string {
+    let path: string = mesh_health_file(project, number)
+    if !rho_path_exists(path) {
+        return ""
+    }
+    return first_line(rho_read_text(path))
+}
+
+// mesh_health_index is the plan's row for the board whose firmware carries
+// `number` (CONFIG_RH_NODE_ID), or 0.
+fn mesh_health_index(project: string, number: u32) u32 {
+    let file: string = project_file(project)
+    let count: u32 = project_node_count_at(file)
+    var index: u32 = 1
+    while index <= count {
+        if project_node_number(file, index) == number {
+            return index
+        }
+        index = index + 1
+    }
+    return 0
+}
+
+fn mesh_health_board_name(project: string, number: string) string {
+    let index: u32 = mesh_health_index(project, u32(rho_int_from_str(number)))
+    if index > 0 {
+        let name: string = project_node_value(project_file(project), index, "name", "")
+        if name != "" {
+            return name
+        }
+    }
+    return "node " + number
+}
+
+// mesh_health_poll reads a mesh's gateway's listing for health reports, keeps
+// the new ones and raises the alerts they call for.
+// @req MESH-0038
+fn mesh_health_poll(project: string, base: string) void {
+    let now: u32 = mesh_now_seconds()
+    let next: string = mesh_gateway_value(project, "health_next_s")
+    if next != "" && now < u32(rho_int_from_str(next)) {
+        return
+    }
+    mesh_gateway_save(project, "health_next_s", rho_int_to_str(now + MESH_HEALTH_POLL_S))
+    // Under the same grant as the outbox poll that just succeeded: its token,
+    // or none when Mesh runs without a keeper to issue one — as the poll does.
+    let token: string = mesh_poll_token(project)
+    var nodes: string = ""
+    if token != "" {
+        nodes = mesh_url_get_auth(base, "/api/v1/nodes", token)
+    } else {
+        nodes = rho_http_body("GET", mesh_http_base(base) + "/api/v1/nodes", "", "", "", "")
+    }
+    if nodes == "" {
+        return
+    }
+    var rest: string = health_reports(nodes, project_area_id(project_file(project)))
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        let number: string = health_part(line, 0)
+        if number == "" || !health_is_new(line, mesh_health_kept(project, number)) {
+            continue
+        }
+        ignore_bool(write_state_file(mesh_health_file(project, number), line + "|" + rho_int_to_str(now) + "\n"))
+        if health_alerts(line) {
+            ignore_bool(mesh_alert(project, "health-" + number, "ERROR",
+                health_alert_text(mesh_health_board_name(project, number), line)))
+        }
+    }
+}
+
+// mesh_health_section is a board's last report, for its Data tab: the reason,
+// the boot count, the firmware, the fault when there was one, and when it came.
+// @req MESH-0038
+fn mesh_health_section(loc: string, project: string, index: u32) string {
+    let number: string = rho_int_to_str(project_node_number(project_file(project), index))
+    let kept: string = mesh_health_kept(project, number)
+    if kept == "" {
+        return "<h4>" + escape_html(mesh_t(loc, "health.title")) + "</h4><p class=\"agora-seen\">" +
+            escape_html(mesh_t(loc, "health.none")) + "</p>"
+    }
+    var css: string = ""
+    if health_alerts(kept) {
+        css = " class=\"agora-fault\""
+    }
+    var facts: string = "<dt>" + escape_html(mesh_t(loc, "health.reason")) + "</dt><dd" + css + ">" +
+        escape_html(health_part(kept, 2)) + "</dd>" +
+        agora_fact(loc, mesh_t(loc, "health.boot_count"), health_part(kept, 3)) +
+        agora_fact(loc, mesh_t(loc, "health.firmware"), health_part(kept, 4))
+    if health_has_fault(kept) {
+        var fault: string = health_fault_name(health_part(kept, 5)) + " (" + health_part(kept, 5) + ")"
+        let task: string = health_task_text(health_part(kept, 6))
+        if task != "" {
+            fault = fault + " · " + mesh_fill(mesh_t(loc, "health.task"), "task", task)
+        }
+        let pc: string = health_hex(health_part(kept, 7))
+        if pc != "" {
+            fault = fault + " · " + pc
+        }
+        facts = facts + agora_fact(loc, mesh_t(loc, "health.fault"), fault)
+    }
+    facts = facts + agora_fact(loc, mesh_t(loc, "health.reported"),
+        agora_age(loc, u32(rho_int_from_str(health_part(kept, 9)))))
+    return "<h4>" + escape_html(mesh_t(loc, "health.title")) + "</h4><dl class=\"agora-facts\">" + facts + "</dl>"
+}

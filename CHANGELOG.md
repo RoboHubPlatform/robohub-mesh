@@ -709,3 +709,7 @@ and checks the definitions, the credential, the state, stop, removal and that a
 restart of Mesh stops nothing.
 
 `/mesh/api` accepts the read-only `mesh:<project>:read` and `mesh:read` for the requests that only read (GET, HEAD), so an application that only shows readings — robohub-feed — reads with a grant that changes nothing; writing still needs `mesh:<project>`, `mesh:*` or `*` (MESH-API-0002).
+
+## [0.25.0] - 2026-11-20
+
+A board's health (MESH-0038, robohub ADR-0021). After a poll of a mesh's gateway succeeds, Mesh reads its node listing — at most every 30 s, under the outbox poll's grant — for each board's last `HEALTH` report (robohub-gateway 0.8.0), keeps the newest beside the plan (`health-<number>.txt`), and raises an alert for a new one whose reason is the watchdog or a fault, naming the board, the reason, the fault, its task and its program counter; a board resetting in a loop is one alert per cooldown. The board's Data tab shows the last report: the reset reason, boots since power-on, the firmware, the fault before, and when it came. The rules are `src/mesh/domain/health.rho`, tested in `tests/domain_test.rho`; `tests/devices_smoke.py` runs it against a stand-in gateway.

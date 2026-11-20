@@ -53,7 +53,7 @@ suites:
   # holding Mesh to its manifest's broker grants: four topics merged into one
   # reading, a switch confirmed only by stat/RESULT or stat/POWER, a stuck relay
   # pending then unconfirmed, a refused word kept out, LWT Offline unreachable.
-  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010, MESH-0029, MESH-0030, MESH-0031, MESH-0032
+  # @verifies MESH-0014, MESH-0022, MESH-0023, MESH-0024, MESH-API-0010, MESH-0029, MESH-0030, MESH-0031, MESH-0032, MESH-0038
   - name: devices-smoke
     kind: command
     tags: [smoke, devices, alerts]

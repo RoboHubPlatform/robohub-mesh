@@ -341,6 +341,9 @@ fn telemetry_poll_once() void {
             }
         } else {
             mesh_gateway_ok(id)
+            // Each board's last health report, and an alert for a bad reset
+            // (MESH-0038): read from the same gateway, at its own pace.
+            mesh_health_poll(id, url)
         }
     }
 }

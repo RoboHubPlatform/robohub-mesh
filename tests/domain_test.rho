@@ -27,6 +27,7 @@ include "../src/mesh/domain/zigbee.rho"
 include "../src/mesh/domain/helpers.rho"
 include "../src/mesh/domain/alerting.rho"
 include "../src/mesh/domain/signals.rho"
+include "../src/mesh/domain/health.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -1039,6 +1040,37 @@ test fn a_helpers_state_is_read_from_the_keepers_list() void {
     print("[PASS] a_helpers_state_is_read_from_the_keepers_list\n")
 }
 
+// A board's health report, as the gateway lists it, is read into one line per
+// board of the mesh's own area; a new watchdog or fault reset alerts, a power-on
+// does not, and the alert names the board, the reason, the task and the code.
+// @verifies MESH-0038
+test fn a_boards_health_is_read_and_a_bad_reset_alerts() void {
+    let nodes: string = "[{\"area_id\":7,\"node_id\":12,\"temperature_c\":0.00,\"health\":{\"reset_reason\":\"watchdog\",\"reset_code\":2,\"boot_count\":5,\"firmware_version\":7,\"received_at_ms\":1795192172963,\"fault\":{\"code\":2,\"task\":3,\"pc\":268440116,\"uptime_ms\":61000}}}," +
+        "{\"area_id\":7,\"node_id\":13,\"health\":{\"reset_reason\":\"power-on\",\"reset_code\":1,\"boot_count\":1,\"firmware_version\":7,\"received_at_ms\":1795192172964,\"fault\":null}}," +
+        "{\"area_id\":7,\"node_id\":14,\"temperature_c\":21.5}," +
+        "{\"area_id\":9,\"node_id\":12,\"health\":{\"reset_reason\":\"fault\",\"boot_count\":2,\"firmware_version\":1,\"received_at_ms\":5,\"fault\":null}}]"
+    let reports: string = health_reports(nodes, "7")
+    check(reports == "12|1795192172963|watchdog|5|7|2|3|268440116|61000\n13|1795192172964|power-on|1|7||||\n",
+        "the reports of area 7, one line each: " + reports)
+    let watchdog: string = str_field(reports, "\n", 0)
+    let calm: string = str_field(reports, "\n", 1)
+    check(health_alerts(watchdog), "a watchdog reset alerts")
+    check(!health_alerts(calm), "a power-on does not")
+    check(health_is_new(watchdog, ""), "a first report is new")
+    check(!health_is_new(watchdog, watchdog), "the same report again is not")
+    check(health_is_new("12|1795192999999|fault|6|7|1|65535|4096|10", watchdog), "a later report is")
+    check(health_alert_text("Settlement", watchdog) ==
+        "board Settlement restarted: watchdog (boot 5); watchdog warning (code 2) in task 3 at 0x10001234",
+        "the alert names the board, reason, fault, task and pc: " + health_alert_text("Settlement", watchdog))
+    check(health_alert_text("Plug", "13|1|fault|2|7|1|65535|0|0") == "board Plug restarted: fault (boot 2); hard fault (code 1)",
+        "no task and no pc are left out")
+    check(health_alert_text("Plug", calm) == "board Plug restarted: power-on (boot 1)", "no fault, no fault text")
+    let spaced: string = "[{\"area_id\": 8, \"node_id\": 1, \"temperature_c\": 0.0, \"health\": {\"reset_reason\": \"watchdog\", \"reset_code\": 2, \"boot_count\": 5, \"firmware_version\": 7, \"received_at_ms\": 1795192172963, \"fault\": {\"code\": 2, \"task\": 3, \"pc\": 268440116, \"uptime_ms\": 61000}}}]"
+    check(health_reports(spaced, "8") == "1|1795192172963|watchdog|5|7|2|3|268440116|61000\n",
+        "a listing written with spaces reads the same: " + health_reports(spaced, "8"))
+    print("[PASS] a_boards_health_is_read_and_a_bad_reset_alerts\n")
+}
+
 fn main() void {
     a_parent_is_stored_by_number_and_read_by_row()
     a_parent_follows_its_number_when_rows_move()
@@ -1095,5 +1127,6 @@ fn main() void {
     a_secret_never_goes_into_a_helper()
     the_gateway_environment_is_read_as_a_shell_reads_it()
     a_helpers_state_is_read_from_the_keepers_list()
+    a_boards_health_is_read_and_a_bad_reset_alerts()
     print("mesh domain tests ok\n")
 }

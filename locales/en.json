@@ -696,5 +696,13 @@
   "zigbee.log.recent": "Recent lines",
   "helpers.refused": "The keeper did not run {name}: {reason}.",
   "helpers.keeper_down": "This coordinator runs as a keeper helper and the keeper is not answering, so nothing is started beside it; Mesh asks again every minute.",
-  "zigbee.which": "Coordinator"
+  "zigbee.which": "Coordinator",
+  "health.title": "Health",
+  "health.none": "No health report yet: the board sends one after it boots, once its link to the gateway is up.",
+  "health.reason": "Last reset",
+  "health.boot_count": "Boots since power-on",
+  "health.firmware": "Firmware",
+  "health.fault": "Fault before",
+  "health.task": "task {task}",
+  "health.reported": "Reported"
 }

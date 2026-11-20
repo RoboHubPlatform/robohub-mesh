@@ -310,6 +310,9 @@ fn editor_node_inspector(loc: string, id: string, index: u32, tab: string, notic
         body = editor_modules_tab(loc, id, index)
     } else if current == "data" && !is_module_node(index) {
         body = editor_data_tab(loc, id, index)
+        if editor_is_board(index) {
+            body = body + mesh_health_section(loc, id, index)
+        }
     } else if current == "revoke" && editor_is_board(index) {
         body = editor_revoke_tab(loc, id, index) + production_section(loc, id, index)
     } else if current == "zigbee" && zigbee_is_coordinator(project_file(id), index) {

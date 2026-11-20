@@ -542,3 +542,20 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [services, helpers, gateway, zigbee]
+
+  - id: MESH-0038
+    title: A board's health is shown and a bad reset raises an alert
+    statement: >
+      Mesh shall show on each board's page, from the gateway, its last reset
+      reason, boot count, fault record and firmware version with when they were
+      reported, and shall raise an alert through its alert channels when a board
+      reports a watchdog or fault reset, naming the board, the reason and the
+      fault's task and code.
+    rationale: A board that hung and recovered must not be invisible; the person sees it once, with what failed (robohub ADR-0021).
+    satisfies: [SYS-0070]
+    decided_by: [robohub:ADR-0021]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [health, alerts, boards]

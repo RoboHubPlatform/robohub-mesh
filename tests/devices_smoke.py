@@ -27,7 +27,10 @@ space in it, beside a stand-in Shelly plug on the loopback, and checks:
   and tele/LWT Offline shown as unreachable;
 - alerts (MESH-0023), through the log provider: a gateway that stops answering
   is one alert however many polls fail, and a board's revocation that cannot
-  be sent to its gateway is an alert too.
+  be sent to its gateway is an alert too;
+- a board's health (MESH-0038), from a stand-in gateway whose listing carries a
+  watchdog report: one alert naming the board, the reason, the task and the
+  code, and the report on the board's Data tab.
 
     python3 tests/devices_smoke.py
 """
@@ -302,6 +305,33 @@ def device(base: str, index: int) -> dict:
     return {}
 
 
+class Gateway:
+    """A gateway's listing and outbox, as much of them as Mesh's poll reads."""
+    nodes = []
+
+
+class GatewayHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        url = urllib.parse.urlparse(self.path)
+        if url.path == "/api/v1/telemetry/outbox":
+            body = []
+        elif url.path == "/api/v1/nodes":
+            body = Gateway.nodes
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        data = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
 def main() -> int:
     global TOKEN
     result = subprocess.run([RHO_CMD, "build", "."], cwd=MESH, text=True, capture_output=True)
@@ -313,6 +343,20 @@ def main() -> int:
     threading.Thread(target=plug.serve_forever, daemon=True).start()
     plug_url = f"http://127.0.0.1:{plug.server_address[1]}"
     dead_gateway = f"http://127.0.0.1:{free_port()}"
+    gateway = http.server.ThreadingHTTPServer(("127.0.0.1", free_port()), GatewayHandler)
+    threading.Thread(target=gateway.serve_forever, daemon=True).start()
+    watched_gateway = f"http://127.0.0.1:{gateway.server_address[1]}"
+    # Board 1 of area 8 restarted on its watchdog, with a record; board 2 was
+    # simply powered on.
+    Gateway.nodes = [
+        {"area_id": 8, "node_id": 1, "temperature_c": 0.0, "health": {
+            "reset_reason": "watchdog", "reset_code": 2, "boot_count": 5, "firmware_version": 7,
+            "received_at_ms": 1795192172963,
+            "fault": {"code": 2, "task": 3, "pc": 268440116, "uptime_ms": 61000}}},
+        {"area_id": 8, "node_id": 2, "health": {
+            "reset_reason": "power-on", "reset_code": 1, "boot_count": 1, "firmware_version": 7,
+            "received_at_ms": 1795192172964, "fault": None}},
+    ]
 
     port = free_port()
     base = f"http://127.0.0.1:{port}"
@@ -336,6 +380,14 @@ def main() -> int:
         (silent / "project.txt").write_text(
             f"project.name=Silent\narea_id=6\ngateway=not-a-known-board\ngateway_url={dead_gateway}\n"
             "node.count=1\nnode.1.name=Board\nnode.1.parent=gateway\nnode.1.role=node\nnode.1.id=0123456789abcdef\n")
+        # A mesh whose gateway is on another host and answers, with two boards
+        # that reported their health.
+        watched = projects / "Watched"
+        watched.mkdir(parents=True)
+        (watched / "project.txt").write_text(
+            f"project.name=Watched\narea_id=8\ngateway=not-a-known-board\ngateway_url={watched_gateway}\n"
+            "node.count=2\nnode.1.name=Sensor\nnode.1.parent=gateway\nnode.1.role=node\nnode.1.id=fedcba9876543210\n"
+            "node.2.name=Calm\nnode.2.parent=gateway\nnode.2.role=node\nnode.2.id=00112233aabbccdd\n")
         home = root / "home"
         TOKEN = mint_token(str(home))
         alerts_log = home / ".rho" / "mesh" / "alerts.log"
@@ -595,6 +647,24 @@ def main() -> int:
             call(base, "POST", "/mesh/p/Silent/node/0123456789abcdef/revoke", {"action": "restore"}, hx=True)
             check(len(alerts("board list could not be sent")) == 1, "and the next one within the cooldown is not another")
 
+            # --- A board's health ------------------------------------------
+            # @verifies MESH-0038
+            deadline = time.time() + 40
+            while time.time() < deadline and not alerts("board Sensor restarted"):
+                time.sleep(0.5)
+            time.sleep(3)
+            restarted = alerts("restarted")
+            check(len(restarted) == 1 and "[ERROR]" in restarted[0] and "Watched" in restarted[0] and
+                  "board Sensor restarted: watchdog (boot 5); watchdog warning (code 2) in task 3 at 0x10001234" in restarted[0],
+                  f"a watchdog reset is one alert naming the board, the reason, the task and the code ({restarted})")
+            status, page = call(base, "GET", "/mesh/p/Watched/node/fedcba9876543210?tab=data", hx=True)
+            check(status == 200 and "Health" in page and "watchdog" in page and "0x10001234" in page and
+                  "Boots since power-on" in page,
+                  f"the board's Data tab shows its last report ({status})")
+            status, page = call(base, "GET", "/mesh/p/Watched/node/00112233aabbccdd?tab=data", hx=True)
+            check(status == 200 and "power-on" in page and "Fault before" not in page,
+                  f"a power-on report shows no fault ({status})")
+
             # --- Deleting a mesh whose path has a space -------------------
             # @verifies MESH-0024
             call(base, "POST", "/mesh/project/delete", {"project": "Bench"})
@@ -612,6 +682,7 @@ def main() -> int:
             if failures:
                 print(log_path.read_text()[-3000:])
     finally:
+        gateway.shutdown()
         if tasmota:
             tasmota.stop()
         if broker:
