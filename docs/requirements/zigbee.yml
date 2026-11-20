@@ -14,10 +14,13 @@ requirements:
     statement: >
       Mesh shall offer, when adding a device, the devices whose manifest's
       `device.kind` is `coordinator`, and shall keep such a node in the plan as a
-      device node with its device, its parent board, its serial port and a name
-      unique in the mesh, which is also its address; a coordinator shall have no
-      transport of its own and shall not be read or switched as a device.
-    rationale: The radio is hardware of the mesh, planned like the rest; making it a device node keeps one way of adding hardware, and its manifest says what it needs (robohub-devices ADR-0003).
+      device node with its device, its parent board, its serial port, a display
+      name no other node of the mesh has — free text, as every node's name is —
+      and an address made from that name when it is added (MESH-ZB-0015's topic
+      level, made unique in the mesh) and kept when it is renamed; a coordinator
+      shall have no transport of its own and shall not be read or switched as a
+      device.
+    rationale: The radio is hardware of the mesh, planned like the rest; making it a device node keeps one way of adding hardware, and its manifest says what it needs (robohub-devices ADR-0003). Its address is its base topic and data folder, so it must be a topic level and must not change once Zigbee2MQTT uses it; the name a person reads need not be either (amended 2026-11-20, after "Plug z" was refused in the first live test).
     satisfies: [MESH-0033]
     decided_by: [ADR-0010]
     status: approved
@@ -220,12 +223,14 @@ requirements:
     statement: >
       Adopting a listed device whose `interview_state` is `SUCCESSFUL` and whose model a
       device manifest matches shall add a device node under the coordinator with
-      transport `zigbee`, that device, its IEEE address and a name unique in the
-      mesh as its address, and shall ask Zigbee2MQTT to rename it to that address
+      transport `zigbee`, that device, its IEEE address, the display name the
+      person gave (free text no other node has) and an address made from it as
+      MESH-ZB-0001 says, and shall ask Zigbee2MQTT to rename it to that address
       (`<base>/bridge/request/device/rename` with `{"from": <IEEE address>, "to":
       <address>}` and a transaction id), keeping the node marked as not yet renamed
       until the response with that transaction says `ok`; a device with no matching manifest or
-      an incomplete interview shall be listed but not adoptable, saying which.
+      an incomplete interview shall be listed but not adoptable, saying which;
+      and an adopt that is refused shall say why where the person pressed it.
     rationale: Mesh reads a device by its topic, which Zigbee2MQTT names after the device's friendly name; renaming it to the plan's address is what makes the plan's address the topic (MESH-ZB-0014).
     satisfies: [MESH-0033]
     decided_by: [ADR-0010]

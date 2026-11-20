@@ -800,6 +800,42 @@ test fn an_action_payload_may_carry_on_or_off() void {
     print("[PASS] an_action_payload_may_carry_on_or_off\n")
 }
 
+// @verifies MESH-0036
+test fn a_device_has_one_switch_button_offering_the_other_state() void {
+    check(str_eq(switch_next("confirmed", "on"), "off"), "on offers off")
+    check(str_eq(switch_next("idle", "off"), "on"), "off offers on")
+    check(str_eq(switch_next("idle", ""), "on"), "unknown offers on")
+    check(str_eq(switch_next("pending", "off"), "wait"), "a switch on its way offers nothing to press")
+    check(str_eq(switch_next("unconfirmed", "on"), "off"), "an unconfirmed switch offers the other of what the device reports")
+    print("[PASS] a_device_has_one_switch_button_offering_the_other_state\n")
+}
+
+// @verifies MESH-ZB-0001, MESH-ZB-0012, MESH-ZB-0015
+test fn a_display_name_gives_a_topic_address() void {
+    check(str_eq(zigbee_address_from("Plug z"), "plug-z"), "a space is one -, letters are lower-case")
+    check(str_eq(zigbee_address_from("  Kitchen  Heater!! "), "kitchen-heater"), "no - at either end, none repeated")
+    check(str_eq(zigbee_address_from("zplug1"), "zplug1"), "a name that is a level already is kept")
+    check(str_eq(zigbee_address_from("lamp_2-b"), "lamp_2-b"), "_ and - are kept")
+    check(str_eq(zigbee_address_from("Încălzitor baie"), "incalzitor-baie"), "Romanian letters lose their marks")
+    check(str_eq(zigbee_address_from("Ţeavă Şură"), "teava-sura"), "in both cedilla and comma forms")
+    check(str_eq(zigbee_address_from("Café Ω"), "caf"), "any other letter outside ASCII is a -")
+    check(str_eq(zigbee_address_from("+/#"), "device"), "nothing left is device")
+    check(zigbee_level_ok(zigbee_address_from("a/b c+d#e.f")), "an address is always a topic level")
+    check(strlen(zigbee_address_from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")) == 48, "at most 48 characters")
+    check(zigbee_display_name_ok("Plug z") && zigbee_display_name_ok("Încălzitor baie"), "a name is free text")
+    check(!zigbee_display_name_ok("") && !zigbee_display_name_ok("a\"b") && !zigbee_display_name_ok("a\nb") &&
+        !zigbee_display_name_ok("a\\b"), "but not empty, and no quote, line break or backslash")
+    print("[PASS] a_display_name_gives_a_topic_address\n")
+}
+
+// @verifies MESH-ZB-0009
+test fn a_coordinator_card_says_what_its_bridge_says() void {
+    check(str_eq(zigbee_card_status("online"), "online|online"), "online when its bridge is")
+    check(str_eq(zigbee_card_status("offline"), "warn|not answering"), "not answering when it said offline")
+    check(str_eq(zigbee_card_status(""), "|no data"), "no data while it said nothing")
+    print("[PASS] a_coordinator_card_says_what_its_bridge_says\n")
+}
+
 // @verifies MESH-ZB-0015, MESH-ZB-0014
 test fn topic_levels_are_refused_when_they_could_reach_other_topics() void {
     check(zigbee_level_ok("home-1_b"), "letters, digits, - and _ are a level")
@@ -976,6 +1012,9 @@ fn main() void {
     a_switch_function_is_an_output_signal()
     the_online_state_may_be_read_from_inside_json()
     an_action_payload_may_carry_on_or_off()
+    a_device_has_one_switch_button_offering_the_other_state()
+    a_display_name_gives_a_topic_address()
+    a_coordinator_card_says_what_its_bridge_says()
     topic_levels_are_refused_when_they_could_reach_other_topics()
     a_coordinator_goes_only_under_a_board_that_can_host_it()
     a_serial_port_is_a_device_path()

@@ -218,18 +218,18 @@ fn zigbee_hosts_any(file: string, device: string) bool {
 }
 
 // zigbee_name_problem is why a name cannot be a coordinator's or a Zigbee
-// device's, which is also its address and a topic level, or "": not a topic
-// level (`level`), or another node's name or address already (`taken`).
-// @req MESH-ZB-0001, MESH-ZB-0015
+// device's display name, or "": not a name that can be shown (`chars`), or
+// another node's name already (`taken`). The name is free text, as every
+// node's is; its address, a topic level, is made from it (zigbee_free_address).
+// @req MESH-ZB-0001, MESH-ZB-0012
 fn zigbee_name_problem(file: string, name: string, except: u32) string {
-    if !zigbee_level_ok(name) {
-        return "level"
+    if !zigbee_display_name_ok(name) {
+        return "chars"
     }
     var index: u32 = 1
     let count: u32 = project_node_count_at(file)
     while index <= count {
-        if index != except && (rho_str_eq(project_node_value(file, index, "name", ""), name) ||
-            rho_str_eq(project_node_value(file, index, "address", ""), name)) {
+        if index != except && rho_str_eq(project_node_value(file, index, "name", ""), name) {
             return "taken"
         }
         index = index + 1
@@ -237,11 +237,38 @@ fn zigbee_name_problem(file: string, name: string, except: u32) string {
     return ""
 }
 
+// zigbee_free_address is the address a new coordinator or Zigbee device gets
+// from its display name: the topic level the name gives, with -2, -3 … added
+// while another node of the mesh has that address already.
+// @req MESH-ZB-0001, MESH-ZB-0012, MESH-ZB-0015
+fn zigbee_free_address(file: string, name: string, except: u32) string {
+    let base: string = zigbee_address_from(name)
+    var candidate: string = base
+    var n: u32 = 1
+    while n < 1000 {
+        var clash: bool = false
+        var index: u32 = 1
+        let count: u32 = project_node_count_at(file)
+        while index <= count {
+            if index != except && rho_str_eq(project_node_value(file, index, "address", ""), candidate) {
+                clash = true
+            }
+            index = index + 1
+        }
+        if !clash {
+            return candidate
+        }
+        n = n + 1
+        candidate = base + "-" + rho_int_to_str(n)
+    }
+    return base + "-" + rho_random_hex(3)
+}
+
 fn zigbee_name_text(loc: string, problem: string) string {
     if problem == "taken" {
         return mesh_t(loc, "zigbee.name.taken")
     }
-    return mesh_t(loc, "zigbee.name.level")
+    return mesh_t(loc, "zigbee.name.chars")
 }
 
 // zigbee_planned_ieees are the IEEE addresses of the plan's Zigbee devices, as
@@ -471,7 +498,7 @@ fn zigbee_broker_issue(loc: string, project: string, index: u32) string {
     let coordinator: string = project_node_value(project_file(project), index, "address", "")
     let base: string = zigbee_base_topic(project, coordinator)
     if base == "" {
-        return mesh_t(loc, "zigbee.name.level")
+        return mesh_t(loc, "zigbee.topic_level")
     }
     let out: string = zigbee_report("keeper-answer")
     let status: u32 = zigbee_keeper_call("POST", "/api/v1/bus/users",
@@ -766,7 +793,7 @@ fn zigbee_start_native(loc: string, project: string, index: u32) string {
     let file: string = project_file(project)
     let coordinator: string = project_node_value(file, index, "address", "")
     if zigbee_base_topic(project, coordinator) == "" {
-        return mesh_t(loc, "zigbee.name.level")
+        return mesh_t(loc, "zigbee.topic_level")
     }
     let missing: string = zigbee_missing(loc)
     if missing != "" {
@@ -1084,17 +1111,18 @@ fn zigbee_adopt(loc: string, project: string, index: u32, ieee: string, name: st
     if added > 64 {
         return mesh_t(loc, "editor.msg.max_nodes")
     }
+    let address: string = zigbee_free_address(file, name, 0)
     let transaction: string = zigbee_transaction()
     let row: string = "node." + rho_int_to_str(added) + "."
     ignore_bool(plan_set_many(file, editor_line("node.count", rho_int_to_str(added)) +
         editor_line(row + "kind", "device") + editor_line(row + "role", "device") + editor_line(row + "device", manifest) +
-        editor_line(row + "transport", "zigbee") + editor_line(row + "address", name) + editor_line(row + "name", name) +
+        editor_line(row + "transport", "zigbee") + editor_line(row + "address", address) + editor_line(row + "name", name) +
         editor_line(row + "ieee", ieee) + editor_line(row + "parent", "node." + rho_int_to_str(index)) +
         editor_line(row + "zigbee_rename", transaction)))
-    if base == "" || !bus.publish(base + "/bridge/request/device/rename", zigbee_rename_payload(ieee, name, transaction), false) {
+    if base == "" || !bus.publish(base + "/bridge/request/device/rename", zigbee_rename_payload(ieee, address, transaction), false) {
         return mesh_t(loc, "zigbee.adopt.rename_unsent")
     }
-    info("mesh", "Zigbee device " + ieee + " adopted as " + name + " under coordinator " + rho_int_to_str(index) + " of " + project)
+    info("mesh", "Zigbee device " + ieee + " adopted as " + name + " (" + address + ") under coordinator " + rho_int_to_str(index) + " of " + project)
     return ""
 }
 
@@ -1163,10 +1191,11 @@ fn zigbee_remove_device(loc: string, project: string, index: u32) string {
     if !bus.publish(base + "/bridge/request/device/remove", zigbee_remove_payload(ieee, transaction), false) {
         return mesh_t(loc, "zigbee.remove.failed")
     }
-    // Zigbee2MQTT answers once the device left, which takes a few seconds for a
-    // device that is there; it is waited for up to 12 s.
+    // Zigbee2MQTT usually answers within a second or two; it is waited for up to
+    // 3 s, so the person's request is not held. An answer that has not come by
+    // then is said as such — asked, not confirmed — rather than as a failure.
     var waited: u32 = 0
-    while waited < 48 {
+    while waited < 12 {
         let answer: string = bus.latest(base + "/bridge/response/device/remove")
         let outcome: string = zigbee_response_outcome(answer, transaction)
         if outcome == "ok" {
@@ -1179,7 +1208,8 @@ fn zigbee_remove_device(loc: string, project: string, index: u32) string {
         telemetry_sleep(250)
         waited = waited + 1
     }
-    return mesh_t(loc, "zigbee.remove.failed")
+    info("mesh", "Zigbee device " + ieee + " asked to leave the network of " + project + "; no answer yet")
+    return mesh_t(loc, "zigbee.remove.asked")
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1471,9 +1501,11 @@ fn zigbee_new_device_form(loc: string, id: string, parent: string, notice: strin
 }
 
 // zigbee_coordinator_lines are the plan lines a coordinator's form saves, or
-// "!" and why not: its name is a topic level no other node has, its parent can
-// host it, its port is a device path, its channel 11 to 26 and unchanged once
-// Zigbee2MQTT started.
+// "!" and why not: its name is one no other node has, its parent can host it,
+// its port is a device path, its channel 11 to 26 and unchanged once
+// Zigbee2MQTT started. Its address — its topic level and its data folder — is
+// made from the name when it is added and kept afterwards, so a rename changes
+// only what is shown.
 // @req MESH-ZB-0001, MESH-ZB-0002, MESH-ZB-0003, MESH-ZB-0015
 fn zigbee_coordinator_lines(loc: string, file: string, index: u32, body: string, parent: string, except: u32) string {
     let device: string = form_field(body, "device")
@@ -1498,14 +1530,14 @@ fn zigbee_coordinator_lines(loc: string, file: string, index: u32, body: string,
         return "!" + mesh_t(loc, "zigbee.port.invalid")
     }
     let prefix: string = "node." + rho_int_to_str(index) + "."
-    var lines: string = editor_line(prefix + "name", name) + editor_line(prefix + "address", name) +
+    var address: string = project_node_value(file, index, "address", "")
+    if except == 0 || !zigbee_level_ok(address) {
+        address = zigbee_free_address(file, name, except)
+    }
+    var lines: string = editor_line(prefix + "name", name) + editor_line(prefix + "address", address) +
         editor_line(prefix + "device", device) + editor_line(prefix + "transport", "") +
         editor_line(prefix + "serial_port", port) + editor_line(prefix + "parent", parent)
-    let old_name: string = project_node_value(file, index, "address", "")
-    let started: bool = except > 0 && zigbee_started(plan_project_id(file), old_name)
-    if except > 0 && started && !rho_str_eq(old_name, name) {
-        return "!" + mesh_t(loc, "zigbee.name_fixed")
-    }
+    let started: bool = except > 0 && zigbee_started(plan_project_id(file), address)
     let channel: string = str_trim(form_field(body, "channel"))
     if !started {
         if channel != "" && !zigbee_channel_ok(channel) {
@@ -1521,8 +1553,9 @@ fn zigbee_coordinator_lines(loc: string, file: string, index: u32, body: string,
 }
 
 // zigbee_device_lines are the plan lines a Zigbee device's form saves, or "!"
-// and why not: it hangs under a coordinator, its name is a topic level no other
-// node has, its IEEE address is one.
+// and why not: it hangs under a coordinator, its name is one no other node has,
+// its IEEE address is one. Its address — the topic Zigbee2MQTT names it by — is
+// made from the name when it is added and kept afterwards.
 // @req MESH-ZB-0012, MESH-ZB-0015
 fn zigbee_device_lines(loc: string, file: string, index: u32, body: string, parent: string, except: u32) string {
     let device: string = form_field(body, "device")
@@ -1540,7 +1573,11 @@ fn zigbee_device_lines(loc: string, file: string, index: u32, body: string, pare
         return "!" + mesh_t(loc, "zigbee.ieee_invalid")
     }
     let prefix: string = "node." + rho_int_to_str(index) + "."
-    return editor_line(prefix + "name", name) + editor_line(prefix + "address", name) + editor_line(prefix + "device", device) +
+    var address: string = project_node_value(file, index, "address", "")
+    if except == 0 || !zigbee_level_ok(address) {
+        address = zigbee_free_address(file, name, except)
+    }
+    return editor_line(prefix + "name", name) + editor_line(prefix + "address", address) + editor_line(prefix + "device", device) +
         editor_line(prefix + "transport", "zigbee") + editor_line(prefix + "ieee", ieee) + editor_line(prefix + "parent", parent)
 }
 
@@ -1550,7 +1587,7 @@ fn zigbee_device_lines(loc: string, file: string, index: u32, body: string, pare
 
 fn zigbee_action_form(loc: string, id: string, index: u32, action: string, inner: string, label: string, css: string) string {
     let url: string = editor_node_action(id, index) + "/zigbee"
-    return "<form class=\"inline\" method=\"post\" action=\"" + url + "\" hx-post=\"" + url + "\" hx-target=\"#agora-inspector\">" +
+    return "<form class=\"inline\" method=\"post\" action=\"" + url + "\" hx-post=\"" + url + "\" hx-target=\"#agora-inspector\" hx-swap=\"innerHTML show:#ins-notice:top\">" +
         forms_csrf_field() + editor_hidden("action", action) + inner + "<button type=\"submit\" class=\"ag-btn small " + css + "\">" +
         escape_html(label) + "</button></form>"
 }
@@ -1648,7 +1685,7 @@ fn zigbee_tab(loc: string, id: string, index: u32) string {
         var adopt: string = ""
         if problem == "" {
             adopt = zigbee_action_form(loc, id, index, "adopt", editor_hidden("ieee", field(line, 0)) +
-                "<input type=\"text\" name=\"name\" placeholder=\"" + escape_html(mesh_t(loc, "zigbee.name")) + "\" required pattern=\"[A-Za-z0-9_-]+\">",
+                "<input type=\"text\" name=\"name\" placeholder=\"" + escape_html(mesh_t(loc, "zigbee.name")) + "\" required maxlength=\"64\">",
                 mesh_t(loc, "zigbee.adopt"), "primary")
         } else if problem == "interview" {
             adopt = "<small>" + escape_html(mesh_fill(mesh_t(loc, "zigbee.adopt.interview_state"), "state", field(line, 5))) + "</small>"

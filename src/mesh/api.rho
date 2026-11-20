@@ -125,27 +125,41 @@ fn mesh_device_poll(req: Request) Response {
     if index < 1 || index > node_count() || !is_device_node(index) {
         return mesh_redirect("/mesh/plan")
     }
-    let project: string = current_project()
+    let said: string = mesh_device_read(current_project(), index)
+    if said == "no_address" {
+        save_setting("mesh_message", "This device has no address.")
+    } else if said == "coordinator" {
+        save_setting("mesh_message", "A coordinator is not read as a device: its page shows its bridge.")
+    } else if said == "no_answer" {
+        save_setting("mesh_message", "The device did not answer or its manifest names no HTTP telemetry.")
+    } else {
+        save_setting("mesh_message", "Device read.")
+    }
+    return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+}
+
+// mesh_device_read reads a device of a mesh now — over the broker or over HTTP,
+// as the plan says it speaks — and records its state and power from what the
+// store then holds; a reading ends a switch that was waiting for one. It
+// answers "" when it was read, or `no_address`, `coordinator` or `no_answer`.
+// @req MESH-0022, MESH-ZB-0014
+fn mesh_device_read(project: string, index: u32) string {
     let file: string = project_file(project)
     let address: string = node_device_address(index)
     if rho_strlen(address) == 0 {
-        save_setting("mesh_message", "This device has no address.")
-        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+        return "no_address"
+    }
+    if zigbee_is_coordinator(file, index) {
+        return "coordinator"
     }
     var recorded: u32 = 0
-    if zigbee_is_coordinator(file, index) {
-        save_setting("mesh_message", "A coordinator is not read as a device: its page shows its bridge.")
-        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
-    }
     if device_on_bus(project_node_value(file, index, "transport", "http")) {
         recorded = telemetry_poll_mqtt_device(project, file, index)
     } else {
         recorded = telemetry_poll_http_device(project, file, index)
     }
     if recorded == 0 {
-        save_setting("mesh_message",
-            "The device did not answer or its manifest names no HTTP telemetry.")
-        return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+        return "no_answer"
     }
     // The page shows the values the store now holds, so it reads the same
     // series a chart would rather than a second, separate request.
@@ -157,8 +171,8 @@ fn mesh_device_poll(req: Request) Response {
         } else {
             save_setting("node." + rho_int_to_str(index) + ".state", "off")
         }
-        // A reading the person asked for is the device's word: it ends a switch
-        // that was waiting for one, confirmed or not.
+        // A reading is the device's word: it ends a switch that was waiting for
+        // one, confirmed or not.
         mesh_switch_forget(project, index)
     }
     let power: string = telemetry_latest_text(project, source, "power_w")
@@ -167,8 +181,7 @@ fn mesh_device_poll(req: Request) Response {
     }
     save_setting("node." + rho_int_to_str(index) + ".last_checked",
         first_line(rho_exec_capture("date", "+%Y-%m-%dT%H:%M:%S\n")))
-    save_setting("mesh_message", "Device read.")
-    return mesh_redirect("/mesh/node/" + rho_int_to_str(index))
+    return ""
 }
 
 // mesh_device_switch switches a device of the active mesh and answers where it

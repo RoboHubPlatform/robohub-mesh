@@ -47,6 +47,85 @@ fn zigbee_level_ok(value: string) bool {
     return true
 }
 
+// zigbee_address_from is the topic level a display name gives: lower-case
+// letters and digits kept, `_` and `-` kept, anything else (a space, a dot, any
+// other letter outside ASCII) one `-`, repeated `-` collapsed and none at either
+// end, at most 48 characters; `device` when nothing is left. "Plug z" is
+// `plug-z`. Romanian letters are written without their marks first, so
+// "Încălzitor baie" is `incalzitor-baie`.
+// @req MESH-ZB-0001, MESH-ZB-0012, MESH-ZB-0015
+fn zigbee_address_from(given: string) string {
+    var name: string = given
+    let marked: string = "ă a Ă a â a Â a î i Î i ș s Ș s ş s Ş s ț t Ț t ţ t Ţ t"
+    var pairs: string = marked + " "
+    while pairs != "" {
+        let at: i32 = str_index_of(pairs, " ")
+        let from: string = str_slice(pairs, 0, u32(at))
+        pairs = str_slice(pairs, u32(at) + 1, strlen(pairs) - u32(at) - 1)
+        let to_at: i32 = str_index_of(pairs, " ")
+        let to: string = str_slice(pairs, 0, u32(to_at))
+        pairs = str_slice(pairs, u32(to_at) + 1, strlen(pairs) - u32(to_at) - 1)
+        name = str_replace(name, from, to)
+    }
+    var out: string = ""
+    var dash: bool = false
+    var i: u32 = 0
+    while i < strlen(name) && strlen(out) < 48 {
+        var c: string = str_slice(name, i, 1)
+        if c >= "A" && c <= "Z" {
+            c = str_lower(c)
+        }
+        if (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "_" {
+            out = out + c
+            dash = false
+        } else if out != "" && !dash {
+            out = out + "-"
+            dash = true
+        }
+        i = i + 1
+    }
+    while out != "" && str_slice(out, strlen(out) - 1, 1) == "-" {
+        out = str_slice(out, 0, strlen(out) - 1)
+    }
+    if out == "" {
+        return "device"
+    }
+    return out
+}
+
+// zigbee_card_status is a coordinator's pill, as "css|label", from what its
+// bridge says: online, not answering when it said offline, no data when it has
+// said nothing.
+// @req MESH-ZB-0009
+fn zigbee_card_status(bridge: string) string {
+    if bridge == "online" {
+        return "online|online"
+    }
+    if bridge == "offline" {
+        return "warn|not answering"
+    }
+    return "|no data"
+}
+
+// zigbee_display_name_ok is whether a name may be shown for a node: not empty,
+// at most 64 characters, with no quote, backslash or control character, since
+// it is written into the plan and pages as text.
+// @req MESH-ZB-0001, MESH-ZB-0012
+fn zigbee_display_name_ok(name: string) bool {
+    if name == "" || strlen(name) > 64 {
+        return false
+    }
+    var i: u32 = 0
+    while i < strlen(name) {
+        let c: string = str_slice(name, i, 1)
+        if c == "\"" || c == "\\" || c < " " {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
 // zigbee_base_topic is a coordinator's base topic, `zigbee/<mesh>/<coordinator>`,
 // or "" when either is not a topic level.
 // @req MESH-ZB-0015, MESH-ZB-0004

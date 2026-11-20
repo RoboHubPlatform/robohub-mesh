@@ -78,3 +78,18 @@ fn switch_shown(outcome: string, reported: string) string {
     }
     return reported
 }
+
+// switch_next is what a device's one switch button offers: `wait` while a
+// switch is waiting for the device to report it, `off` while the device reports
+// on, and `on` otherwise — off, unknown, or a switch the device never confirmed,
+// so the button always offers the state the device does not report.
+// @req MESH-0022, MESH-0036
+fn switch_next(outcome: string, reported: string) string {
+    if str_eq(outcome, "pending") {
+        return "wait"
+    }
+    if str_eq(reported, "on") {
+        return "off"
+    }
+    return "on"
+}

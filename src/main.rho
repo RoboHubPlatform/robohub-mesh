@@ -122,6 +122,7 @@ route POST "/mesh/p/{project}/node/{node}/move-to" => mesh_p_node_move
 route POST "/mesh/p/{project}/node/{node}/parent" => mesh_p_node_parent
 route POST "/mesh/p/{project}/node/{node}/impact" => mesh_p_node_impact
 route POST "/mesh/p/{project}/node/{node}/zigbee" => mesh_p_node_zigbee
+route POST "/mesh/p/{project}/node/{node}/device" => mesh_p_node_device
 route POST "/mesh/p/{project}/node/{node}" => mesh_p_node_post
 route POST "/mesh/p/{project}/node" => mesh_p_node_new
 route GET "/mesh/p/{project}/edge/{node}" => mesh_p_edge_page

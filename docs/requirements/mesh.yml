@@ -506,3 +506,21 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [devices, mqtt, outputs]
+
+  - id: MESH-0036
+    title: A device is switched from its Data tab in place, with one button
+    statement: >
+      A device's Data tab shall offer one switch button naming the state the
+      device does not report — Switch off while it reports on, Switch on
+      otherwise — and, while a switch waits for the device to report it, a
+      button that says so and cannot be pressed; switching and polling shall
+      redraw the inspector on the Data tab without loading the page again, and
+      the tab shall refresh itself until the device reports.
+    rationale: Two buttons for one relay ask the person to know its state; a switch that reloads the page leaves the tab and, with the page's live streams reopening, stalls the browser for seconds (seen in the first live test of the S60ZBTPF, 2026-11-20).
+    satisfies: [SYS-0025]
+    decided_by: [ADR-0010]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [devices, outputs, ui]

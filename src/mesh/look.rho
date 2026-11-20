@@ -540,6 +540,11 @@ fn look_device_card(loc: string, id: string, index: u32, readings: string, selec
     } else if last > 0 {
         status = "|quiet"
     }
+    // A coordinator sends no readings of its own; whether it is up is what its
+    // Zigbee2MQTT says on its bridge (MESH-ZB-0009).
+    if zigbee_is_coordinator(project_file(id), index) {
+        status = zigbee_card_status(zigbee_bridge_state(zigbee_bridge(id, index, "state")))
+    }
     var values: string = ""
     var count: u32 = 0
     var rest: string = readings

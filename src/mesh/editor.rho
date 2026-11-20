@@ -134,7 +134,9 @@ fn editor_notice(text: string, bad: bool) string {
     if bad {
         css = "notice bad"
     }
-    return "<p class=\"" + css + "\">" + escape_html(text) + "</p>"
+    // The id lets a form scroll the answer into view (hx-swap show:#ins-notice),
+    // so an answer to a button at the bottom of a long tab is seen.
+    return "<p id=\"ins-notice\" class=\"" + css + "\">" + escape_html(text) + "</p>"
 }
 
 fn editor_tabs(loc: string, id: string, index: u32, current: string) string {
@@ -536,6 +538,104 @@ fn editor_modules_tab(loc: string, id: string, index: u32) string {
         look_impact(loc, mesh_fill(mesh_t(loc, "editor.modules.impact"), "name", editor_name(loc, index)))
 }
 
+// editor_device_actions are a device's controls on its Data tab: one switch
+// button offering the state the device does not report, and Poll — each an
+// action that redraws the inspector in place, so the person stays on the tab
+// and the page is not loaded again. While a switch waits for the device the
+// button says so and the tab asks again each second until the device reports.
+// @req MESH-0036, MESH-0022
+fn editor_device_actions(loc: string, id: string, index: u32) string {
+    let file: string = project_file(id)
+    if zigbee_is_coordinator(file, index) {
+        return ""
+    }
+    let transport: string = node_device_transport(index)
+    if !rho_str_eq(transport, "http") && !device_on_bus(transport) {
+        return "<p><small>" + mesh_t(loc, "device.carried") + "</small></p>"
+    }
+    let url: string = editor_node_action(id, index) + "/device"
+    let open: string = "<form class=\"inline\" method=\"post\" action=\"" + url + "\" hx-post=\"" + url +
+        "\" hx-target=\"#agora-inspector\" hx-swap=\"innerHTML\">" + forms_csrf_field()
+    var buttons: string = ""
+    var again: string = ""
+    let kind: string = device_kind(node_device_name(index))
+    if kind == "plug" || kind == "actuator" || kind == "switch" {
+        let outcome: string = mesh_switch_settle(id, index)
+        // What the device reports now — the newest status message on the bus —
+        // not only what the last poll recorded, so the button follows the plug
+        // once it reports.
+        var reported: string = ""
+        if device_on_bus(transport) {
+            reported = mesh_device_report(id, index, 0)
+            mesh_device_reported_set(id, index, reported)
+        }
+        if reported == "" {
+            reported = mesh_device_state(index)
+        }
+        let next: string = switch_next(outcome, reported)
+        if next == "wait" {
+            buttons = "<button type=\"button\" class=\"ag-btn small\" disabled>" +
+                escape_html(mesh_fill(mesh_t(loc, "device.switching"), "state", mesh_switch_requested(id, index))) + "</button>"
+            again = "<div hx-get=\"" + editor_node_action(id, index) + "?tab=data\" hx-trigger=\"load delay:1s\" hx-target=\"#agora-inspector\" hx-swap=\"innerHTML\"></div>"
+        } else if next == "off" {
+            buttons = open + editor_hidden("action", "off") + "<button type=\"submit\" class=\"ag-btn small\">" +
+                escape_html(mesh_t(loc, "device.switch_off")) + "</button></form>"
+        } else {
+            buttons = open + editor_hidden("action", "on") + "<button type=\"submit\" class=\"ag-btn small primary\">" +
+                escape_html(mesh_t(loc, "device.switch_on")) + "</button></form>"
+        }
+    }
+    buttons = buttons + open + editor_hidden("action", "poll") + "<button type=\"submit\" class=\"ag-btn small quiet\">" +
+        escape_html(mesh_t(loc, "device.poll")) + "</button></form>"
+    return "<div class=\"device-actions\">" + buttons + "</div>" + again +
+        "<p><small>" + escape_html(mesh_fill(mesh_fill(mesh_fill(mesh_t(loc, "device.last"),
+            "state", mesh_device_state_text(loc, index)), "power", mesh_device_last(index)), "time", mesh_device_checked(index))) +
+        "</small></p>" + mesh_device_reach_line(loc, index)
+}
+
+// mesh_p_node_device carries out a device's Data-tab action — switch on, switch
+// off or poll — and answers the inspector redrawn on that tab, with what came of
+// it; the device is read at once after a switch, so a device that answers fast
+// shows its new state in the same answer.
+// @req MESH-0036, MESH-0022, MESH-ZB-0014
+fn mesh_p_node_device(req: Request) Response {
+    if !mesh_may(req, param(req, "project"), true) {
+        return mesh_denied(req)
+    }
+    let id: string = editor_open_project(req)
+    if id == "" {
+        return mesh_redirect("/mesh/fleet")
+    }
+    let body: string = request_body(req)
+    let nid: string = param(req, "node")
+    let file: string = project_file(id)
+    let index: u32 = project_node_by_id(file, nid)
+    if index == 0 || !is_device_node(index) || zigbee_is_coordinator(file, index) {
+        return editor_answer(req, id, "", "", editor_notice(i18n_t(req, "editor.msg.node_gone"), true))
+    }
+    if !forms_csrf_ok(body) {
+        return Response{ 403, "<p class=\"notice bad\">" + i18n_t(req, "settings.csrf_refused") + "</p>", "text/html; charset=utf-8", "" }
+    }
+    let action: string = form_field(body, "action")
+    let selection: string = "node:" + nid
+    if action == "on" || action == "off" {
+        let outcome: string = mesh_device_switch_to(id, index, action)
+        if outcome == "failed" {
+            return editor_answer(req, id, selection, "data", editor_notice(mesh_fill(i18n_t(req, "device.no_answer"), "address", node_device_address(index)), true))
+        }
+        ignore_string(mesh_device_read(id, index))
+        return editor_answer(req, id, selection, "data", "")
+    }
+    if action == "poll" {
+        let said: string = mesh_device_read(id, index)
+        if said != "" {
+            return editor_answer(req, id, selection, "data", editor_notice(i18n_t(req, "device.read_failed"), true))
+        }
+        return editor_answer(req, id, selection, "data", "")
+    }
+    return editor_answer(req, id, selection, "data", editor_notice(i18n_t(req, "zigbee.unknown_action"), true))
+}
+
 fn editor_data_tab(loc: string, id: string, index: u32) string {
     let readings: string = agora_readings(id)
     let source: string = state_value("node." + rho_int_to_str(index) + ".id")
@@ -550,7 +650,7 @@ fn editor_data_tab(loc: string, id: string, index: u32) string {
     }
     var actions: string = ""
     if is_device_node(index) {
-        actions = mesh_device_actions(loc, index)
+        actions = editor_device_actions(loc, id, index)
     }
     return "<dl class=\"agora-facts\">" + facts + "</dl><div class=\"agora-chips\">" + chips + "</div>" + actions
 }

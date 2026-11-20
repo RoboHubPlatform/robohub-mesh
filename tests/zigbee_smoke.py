@@ -238,9 +238,11 @@ def toolchains(home: Path) -> Path:
     Zigbee2MQTT installed, whose index.js the fake node runs as the stand-in."""
     node = home / ".rho" / "toolchains" / "node-22.0" / "bin" / "node"
     node.parent.mkdir(parents=True)
+    # exec, so the process Mesh starts and signals is the stand-in itself, as the
+    # real Zigbee2MQTT is node itself: a wrapper killed with SIGKILL would leave
+    # its child running.
     node.write_text("#!/bin/bash\nif [ \"$1\" = --version ]; then echo v24.11.1; exit 0; fi\n"
-                    f"python3 {FIXTURE / 'fake_z2m.py'} \"$@\" &\nchild=$!\n"
-                    "trap 'kill $child 2>/dev/null; wait $child; exit 0' TERM INT\nwait $child\n")
+                    f"exec python3 {FIXTURE / 'fake_z2m.py'} \"$@\"\n")
     node.chmod(0o755)
     install = home / ".rho" / "toolchains" / "zigbee2mqtt" / "2.14.3"
     (install / "node_modules").mkdir(parents=True)
@@ -369,8 +371,8 @@ def main() -> int:
                        "name": "zb1", "serial_port_typed": "/dev/does-not-exist", "channel": "15"}
         status, answer = call(base, "POST", "/mesh/p/Home/node", dict(coordinator, serial_port_typed="/dev/tty;reboot"))
         check("zb1" not in plan_path.read_text() and "path under /dev/" in answer, "a port that is not a device path is refused")
-        status, answer = call(base, "POST", "/mesh/p/Home/node", dict(coordinator, name="zb/1"))
-        check("zb/1" not in plan_path.read_text() and "topic level" in answer, "a name that is not a topic level is refused")
+        status, answer = call(base, "POST", "/mesh/p/Home/node", dict(coordinator, name='zb"1'))
+        check('zb"1' not in plan_path.read_text() and "quotes" in answer, "a name with a quote is refused, saying why")
         status, answer = call(base, "POST", "/mesh/p/Home/node", coordinator)
         plan = plan_path.read_text()
         check(status == 200 and "robohub-device-sonoff-zbdongle-e" in plan and "/dev/does-not-exist" in plan and "channel" in plan,
@@ -466,12 +468,15 @@ def main() -> int:
         # @verifies MESH-ZB-0012, MESH-ZB-0015
         status, answer = call(base, "POST", action, {"action": "adopt", "ieee": "0xa4c1380000000003", "name": "mystery", "csrf": csrf})
         check("mystery" not in plan_path.read_text(), "a device no manifest reads is not adopted")
-        status, answer = call(base, "POST", action, {"action": "adopt", "ieee": "0xa4c1380000000002", "name": "he/ater", "csrf": csrf})
-        check("he/ater" not in plan_path.read_text(), "a name that is not a topic level is refused")
-        status, answer = call(base, "POST", action, {"action": "adopt", "ieee": "0xa4c1380000000002", "name": "heater", "csrf": csrf})
+        status, answer = call(base, "POST", action, {"action": "adopt", "ieee": "0xa4c1380000000002", "name": 'He"ater', "csrf": csrf})
+        check('He"ater' not in plan_path.read_text() and 'id="ins-notice"' in answer and "quotes" in answer,
+              "a refused adopt says why, in the notice the form scrolls to")
+        check('show:#ins-notice:top' in call(base, "GET", tab)[1], "the tab's forms scroll their answer into view")
+        status, answer = call(base, "POST", action, {"action": "adopt", "ieee": "0xa4c1380000000002", "name": "Heater z", "csrf": csrf})
         plan = plan_path.read_text()
-        check("heater" in plan and "0xa4c1380000000002" in plan and "zigbee" in plan, "adopting adds a Zigbee device node")
-        check(wait(lambda: watcher.seen("zigbee/Home/zb1/bridge/request/device/rename", '"to":"heater"')),
+        check('name: "Heater z"' in plan and 'address: "heater-z"' in plan and "0xa4c1380000000002" in plan and "zigbee" in plan,
+              "adopting adds a Zigbee device node: the name as given, its address made from it")
+        check(wait(lambda: watcher.seen("zigbee/Home/zb1/bridge/request/device/rename", '"to":"heater-z"')),
               "and asks Zigbee2MQTT to rename it to its address")
         heater_id = [i for i in node_ids(plan) if i != coordinator_id][0]
         check(wait(lambda: "Not renamed yet" not in call(base, "GET", f"/mesh/p/Home/node/{heater_id}")[1] and
@@ -481,7 +486,7 @@ def main() -> int:
         # --- Reading and switching ---------------------------------------
         # @verifies MESH-ZB-0014, MESH-0034, MESH-0035, MESH-0022
         listed = as_json(call(base, "GET", "/mesh/api/devices", hx=False)[1]) or []
-        heater = next((d for d in listed if d.get("name") == "heater"), {})
+        heater = next((d for d in listed if d.get("name") == "Heater z"), {})
         check(len(listed) == 1 and heater.get("transport") == "zigbee", f"the plug is a device in the list, the coordinator is not ({listed})")
         index = heater.get("id", 2)
         call(base, "POST", "/mesh/device/poll", {"id": str(index)}, hx=False)
@@ -490,7 +495,7 @@ def main() -> int:
             return next((d for d in as_json(call(base, "GET", "/mesh/api/devices", hx=False)[1]) or [] if d.get("id") == index), {})
         check(wait(lambda: entry().get("reachability") == "online"), f"its availability {{\"state\":\"online\"}} is online ({entry()})")
         status, body = call(base, "POST", f"/mesh/api/devices/{index}/switch", {"state": "on"}, hx=False)
-        check(wait(lambda: watcher.seen("zigbee/Home/zb1/heater/set", '{"state":"ON"}')), "the switch is published as {\"state\":\"ON\"}")
+        check(wait(lambda: watcher.seen("zigbee/Home/zb1/heater-z/set", '{"state":"ON"}')), "the switch is published as {\"state\":\"ON\"}")
         check(wait(lambda: entry().get("state") == "on"), f"and confirmed from the state the plug reports ({status} {body} {entry()})")
         _, sources = call(base, "GET", "/mesh/api/projects/Home/sources", hx=False)
         power = next((e.get("value_path") for e in as_json(sources) or [] if e.get("field") == "power_w"), "")
@@ -505,17 +510,34 @@ def main() -> int:
         status, sealed = call(base, "POST", "/mesh/api/projects/Home/export", {"passphrase": PASSPHRASE}, hx=False)
         check(status == 200 and "sealed:" in sealed and "zigbee_network" not in sealed and "6754" not in sealed,
               "a sealed export carries the network inside its sealed block")
+        # @verifies MESH-0036
+        # The Data tab has one switch button offering the other state, and it
+        # switches in place: the answer is the inspector on the Data tab.
+        data_url = f"/mesh/p/Home/node/{heater_id}?tab=data"
+        _, data_page = call(base, "GET", data_url)
+        buttons = data_page.count(">Switch on<") + data_page.count(">Switch off<")
+        check(buttons == 1 and f"/node/{heater_id}/device" in data_page and 'hx-post' in data_page,
+              f"the Data tab has one switch button, posted in place ({buttons})")
+        offered = "on" if ">Switch on<" in data_page else "off"
+        status, answer = call(base, "POST", f"/mesh/p/Home/node/{heater_id}/device", {"action": offered, "csrf": csrf})
+        check(status == 200 and "agora-facts" in answer and "Location" not in answer,
+              f"switching from the Data tab answers the Data tab, not a new page ({status})")
+        expected = "Switch off" if offered == "on" else "Switch on"
+        check(wait(lambda: f">{expected}<" in call(base, "GET", data_url)[1], 10),
+              f"once the plug reports it, the one button offers {expected}")
+
         # --- Removing -----------------------------------------------------
         status, answer = call(base, "POST", f"/mesh/p/Home/node/{coordinator_id}/delete", {"action": "delete"})
         check(coordinator_id in plan_path.read_text() and "Zigbee devices first" in answer,
               "a coordinator is not removed while Zigbee devices hang under it")
         # @verifies MESH-ZB-0013
         status, answer = call(base, "POST", f"/mesh/p/Home/node/{heater_id}/delete", {"action": "delete"})
+        # Mesh waits a few seconds for Zigbee2MQTT's answer and does not hold the
+        # request longer: "asked, no answer yet" is as right as a confirmation.
+        removed_text = re.sub(r"<[^>]+>", " ", answer)
         check(wait(lambda: watcher.seen("zigbee/Home/zb1/bridge/request/device/remove", '"id":"0xa4c1380000000002"'))
-              and "reset it by hand" not in answer,
-              "removing the plug asks Zigbee2MQTT to remove it from the network" +
-              ("" if "reset it by hand" not in answer else " " + re.sub(r"<[^>]+>", " ", answer)[:300]) +
-              " " + str([l for l in watcher.lines if "bridge/state" in l]))
+              and heater_id not in plan_path.read_text() and "offline" not in removed_text and "could not" not in removed_text,
+              "removing the plug asks Zigbee2MQTT to remove it from the network and leaves the plan " + removed_text[:200])
         # @verifies MESH-ZB-0004, MESH-ZB-0006
         status, answer = call(base, "POST", f"/mesh/p/Home/node/{coordinator_id}/delete", {"action": "delete"})
         deletes = [r for r in Keeper.requests if r[0] == "DELETE"]
