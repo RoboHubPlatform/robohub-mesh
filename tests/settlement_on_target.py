@@ -11,7 +11,8 @@ gateway may hold its serial port:
     SETTLEMENT_MODULE=sht4x-module python3 tests/settlement_on_target.py
 
 A Mesh of its own plans one Pico 2 W with the module fitted, builds and flashes
-it, starts the gateway on its USB link, and waits for the board's readings —
+it, starts the gateway on its USB link, and waits for the board's readings to
+reach Mesh's sources (what an application such as robohub-feed reads) —
 plausible values, not faults: temperature (-40…85 °C) and pressure
 (30 000…110 000 Pa) from a BMP180, temperature and humidity (0…100 %) from an
 SHT4x.
@@ -27,8 +28,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import update_chain_on_target as chain
@@ -44,34 +43,44 @@ MODULE_ID = "5e771e0e5e771e02"
 LAST_LISTING = [""]
 
 
-def readings(rest: int) -> dict:
-    """The board's latest readings from the gateway, once both have come, or {}."""
+def latest(base: str) -> dict:
+    """The node's latest readings as Mesh serves them to an application (its
+    sources and each one's value — what robohub-feed reads), once both fields
+    have come, or {}. A source is matched by its field's name."""
+    status, text = chain.call(base, "GET", "/mesh/api/projects/Chain/sources", hx=False)
+    LAST_LISTING[0] = text
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{rest}/api/v1/nodes", timeout=3) as answer:
-            text = answer.read().decode()
-            LAST_LISTING[0] = text
-            listing = json.loads(text)
-    except (urllib.error.URLError, ConnectionError, OSError, ValueError):
+        sources = json.loads(text)
+    except ValueError:
         return {}
-    nodes = listing if isinstance(listing, list) else listing.get("nodes", [])
-    for node in nodes:
-        if not isinstance(node, dict) or not node.get("sensors"):
+    if isinstance(sources, dict):
+        sources = sources.get("sources", [])
+    found = {}
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, dict):
             continue
-        # The gateway lists every field a node reported under "sensors", keyed as
-        # the firmware named it (perhaps with a module's prefix): found by name.
-        sensors = node["sensors"]
-
-        def value(field):
-            for key, got in sensors.items():
-                if (key == field or key.endswith("." + field) or key.endswith("_" + field)) and \
-                        isinstance(got, (int, float)):
-                    return got
-            return None
-
-        found = {"temperature_c": value("temperature_c"), SECOND[MODULE][0]: value(SECOND[MODULE][0])}
-        if all(v is not None for v in found.values()):
-            return found
-    return {}
+        described = json.dumps(source)
+        ident = source.get("id") or source.get("source") or source.get("key")
+        for field in ("temperature_c", SECOND[MODULE][0]):
+            if field in found or field not in described or not ident:
+                continue
+            status, answer = chain.call(base, "GET", f"/mesh/api/projects/Chain/sources/{ident}/value", hx=False)
+            # The value is answered bare (a number), or as {"value": …}.
+            try:
+                value = json.loads(answer)
+            except ValueError:
+                value = None
+            if isinstance(value, dict):
+                value = value.get("value")
+            LAST_LISTING[0] = f"value of {ident}: {answer[:400]}"
+            if isinstance(value, (int, float)):
+                found[field] = value
+            elif isinstance(value, str):
+                try:
+                    found[field] = float(value)
+                except ValueError:
+                    pass
+    return found if len(found) == 2 else {}
 
 
 def main() -> int:
@@ -130,9 +139,10 @@ def main() -> int:
         node = {}
         end = time.time() + 120
         while time.time() < end and not node:
-            node = readings(rest)
+            node = latest(base)
             time.sleep(2)
         temperature = node.get("temperature_c")
+        print(f"readings: {node}")
         field, low, high, what = SECOND[MODULE]
         second = node.get(field)
         chain.check(isinstance(temperature, (int, float)) and -40.0 <= temperature <= 85.0,
@@ -140,7 +150,7 @@ def main() -> int:
         chain.check(isinstance(second, (int, float)) and low <= second <= high,
                     f"and a plausible {what} ({second})")
         if not node:
-            print("the gateway's last listing:", LAST_LISTING[0][:1500])
+            print("Mesh's last answer:", LAST_LISTING[0][:1500])
     finally:
         chain.call(base, "POST", "/mesh/gateway/stop", {"project": "Chain"})
         process.terminate()

@@ -753,3 +753,7 @@ Every node from robohub-node's template, and a gateway under WSL2 that says whet
 - `tests/update_chain_on_target.py` passes `IDF_TOOLS_PATH` to the Mesh it starts.
 - The generated `sensors.c` includes the node's Kconfig header. Without it `CONFIG_RH_AREA_ID` and `CONFIG_RH_NODE_ID` were undefined there, every reading carried area 1, node 1, and a gateway in any other area dropped it. A mesh in area 1 hid this. Found on a Pico 2 W with a GY-68 in area 9.
 - `tests/settlement_on_target.py` fits a GY-68 (BMP180) by default and an SHT4x with `SETTLEMENT_MODULE=sht4x-module` (robohub ADR-0026, amended).
+
+## [0.29.2] - 2026-11-21
+
+`tests/settlement_on_target.py` reads the node's readings where an application does, through Mesh's sources and their values. The gateway's listing doesn't carry a module's prefixed fields. Run on a Pico 2 W with a GY-68: Mesh built and flashed the template with the BMP180 fitted, and the board reported 23.9 °C and 97 428 Pa through the gateway (robohub ADR-0026, amended).
