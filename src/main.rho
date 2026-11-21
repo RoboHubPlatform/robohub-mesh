@@ -214,6 +214,10 @@ fn init() void {
     // An import a power cut interrupted left a hidden folder and maybe a fleet
     // place; neither is a mesh.
     projectfile_cleanup()
+    // A mesh an older Mesh wrote (project.txt) becomes a plan before the first
+    // request, not whenever something first lists the folder: a page, an export
+    // or a token check asked in between would answer that it does not exist.
+    ensure_wizard_dir()
     info("mesh", "starting")
 }
 

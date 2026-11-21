@@ -762,3 +762,9 @@ Every node from robohub-node's template, and a gateway under WSL2 that says whet
 
 The MQTT broker and its clients are declared in `system_deps`: `mosquitto` and `mosquitto_passwd` (package `mosquitto`), `mosquitto_pub` and `mosquitto_sub` (package `mosquitto-clients`). They are not required, because Mesh reaches the keeper's broker and runs none of them; only its devices, zigbee and helpers smokes start a broker of their own. CI publishes Mesh's own system_deps (`machine: true`) and installs the four by name (`machine_install`), so those smokes run on a fresh runner instead of failing for want of a broker.
 
+
+## [0.29.4] - 2026-11-21
+
+A mesh an older Mesh wrote (`project.txt`) is imported into its `plan.yml` when Mesh starts, before the first request. Until now the import ran whenever something first listed the projects folder, usually the background worker. A page, an export or a token check that arrived first was told the mesh did not exist: the page redirected to the fleet and the export answered 404. A loaded machine opened that gap; CI's project-file smoke fell into it.
+
+The broker smokes pass on a CI runner. The devices smoke checks the update's signature with `openssl` instead of Python's `cryptography` package, which a fresh runner doesn't have. The zigbee smoke reads the configuration once Zigbee2MQTT has replaced `GENERATE` with the PAN ids it makes. CI installs the broker from the module's own name, `mesh`.
