@@ -707,5 +707,10 @@
   "health.reported": "Raportat",
   "editor.deploy.update": "Construiește și actualizează prin legătură",
   "jobs.label.update": "Actualizează {name} prin legătură",
-  "jobs.update_unsupported": "Placa aceasta nu poate primi o actualizare prin legătură; construiește și programeaz-o."
+  "jobs.update_unsupported": "Placa aceasta nu poate primi o actualizare prin legătură; construiește și programeaz-o.",
+  "jobs.template_no_board": "{name} este o placă {board}, pentru care șablonul de nod nu se construiește",
+  "editor.gateway.wsl_ok": "Plăcile din rețeaua locală ajung la acest gateway la {address}:{port}; Windows redirecționează portul către WSL.",
+  "editor.gateway.wsl_missing": "Acest gateway rulează în WSL2, în spatele Windows: plăcile din rețeaua locală vor apela {address}:{port}, iar Windows încă nu redirecționează acel port către WSL, așa că nu se pot conecta.",
+  "editor.gateway.wsl_admin": "Rulează aceste comenzi într-un PowerShell deschis ca administrator; Mesh nu le rulează. Adresa WSL se schimbă când WSL repornește, iar verificarea se face din nou atunci.",
+  "editor.gateway.wsl_no_lan": "adresa acestui calculator în rețeaua locală"
 }

@@ -120,3 +120,15 @@ suites:
     kind: command
     tags: [smoke, helpers, zigbee]
     command: [python3, tests/helpers_smoke.py]
+  # The whole chain on a board (MESH-0043, with MESH-0040 and MESH-0041): a Mesh
+  # of its own builds robohub-node's template for a Pico 2 W, flashes it with the
+  # A/B partition table, starts the gateway on the board's USB link, and updates
+  # the board over that link until it confirms. It needs the board on USB and its
+  # serial port free (no other gateway reading it), so it is declared skipped.
+  # @verifies MESH-0043
+  - name: update-chain-on-target
+    kind: command
+    tags: [on-target, pico2w, updates]
+    command: [python3, tests/update_chain_on_target.py]
+    status: skip
+    reason: needs a Pico 2 W on USB with its serial port free; prints "OK" when Mesh built, flashed and updated it through the gateway

@@ -1,0 +1,136 @@
+//
+// @file wsl.rho
+// @brief A gateway on Mesh's own host under WSL2 in NAT mode, as rules: whether
+//        the host is one, whether Windows forwards the uplink port to it, which
+//        address boards on the LAN use, and the commands that add the forward.
+//
+// @module mesh.domain.wsl
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-21
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh.domain.wsl
+
+// Under WSL2's NAT, WSL has an address of its own behind Windows, and a board
+// on the LAN reaches Windows, not WSL: a port in WSL is reachable from the LAN
+// only through a `portproxy` rule on Windows (and a firewall rule letting the
+// port in). The rule names WSL's address, which changes when WSL restarts, so a
+// rule that names another address is a rule that no longer forwards. In
+// mirrored mode WSL shares Windows' addresses and none of this applies
+// (MESH-0044). src/mesh/wsl.rho asks Windows; this is what it decides by.
+
+// wsl_words splits a line on runs of spaces and tabs, joined by "|".
+fn wsl_words(line: string) string {
+    var out: string = ""
+    var word: string = ""
+    var i: u32 = 0
+    let length: u32 = u32(strlen(line))
+    while i < length {
+        let c: string = str_slice(line, i, 1)
+        if c == " " || c == "\t" || c == "\r" {
+            if word != "" {
+                if out != "" {
+                    out = out + "|"
+                }
+                out = out + word
+                word = ""
+            }
+        } else {
+            word = word + c
+        }
+        i = i + 1
+    }
+    if word != "" {
+        if out != "" {
+            out = out + "|"
+        }
+        out = out + word
+    }
+    return out
+}
+
+// wsl_is_nat: the kernel is WSL2's and its networking is not mirrored (the
+// `networkingMode` .wslconfig gives, "" when it says none: NAT is the default).
+// @req MESH-0044
+fn wsl_is_nat(release: string, mode: string) bool {
+    let kernel: string = str_lower(release)
+    if str_index_of(kernel, "microsoft") < 0 || str_index_of(kernel, "wsl2") < 0 {
+        return false
+    }
+    let networking: string = str_lower(str_trim(mode))
+    return networking != "mirrored" && networking != "bridged"
+}
+
+// wsl_forwarded: Windows' `netsh interface portproxy show v4tov4` listing has a
+// rule that takes `port` on every address, or on `lan`, to `address:port`.
+// @req MESH-0044
+fn wsl_forwarded(listing: string, port: string, address: string, lan: string) bool {
+    var rest: string = listing
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        let words: string = wsl_words(line)
+        let listen: string = str_field(words, "|", 0)
+        if str_field(words, "|", 1) == port && str_field(words, "|", 2) == address &&
+            str_field(words, "|", 3) == port && (listen == "0.0.0.0" || listen == "*" || (lan != "" && listen == lan)) {
+            return true
+        }
+    }
+    return false
+}
+
+// wsl_lan_address is the address boards on the LAN use for this host: the first
+// of Windows' IPv4 addresses ("address alias" per line) that is not a virtual
+// switch's, a link-local or a loopback one; "" when there is none.
+// @req MESH-0044
+fn wsl_lan_address(listing: string) string {
+    var rest: string = listing
+    while rest != "" {
+        let at: i32 = str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = str_slice(rest, 0, u32(at))
+            rest = str_slice(rest, u32(at) + 1, u32(strlen(rest)) - u32(at) - 1)
+        }
+        let words: string = wsl_words(line)
+        let address: string = str_field(words, "|", 0)
+        let alias: string = str_lower(str_field(words, "|", 1))
+        if address == "" || str_index_of(address, ".") < 0 || str_starts_with(address, "169.254.") ||
+            str_starts_with(address, "127.") || str_starts_with(alias, "vethernet") || str_starts_with(alias, "loopback") {
+            continue
+        }
+        return address
+    }
+    return ""
+}
+
+// wsl_forward_commands are what adds the forward, run in a PowerShell opened as
+// administrator: the portproxy rule (one naming the port is replaced) and a
+// firewall rule letting the port in. Mesh shows them; it does not run them.
+// @req MESH-0044
+fn wsl_forward_commands(port: string, address: string) string {
+    return "netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=" + port + "\n" +
+        "netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=" + port +
+        " connectaddress=" + address + " connectport=" + port + "\n" +
+        "New-NetFirewallRule -DisplayName \"RoboHub uplink " + port + "\" -Direction Inbound -Protocol TCP -LocalPort " +
+        port + " -Action Allow"
+}
+
+// template_has_preset: the node template builds for a board when it declares a
+// variant for the board's preset that names the board's platform library
+// (MESH-0043).
+// @req MESH-0043
+fn template_has_preset(board: string, library: string) bool {
+    return board != "" && str_trim(library) != ""
+}

@@ -738,3 +738,11 @@ An ESP32 is flashed for OTA and updated over its link (MESH-0042, robohub ADR-00
 - A board whose ordinary flash writes its two slots says so in its manifest (`board.flash.ab: true`, the LOLIN32 Lite); a development flash of it is recorded as A/B (`node.N.ab`) as a Pico 2 W's A/B flash command is. A production build stays flash-only.
 - A flash also records whether the image carried the managed layer (`node.N.managed`), and "Build and update over the link" is offered to a board whose slots come from its flash only when both are recorded: firmware without the managed layer would never answer an offer. A Pico 2 W flashed by 0.27.0 is offered a flash once more, which records it.
 - `robohub-esp32` joins the platforms that take updates over the link.
+
+## [0.29.0] - 2026-11-21
+
+Every node from robohub-node's template, and a gateway under WSL2 that says whether the LAN can reach it (MESH-0043, MESH-0044, robohub ADR-0025).
+
+- Every node is built from robohub-node's template (`template/`), for its board's preset, and its sensors are fitted as before. A node whose board the template has no preset for is refused before anything is prepared, naming the board. The LOLIN32 Lite is built, flashed and updated over its link like a Pico 2 W.
+- A gateway on Mesh's host under WSL2 in NAT mode is checked for the Windows port forward boards on the LAN need: a `portproxy` rule to WSL's current address and a firewall rule for the uplink port. Windows is asked through `powershell.exe` at most once a minute. The gateway's inspector shows the address boards use and, when the forward is missing, the commands that add it, which need administrator rights. Mesh does not run them.
+- `tests/update_chain_on_target.py`, declared skipped: a Mesh of its own builds the template for a Pico 2 W, flashes it A/B, starts the gateway on its USB link and updates it until it confirms. With no keeper to issue service tokens, it runs Mesh and its gateway standalone (`RHO_AUTH_STANDALONE`).

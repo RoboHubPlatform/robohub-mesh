@@ -40,11 +40,28 @@ fn drivers_root() string {
     return canonical_path(resolve_path(yaml.value(entry, "path")))
 }
 
-// Every node is built from the same telemetry template. The modules fitted to
-// it are what differ, and Mesh writes sensors.c for them before the build. The
-// template is still a working DS18B20 example on its own.
+fn node_root() string {
+    let entry: string = registry_entry("robohub-node")
+    if !rho_path_exists(entry) {
+        return canonical_path(mesh_workspace() + "/robohub-node")
+    }
+    return canonical_path(resolve_path(yaml.value(entry, "path")))
+}
+
+// Every node is built from robohub-node's template, for its board's preset
+// (MESH-0043, robohub ADR-0025). The modules fitted to it are what differ, and
+// Mesh writes sensors.c for them before the build; the template fits none.
+// @req MESH-0043
 fn node_source() string {
-    return drivers_root() + "/examples/temperature/ds18b20/c/telemetry"
+    return node_root() + "/template"
+}
+
+// node_template_supports: the template declares a preset for this board — a
+// variant naming the board's platform library.
+// @req MESH-0043
+fn node_template_supports(board: string) bool {
+    let manifest: string = node_source() + "/module.yml"
+    return template_has_preset(board, yaml.value(manifest, "c_connection.variants." + board + ".library"))
 }
 
 fn path_base(path: string) string {

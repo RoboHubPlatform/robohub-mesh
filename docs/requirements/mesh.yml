@@ -629,3 +629,39 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [updates, esp32, jobs]
+
+  - id: MESH-0043
+    title: Mesh builds every node from robohub-node's template, for its board
+    statement: >
+      Mesh shall build every node from robohub-node's node template, for the
+      preset of the node's board, fitting its sensors as before; a node whose
+      board the template declares no preset for shall be refused before anything
+      is prepared, naming the board; and an on-target suite shall build and flash
+      a Pico 2 W as a node and update it over Wi-Fi through the gateway.
+    rationale: One firmware for every board (robohub ADR-0025, 2, 3); the chain from Mesh to the board has not been run end to end (6).
+    satisfies: [SYS-0072]
+    decided_by: [robohub:ADR-0025]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-21
+    tags: [build, template, updates]
+
+  - id: MESH-0044
+    title: A gateway on this host under WSL2 says whether boards on the LAN can reach it
+    statement: >
+      When a mesh's gateway runs on Mesh's own host and that host is WSL2 in NAT
+      networking, Mesh shall check whether Windows forwards the gateway's uplink
+      port to WSL (a `portproxy` rule and a firewall rule), show on the gateway
+      the address boards on the LAN use (the Windows host's), and when the forward
+      is missing, say so and give the commands that add it, which need
+      administrator rights and which Mesh does not run; a board linked over USB, or
+      a host that is not WSL2 in NAT mode, is not checked.
+    rationale: Under WSL2's NAT a board on Wi-Fi cannot reach a port in WSL without a forward on Windows, and the failure looks like a board that never connects (robohub ADR-0025, 6; maintainer, 2026-11-21).
+    satisfies: [SYS-0072]
+    decided_by: [robohub:ADR-0025]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-21
+    tags: [gateway, wsl, network]

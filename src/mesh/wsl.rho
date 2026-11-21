@@ -1,0 +1,154 @@
+//
+// @file wsl.rho
+// @brief A gateway on this host under WSL2 in NAT mode: ask Windows whether it
+//        forwards the uplink port, and say so on the gateway (MESH-0044).
+//
+// @module mesh
+// @project mesh
+// @author Aurel Miron
+// @date 2026-11-21
+//
+// SPDX-License-Identifier: MIT
+//
+
+module mesh
+
+// What Windows says is asked through powershell.exe, which takes a second or
+// two, so the answer is kept for a minute per port rather than asked on every
+// page. The rules are src/mesh/domain/wsl.rho; nothing here changes Windows —
+// adding the forward needs administrator rights, and Mesh only shows how.
+
+const WSL_CHECK_SECONDS: u32 = 60
+
+// mesh_wsl_mode is .wslconfig's `networkingMode` for the Windows user, or "".
+fn mesh_wsl_mode() string {
+    return first_line(rho_exec_capture("sh",
+        "-c \"cat /mnt/c/Users/*/.wslconfig 2>/dev/null | tr -d '\\r' | grep -i '^ *networkingMode *=' | head -1 | cut -d= -f2 | tr -d ' '\""))
+}
+
+// mesh_wsl_nat: this host is WSL2 in NAT mode.
+// @req MESH-0044
+fn mesh_wsl_nat() bool {
+    return wsl_is_nat(first_line(rho_read_text("/proc/sys/kernel/osrelease")), mesh_wsl_mode())
+}
+
+// mesh_wsl_address is WSL's own address, the one a forward has to name.
+fn mesh_wsl_address() string {
+    return first_line(rho_exec_capture("sh",
+        "-c \"ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1\""))
+}
+
+// mesh_wsl_probe asks Windows for its forwards, its addresses and whether a
+// firewall rule lets `port` in, as three parts separated by "---" lines.
+fn mesh_wsl_probe(port: string) string {
+    ensure_wizard_dir()
+    let script: string = wizard_report("wsl-probe-script")
+    let text: string = "timeout 15 powershell.exe -NoProfile -Command \"netsh interface portproxy show v4tov4; '---'; " +
+        "Get-NetIPAddress -AddressFamily IPv4 | ForEach-Object { \\$_.IPAddress + ' ' + \\$_.InterfaceAlias }; '---'; " +
+        "(Get-NetFirewallRule -DisplayName 'RoboHub uplink " + port + "' -ErrorAction SilentlyContinue | " +
+        "Where-Object { \\$_.Enabled -eq 'True' } | Measure-Object).Count\" 2>/dev/null | tr -d '\\r'\n"
+    if !rho_write_text(script, text) {
+        return ""
+    }
+    let report: string = wizard_report("wsl-probe")
+    ignore_u32(rho_exec_args("sh", script + "\n", report))
+    return rho_read_text(report)
+}
+
+// mesh_wsl_part is part `n` (0, 1, 2) of a probe's answer.
+fn mesh_wsl_part(answer: string, n: u32) string {
+    var rest: string = answer
+    var part: u32 = 0
+    var out: string = ""
+    while rest != "" {
+        let at: i32 = rho_str_index_of(rest, "\n")
+        var line: string = rest
+        if at < 0 {
+            rest = ""
+        } else {
+            line = rho_str_slice(rest, 0, u32(at))
+            rest = rho_str_slice(rest, u32(at) + 1, u32(rho_strlen(rest)) - u32(at) - 1)
+        }
+        if str_trim(line) == "---" {
+            part = part + 1
+            continue
+        }
+        if part == n {
+            out = out + line + "\n"
+        }
+    }
+    return out
+}
+
+// mesh_wsl_check is "" when the host is not WSL2 in NAT mode; otherwise
+// "lan=<address>\nwsl=<address>\nforwarded=yes|no\nfirewall=yes|no\n", kept for a
+// minute.
+// @req MESH-0044
+fn mesh_wsl_check(port: string) string {
+    if port == "" || port == "0" || !mesh_wsl_nat() {
+        return ""
+    }
+    ensure_wizard_dir()
+    let cache: string = wizard_report("wsl-check-" + port)
+    let kept: string = rho_read_text(cache)
+    let at: i32 = rho_str_index_of(kept, "\n")
+    if at > 0 {
+        let when: u32 = rho_int_from_str(rho_str_slice(kept, 0, u32(at)))
+        if when > 0 && rho_now_s() - when < WSL_CHECK_SECONDS {
+            return rho_str_slice(kept, u32(at) + 1, u32(rho_strlen(kept)) - u32(at) - 1)
+        }
+    }
+    let answer: string = mesh_wsl_probe(port)
+    let wsl: string = mesh_wsl_address()
+    let lan: string = wsl_lan_address(mesh_wsl_part(answer, 1))
+    var forwarded: string = "no"
+    if wsl_forwarded(mesh_wsl_part(answer, 0), port, wsl, lan) {
+        forwarded = "yes"
+    }
+    var firewall: string = "no"
+    let rules: string = str_trim(mesh_wsl_part(answer, 2))
+    if rules != "" && rules != "0" {
+        firewall = "yes"
+    }
+    let result: string = "lan=" + lan + "\nwsl=" + wsl + "\nforwarded=" + forwarded + "\nfirewall=" + firewall + "\n"
+    ignore_bool(rho_write_text(cache, rho_int_to_str(rho_now_s()) + "\n" + result))
+    return result
+}
+
+fn mesh_wsl_value(check: string, key: string) string {
+    let at: i32 = rho_str_index_of(check, key + "=")
+    if at < 0 {
+        return ""
+    }
+    return first_line(rho_str_slice(check, u32(at) + u32(rho_strlen(key)) + 1,
+        u32(rho_strlen(check)) - u32(at) - u32(rho_strlen(key)) - 1))
+}
+
+// mesh_wsl_notice is what the gateway's inspector says about it, or "" when
+// there is nothing to say: the address boards on the LAN use, and when Windows
+// does not forward the uplink port, the commands that make it.
+// @req MESH-0044
+fn mesh_wsl_notice(loc: string, id: string) string {
+    if agora_gateway_kind(id) != "native" {
+        return ""
+    }
+    let port: string = default_value("uplink_port", fleet_uplink_port(id))
+    let check: string = mesh_wsl_check(port)
+    if check == "" {
+        return ""
+    }
+    let lan: string = mesh_wsl_value(check, "lan")
+    let wsl: string = mesh_wsl_value(check, "wsl")
+    var where: string = lan
+    if where == "" {
+        where = mesh_t(loc, "editor.gateway.wsl_no_lan")
+    }
+    if mesh_wsl_value(check, "forwarded") == "yes" && mesh_wsl_value(check, "firewall") == "yes" {
+        return "<div class=\"notice\">" + escape_html(mesh_fill(mesh_fill(mesh_t(loc, "editor.gateway.wsl_ok"), "address", where), "port", port)) +
+            "</div>"
+    }
+    return "<div class=\"notice bad\"><p>" +
+        escape_html(mesh_fill(mesh_fill(mesh_t(loc, "editor.gateway.wsl_missing"), "address", where), "port", port)) +
+        "</p><p>" + escape_html(mesh_t(loc, "editor.gateway.wsl_admin")) + "</p><pre>" +
+        escape_html(wsl_forward_commands(port, wsl)) + "</pre></div>"
+}

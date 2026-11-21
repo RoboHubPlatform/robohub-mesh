@@ -321,6 +321,13 @@ fn jobs_queue_board_as(loc: string, index: u32, over_link: bool) string {
     if held != "" {
         return held
     }
+    // A board the node template has no preset for is refused before anything
+    // is prepared (MESH-0043).
+    let board_of_node: string = node_value(index, "board", first_board("relay"))
+    if board_of_node != "" && !node_template_supports(board_of_node) {
+        return mesh_fill(mesh_fill(mesh_t(loc, "jobs.template_no_board"), "name", editor_name(loc, index)),
+            "board", board_of_node)
+    }
     // A production build is refused before anything is prepared when its board
     // has no production mode, or its plan needs the signing key and the mesh
     // names none it can use (production.rho).

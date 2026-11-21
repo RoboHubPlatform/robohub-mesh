@@ -753,8 +753,11 @@ fn editor_gateway_inspector(loc: string, id: string, notice: string) string {
             mesh_t(loc, "editor.gateway.uplink_help")) +
         mesh_select("mesh_parent", mesh_t(loc, "editor.gateway.reports_through"), link_options(loc, id), ""),
         mesh_t(loc, "editor.gateway.impact"), mesh_t(loc, "settings.save"))
+    // A gateway on this host under WSL2's NAT: whether boards on the LAN can
+    // reach its uplink (MESH-0044).
+    let wsl: string = mesh_wsl_notice(loc, id)
     return look_head(loc, mesh_fill(mesh_t(loc, "editor.gateway.kicker"), "area", project_area_id(project_file(id))), title, state) +
-        look_body(notice + "<div class=\"ins-rows\"><div class=\"ins-row\"><b>" + escape_html(agora_host_label(loc, id)) +
+        look_body(notice + wsl + "<div class=\"ins-rows\"><div class=\"ins-row\"><b>" + escape_html(agora_host_label(loc, id)) +
         "</b></div></div><div class=\"actions\">" + agora_gateway_actions(loc, id, agora_health(id)) + "</div>" + form)
 }
 

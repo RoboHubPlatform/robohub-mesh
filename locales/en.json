@@ -707,5 +707,10 @@
   "health.reported": "Reported",
   "editor.deploy.update": "Build and update over the link",
   "jobs.label.update": "Update {name} over the link",
-  "jobs.update_unsupported": "This board cannot take an update over its link; build and flash it instead."
+  "jobs.update_unsupported": "This board cannot take an update over its link; build and flash it instead.",
+  "jobs.template_no_board": "{name} is a {board}, which the node template does not build for",
+  "editor.gateway.wsl_ok": "Boards on the LAN reach this gateway at {address}:{port}; Windows forwards the port to WSL.",
+  "editor.gateway.wsl_missing": "This gateway runs in WSL2 behind Windows: boards on the LAN will dial {address}:{port}, and Windows does not forward that port to WSL yet, so they cannot connect.",
+  "editor.gateway.wsl_admin": "Run these in a PowerShell opened as administrator; Mesh does not run them. WSL's address changes when WSL restarts, and this asks again then.",
+  "editor.gateway.wsl_no_lan": "this computer's LAN address"
 }

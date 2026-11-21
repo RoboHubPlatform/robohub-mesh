@@ -29,6 +29,7 @@ include "../src/mesh/domain/alerting.rho"
 include "../src/mesh/domain/signals.rho"
 include "../src/mesh/domain/health.rho"
 include "../src/mesh/domain/update.rho"
+include "../src/mesh/domain/wsl.rho"
 
 // Unit tests for Mesh's domain: the plan as text, the transport rule and the
 // impact table. None of it reads a file, a registry or a board, which is what
@@ -1166,5 +1167,47 @@ fn main() void {
     a_helpers_state_is_read_from_the_keepers_list()
     a_boards_health_is_read_and_a_bad_reset_alerts()
     an_update_job_reads_the_gateway_and_says_what_happened()
+    a_gateway_under_wsl_nat_says_whether_the_lan_reaches_it()
+    a_node_is_built_from_the_template_only_for_a_board_it_declares()
     print("mesh domain tests ok\n")
 }
+
+// A gateway on this host under WSL2's NAT: the host is recognised, a forward
+// that names WSL's address is found and one that names an old address is not,
+// the LAN address is Windows' own, and the commands name the port and WSL.
+// @verifies MESH-0044
+test fn a_gateway_under_wsl_nat_says_whether_the_lan_reaches_it() void {
+    check(wsl_is_nat("5.15.167.4-microsoft-standard-WSL2", ""), "WSL2 with no networking mode is NAT")
+    check(wsl_is_nat("5.15.167.4-microsoft-standard-WSL2", "nat"), "and so is one that says nat")
+    check(!wsl_is_nat("5.15.167.4-microsoft-standard-WSL2", "mirrored"), "a mirrored WSL2 shares Windows' addresses")
+    check(!wsl_is_nat("6.8.0-48-generic", ""), "a Linux host is not WSL")
+    let listing: string = "\nListen on ipv4:             Connect to ipv4:\n\nAddress         Port        Address         Port\n" +
+        "--------------- ----------  --------------- ----------\n0.0.0.0         4100        172.28.37.235   4100\n"
+    check(wsl_forwarded(listing, "4100", "172.28.37.235", ""), "a forward of the port to WSL's address is found")
+    check(!wsl_forwarded(listing, "4100", "172.28.40.2", ""), "one naming WSL's old address no longer forwards")
+    check(!wsl_forwarded(listing, "4200", "172.28.37.235", ""), "nor does one for another port")
+    check(!wsl_forwarded("", "4100", "172.28.37.235", ""), "no rules, no forward")
+    check(wsl_forwarded("192.168.100.6   4100   172.28.37.235   4100\n", "4100", "172.28.37.235", "192.168.100.6"),
+        "a forward listening on the LAN address counts")
+    let addresses: string = "172.28.32.1 vEthernet (WSL)\n192.168.56.1 Ethernet 2\n169.254.3.4 Bluetooth\n127.0.0.1 Loopback Pseudo-Interface 1\n"
+    check(str_eq(wsl_lan_address(addresses), "192.168.56.1"), "the first address that is not a virtual switch's")
+    check(str_eq(wsl_lan_address("172.18.16.1 vEthernet (Default Switch)\n192.168.100.6 Wi-Fi\n"), "192.168.100.6"),
+        "Wi-Fi after the virtual switches")
+    check(str_eq(wsl_lan_address(""), ""), "none when Windows said nothing")
+    let commands: string = wsl_forward_commands("4100", "172.28.37.235")
+    check(str_index_of(commands, "listenport=4100 connectaddress=172.28.37.235 connectport=4100") >= 0 &&
+        str_index_of(commands, "-LocalPort 4100") >= 0, "the commands name the port and WSL's address")
+    print("[PASS] a_gateway_under_wsl_nat_says_whether_the_lan_reaches_it\n")
+}
+
+// Every node is built from robohub-node's template, for a board it has a
+// preset for (MESH-0043).
+// @verifies MESH-0043
+test fn a_node_is_built_from_the_template_only_for_a_board_it_declares() void {
+    check(template_has_preset("pico2w", "robohub-pico"), "a board whose preset names its platform library")
+    check(template_has_preset("lolin32-lite", "robohub-esp32"), "and the ESP32")
+    check(!template_has_preset("uno-r3", ""), "a board the template has no variant for is refused")
+    check(!template_has_preset("", "robohub-pico"), "and so is a node with no board")
+    print("[PASS] a_node_is_built_from_the_template_only_for_a_board_it_declares\n")
+}
+
