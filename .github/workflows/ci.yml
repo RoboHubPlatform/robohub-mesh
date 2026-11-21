@@ -20,7 +20,7 @@ jobs:
       # robohub-pico and robohub-linux: the boards a production build is
       # offered for (or not) are read from their platforms.
       # robohub-gateway: the wizard smoke builds and starts a real gateway.
-      siblings: robohub robohub-drivers robohub-devices robohub-pico robohub-linux robohub-gateway
+      siblings: robohub robohub-drivers robohub-devices robohub-pico robohub-linux robohub-gateway robohub-node robohub-keeper robohub-esp32
       components: rho-auth rho-log rho-sql rho-sql-sqlite rho-robohub
       build: .
       # The wizard smoke builds a real Pico 2W board, with rho-target's compiler.
