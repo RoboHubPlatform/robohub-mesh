@@ -132,3 +132,15 @@ suites:
     command: [python3, tests/update_chain_on_target.py]
     status: skip
     reason: needs a Pico 2 W on USB with its serial port free; prints "OK" when Mesh built, flashed and updated it through the gateway
+  # The settlement node on a board (robohub ADR-0026): a Mesh of its own builds
+  # robohub-node's template for a Pico 2 W with the SHT4x module fitted, flashes
+  # it, starts the gateway on its USB link, and waits for plausible temperature
+  # and humidity through the gateway. Needs the board with an SHT4x wired to
+  # GP8/GP9 and its serial port free, so it is declared skipped.
+  # @verifies DRV-ENV-0007, DRV-BRD-0005, PICO-0015
+  - name: settlement-on-target
+    kind: command
+    tags: [on-target, pico2w, sht4x]
+    command: [python3, tests/settlement_on_target.py]
+    status: skip
+    reason: needs a Pico 2 W on USB with an SHT4x on GP8/GP9 and its serial port free; prints "OK" when the node's readings arrive through the gateway

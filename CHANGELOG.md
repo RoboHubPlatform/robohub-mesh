@@ -746,3 +746,8 @@ Every node from robohub-node's template, and a gateway under WSL2 that says whet
 - Every node is built from robohub-node's template (`template/`), for its board's preset, and its sensors are fitted as before. A node whose board the template has no preset for is refused before anything is prepared, naming the board. The LOLIN32 Lite is built, flashed and updated over its link like a Pico 2 W.
 - A gateway on Mesh's host under WSL2 in NAT mode is checked for the Windows port forward boards on the LAN need: a `portproxy` rule to WSL's current address and a firewall rule for the uplink port. Windows is asked through `powershell.exe` at most once a minute. The gateway's inspector shows the address boards use and, when the forward is missing, the commands that add it, which need administrator rights. Mesh does not run them.
 - `tests/update_chain_on_target.py`, declared skipped: a Mesh of its own builds the template for a Pico 2 W, flashes it A/B, starts the gateway on its USB link and updates it until it confirms. With no keeper to issue service tokens, it runs Mesh and its gateway standalone (`RHO_AUTH_STANDALONE`).
+
+## [0.29.1] - 2026-11-21
+
+- The generated `sensors.c` reads the time through the platform's `system_timer` rather than the Pico SDK (`to_ms_since_boot`). A node with a module fitted now builds on every board the template supports, and an SHT4x on a LOLIN32 Lite builds as on a Pico 2 W (robohub ADR-0026).
+- `tests/update_chain_on_target.py` passes `IDF_TOOLS_PATH` to the Mesh it starts.

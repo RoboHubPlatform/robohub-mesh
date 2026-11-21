@@ -116,7 +116,7 @@ fn firmware_single_poll(number: u32, fields: string, prefix: string, init_fn: st
             "        // up again — every five seconds at most, and a fault said once\n" +
             "        // per try. Bringing a part up on every poll kept a struggling\n" +
             "        // probe from settling, and filled the history with faults.\n" +
-            "        rh_u32 node_sensor_" + n + "_now = to_ms_since_boot(get_absolute_time());\n" +
+            "        rh_u32 node_sensor_" + n + "_now = node_now_ms();\n" +
             "        if ((rh_i32)(node_sensor_" + n + "_now - node_sensor_" + n + "_retry_ms) < 0) {\n" +
             "            return;\n" +
             "        }\n" +
@@ -256,10 +256,11 @@ fn firmware_sources(sensors: string) string {
         " * @file sensors.c\n" +
         " * @brief Generated for this node from the modules in robohub-drivers.\n" +
         " */\n\n" +
-        "#include \"pico/stdlib.h\"\n\n" +
         "#include <string.h>\n\n" +
         "#include \"types.h\"\n" +
         "#include \"error.h\"\n" +
+        "#include \"registry.h\"\n" +
+        "#include \"robohub/hal/timer.h\"\n" +
         "#include \"robohub/core/core.h\"\n" +
         "#include \"robohub/core/event.h\"\n" +
         "#include \"robohub/core/events.h\"\n" +
@@ -271,11 +272,21 @@ fn firmware_sources(sensors: string) string {
         "#if defined(CONFIG_RH_NODE_ID)\n" +
         "#define RH_NODE_ID ((rh_u16)CONFIG_RH_NODE_ID)\n" +
         "#else\n#define RH_NODE_ID ((rh_u16)1u)\n#endif\n\n" +
+        "// The time is the platform's timer, so this file builds for every board\n" +
+        "// the node template does (robohub-node RNODE-TPL-0002).\n" +
+        "static rh_u32 node_now_ms(void)\n" +
+        "{\n" +
+        "    static RoboHubTimer* timer;\n" +
+        "    if (timer == NULL) {\n" +
+        "        timer = robohub_get_timer(\"system_timer\");\n" +
+        "    }\n" +
+        "    return (timer != NULL && timer->get_millis != NULL) ? (rh_u32)timer->get_millis(timer) : 0u;\n" +
+        "}\n\n" +
         "static void publish_reading(const char* field, rh_f32 value, rh_u16 status)\n" +
         "{\n" +
         "    SensorReading reading = {\n" +
         "        .device = { .area_id = RH_AREA_ID, .node_id = RH_NODE_ID },\n" +
-        "        .timestamp_ms = to_ms_since_boot(get_absolute_time()),\n" +
+        "        .timestamp_ms = node_now_ms(),\n" +
         "        .status = status,\n" +
         "        .value = value,\n" +
         "    };\n" +

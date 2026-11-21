@@ -188,6 +188,7 @@ def main() -> int:
     # Mesh reads the token's key under HOME; the tools a build runs that live
     # in the person's own folders (a pip-installed cmake) are found where they are.
     env["PYTHONUSERBASE"] = env.get("PYTHONUSERBASE", os.path.expanduser("~/.local"))
+    env["IDF_TOOLS_PATH"] = env.get("IDF_TOOLS_PATH", os.path.expanduser("~/.espressif"))
     env["HOME"] = str(home)
     env["RHO_HTTP_ADDR"] = f"127.0.0.1:{port}"
     env["ROBOHUB_ROOT"] = str(PROJECTS / "robohub")
