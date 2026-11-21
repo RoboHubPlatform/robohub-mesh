@@ -125,6 +125,14 @@ class Tasmota:
                    "-t", f"{self.prefix}/{suffix}", "-m", payload]
         subprocess.run(command + (["-r"] if retain else []), check=True, capture_output=True, timeout=10)
 
+    def handled(self, count: int, timeout: float = 15.0) -> bool:
+        """Whether the plug has handled more than `count` commands, waited for:
+        it takes them one at a time, so on a slow machine one may be queued."""
+        end = time.time() + timeout
+        while time.time() < end and len(self.commands) <= count:
+            time.sleep(0.2)
+        return len(self.commands) > count
+
     def word(self) -> str:
         return "ON" if self.relay else "OFF"
 
@@ -140,13 +148,15 @@ class Tasmota:
     def listen(self) -> None:
         for line in self.listener.stdout:
             command = line.strip()
-            self.commands.append(command)
             if not self.stuck and command.lower() in ("on", "off", "true", "false", "1", "0"):
                 self.relay = command.lower() in ("on", "true", "1")
             if self.answer == "result" or self.stuck:
                 self.publish("stat/RESULT", json.dumps({"POWER": self.word()}))
             elif self.answer == "power":
                 self.publish("stat/POWER", self.word())
+            # Recorded once handled, so a test can wait for a command to have
+            # met the relay as it was then (a stuck one, for instance).
+            self.commands.append(command)
 
     def report(self) -> None:
         # A short TelePeriod: the meter every second, never the relay.
@@ -617,8 +627,10 @@ def main() -> int:
 
             # A switch confirmed from stat/RESULT, the command's answer.
             tasmota.answer = "result"
+            sent = len(tasmota.commands)
             status, body = call(base, "POST", f"/mesh/api/devices/{heater}/switch", {"state": "off"})
             listed = wait_entry(lambda e: e.get("state") == "off")
+            tasmota.handled(sent)
             check(status in (200, 202) and tasmota.commands[-1:] == ["false"],
                   f"the switch is published to cmnd/POWER as false ({status} {tasmota.commands[-3:]})")
             check(listed.get("state") == "off" and listed.get("requested") == "" and not tasmota.relay,
@@ -639,6 +651,7 @@ def main() -> int:
 
             # A relay that sticks: the plug answers with the state it is still in.
             tasmota.answer, tasmota.stuck = "result", True
+            sent = len(tasmota.commands)
             status, body = call(base, "POST", f"/mesh/api/devices/{heater}/switch", {"state": "off"})
             time.sleep(2)
             listed = heater_entry()
@@ -651,6 +664,8 @@ def main() -> int:
             listed = heater_entry()
             check(listed.get("state") == "unconfirmed" and listed.get("reported") == "on",
                   f"and unconfirmed once the wait is over, never shown off ({listed})")
+            # The "off" must meet the stuck relay before the relay is freed.
+            tasmota.handled(sent)
             tasmota.stuck = False
 
             # A word that is neither on nor off is a protocol error: the state keeps its value.
