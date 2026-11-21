@@ -751,3 +751,5 @@ Every node from robohub-node's template, and a gateway under WSL2 that says whet
 
 - The generated `sensors.c` reads the time through the platform's `system_timer` rather than the Pico SDK (`to_ms_since_boot`). A node with a module fitted now builds on every board the template supports, and an SHT4x on a LOLIN32 Lite builds as on a Pico 2 W (robohub ADR-0026).
 - `tests/update_chain_on_target.py` passes `IDF_TOOLS_PATH` to the Mesh it starts.
+- The generated `sensors.c` includes the node's Kconfig header. Without it `CONFIG_RH_AREA_ID` and `CONFIG_RH_NODE_ID` were undefined there, every reading carried area 1, node 1, and a gateway in any other area dropped it. A mesh in area 1 hid this. Found on a Pico 2 W with a GY-68 in area 9.
+- `tests/settlement_on_target.py` fits a GY-68 (BMP180) by default and an SHT4x with `SETTLEMENT_MODULE=sht4x-module` (robohub ADR-0026, amended).

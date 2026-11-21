@@ -266,6 +266,13 @@ fn firmware_sources(sensors: string) string {
         "#include \"robohub/core/events.h\"\n" +
         "#include \"protocol.h\"\n" +
         headers + "\n" +
+        "// The node's configuration (its area and node id among it): without it a\n" +
+        "// reading carries area 1, node 1, and a gateway in any other area drops it.\n" +
+        "#if defined(__has_include)\n" +
+        "#  if __has_include(\"autoconf.h\")\n" +
+        "#    include \"autoconf.h\"\n" +
+        "#  endif\n" +
+        "#endif\n" +
         "#if defined(CONFIG_RH_AREA_ID)\n" +
         "#define RH_AREA_ID ((rh_u16)CONFIG_RH_AREA_ID)\n" +
         "#else\n#define RH_AREA_ID ((rh_u16)1u)\n#endif\n" +
