@@ -28,4 +28,4 @@ jobs:
       # tools its smoke tests need beyond them: the cross compiler, and the MQTT
       # broker and clients the devices, zigbee and helpers smokes start.
       machine: true
-      machine_install: rho-target:arm-none-eabi-gcc robohub-mesh:mosquitto robohub-mesh:mosquitto_passwd robohub-mesh:mosquitto_pub robohub-mesh:mosquitto_sub
+      machine_install: rho-target:arm-none-eabi-gcc mesh:mosquitto mesh:mosquitto_passwd mesh:mosquitto_pub mesh:mosquitto_sub
