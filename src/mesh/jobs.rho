@@ -380,17 +380,27 @@ fn jobs_queue_board_as(loc: string, index: u32, over_link: bool) string {
     }
     // A board whose manifest says how it is flashed for updates over the link
     // (`flash.ab_command`: a Pico 2 W's partition table, then the image into A)
-    // is flashed so, unless it is a production build (MESH-0041).
+    // is flashed so, unless it is a production build (MESH-0041); one whose
+    // ordinary flash writes its slots says so (`flash.ab`, an ESP32, MESH-0042).
+    // A production build stays flash-only.
     var ab_command: string = ""
+    var flashed_ab: bool = false
     if !production {
-        ab_command = yaml.value(board_manifest(board), "board.flash.ab_command")
+        let manifest: string = board_manifest(board)
+        ab_command = yaml.value(manifest, "board.flash.ab_command")
+        flashed_ab = update_board_ab(ab_command, yaml.value(manifest, "board.flash.ab"))
     }
     let flash: string = jobs_add(id, "flash", target, flash_label,
         jobs_script_header("flash " + name) + production_flash_script(board, dir, binary, program, production, otp,
             mesh_ab_command(ab_command, binary)) + send,
         signature, build, programming_instruction(loc, board))
-    if ab_command != "" {
+    if flashed_ab {
         ignore_bool(rho_write_text(jobs_path(id, flash, "ab"), "1\n"))
+        // The image answers an offer only with the managed layer, which the
+        // build took where the example carries it (build.rho).
+        if rho_str_index_of(rho_read_text(dir + "/module.yml"), "robohub-managed") >= 0 {
+            ignore_bool(rho_write_text(jobs_path(id, flash, "managed"), "1\n"))
+        }
     }
     if production {
         // What the inspector shows before the flash may run, and the name that
@@ -496,13 +506,19 @@ fn jobs_finish(project: string) bool {
                     save_setting_at(file, key, "programmed")
                     deployed_set(project, target, signature)
                     if kind == "flash" {
-                        // Flashed for A/B, or not: what the update offer goes by
-                        // (MESH-0041).
+                        // Flashed for A/B, or not, and with the managed layer,
+                        // or not: what the update offer goes by (MESH-0041,
+                        // MESH-0042).
                         var ab: string = ""
                         if jobs_exists(project, seq, "ab") {
                             ab = "1"
                         }
+                        var managed: string = ""
+                        if jobs_exists(project, seq, "managed") {
+                            managed = "1"
+                        }
                         save_setting_at(file, "node." + rho_int_to_str(index) + ".ab", ab)
+                        save_setting_at(file, "node." + rho_int_to_str(index) + ".managed", managed)
                     }
                 } else if !ok && jobs_state(project, seq) == "failed" {
                     save_setting_at(file, key, "failed")

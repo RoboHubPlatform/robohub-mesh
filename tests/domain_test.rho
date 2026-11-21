@@ -1078,14 +1078,20 @@ test fn a_boards_health_is_read_and_a_bad_reset_alerts() void {
 
 // Which boards take an update over the link, a gateway's answer read into the
 // job's log, which states are final, and the alert's words.
-// @verifies MESH-0040, MESH-0041
+// @verifies MESH-0040, MESH-0041, MESH-0042
 test fn an_update_job_reads_the_gateway_and_says_what_happened() void {
     check(update_platform_ok("robohub-linux"), "a Linux host board takes updates over its link")
     check(update_platform_ok("robohub-pico"), "a Pico 2 W does too (Phase 2c)")
-    check(!update_platform_ok("robohub-esp32") && !update_platform_ok("robohub-avr") && !update_platform_ok(""),
+    check(update_platform_ok("robohub-esp32"), "and an ESP32 (Phase 2d)")
+    check(!update_platform_ok("robohub-avr") && !update_platform_ok(""),
         "other platforms are flashed, until their slot exists")
-    check(update_flashed_ok(false, "") && update_flashed_ok(true, "1"), "a board that needs partitions, flashed with them")
-    check(!update_flashed_ok(true, ""), "but not one flashed before it had them (MESH-0041)")
+    check(update_board_ab("tools/flash_ab.sh {binary}", ""), "a board with an A/B flash command of its own (a Pico 2 W)")
+    check(update_board_ab("", "true"), "a board whose ordinary flash writes its slots (an ESP32, MESH-0042)")
+    check(!update_board_ab("", "") && !update_board_ab("", "false"), "a board that says neither")
+    check(update_flashed_ok(false, "", "") && update_flashed_ok(true, "1", "1"),
+        "a board that needs partitions, flashed with them and the managed layer")
+    check(!update_flashed_ok(true, "", ""), "but not one flashed before it had them (MESH-0041)")
+    check(!update_flashed_ok(true, "1", ""), "nor one whose firmware has no managed layer to answer (MESH-0042)")
     check(str_eq(update_progress("{\"id\":5,\"state\":\"sending\",\"reason\":\"\",\"next\":12,\"chunks\":27}"),
         "update: sending 12/27"), "sending, with the chunks the board has")
     check(str_eq(update_progress("{\"state\":\"refused\",\"reason\":\"downgrade\",\"next\":0}"),

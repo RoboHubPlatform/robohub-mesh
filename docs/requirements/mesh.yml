@@ -612,3 +612,20 @@ requirements:
     owner: maintainer
     changed: 2026-11-20
     tags: [updates, pico, jobs]
+
+  - id: MESH-0042
+    title: Mesh flashes an ESP32 for OTA and updates it over its link
+    statement: >
+      Mesh shall flash a development ESP32 board with the two-OTA-slot layout and
+      its image in `ota_0`, record that it was flashed so, and offer "Build and
+      update over the link" for an ESP32 only once it was flashed so and only when
+      its firmware carries the managed layer; a production ESP32, or one flashed
+      before, shall be offered a flash.
+    rationale: The next USB flash moves a board (robohub ADR-0024, 4); production boards stay flash-only (5); an update to firmware without the managed layer would never be answered.
+    satisfies: [SYS-0072]
+    decided_by: [robohub:ADR-0024]
+    status: approved
+    verification: test
+    owner: maintainer
+    changed: 2026-11-20
+    tags: [updates, esp32, jobs]

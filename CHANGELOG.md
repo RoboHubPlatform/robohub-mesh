@@ -730,3 +730,11 @@ A Pico 2 W is flashed for A/B and updated over its link (MESH-0041, robohub ADR-
 - A board whose manifest gives an A/B flash command (`board.flash.ab_command`: a Pico 2 W's partition table, then the image into partition A) is flashed with it, unless the build is production; Mesh records that it was (`node.N.ab`) and offers "Build and update over the link" only then. A Pico 2 W flashed before is offered a flash, which moves it to A/B.
 - An example that carries robohub-managed is built with the managed layer (`CONFIG_RH_NODE_MANAGED`), so every image Mesh flashes can take the next; an update build is flagged `CONFIG_RH_UPDATE_IMAGE` (a Pico's try-before-you-buy), and the image sent is the partition image beside the ELF (`.bin`) when the build wrote one.
 - `robohub-pico` joins the platforms that take updates over the link.
+
+## [0.28.0] - 2026-11-21
+
+An ESP32 is flashed for OTA and updated over its link (MESH-0042, robohub ADR-0024).
+
+- A board whose ordinary flash writes its two slots says so in its manifest (`board.flash.ab: true`, the LOLIN32 Lite); a development flash of it is recorded as A/B (`node.N.ab`) as a Pico 2 W's A/B flash command is. A production build stays flash-only.
+- A flash also records whether the image carried the managed layer (`node.N.managed`), and "Build and update over the link" is offered to a board whose slots come from its flash only when both are recorded: firmware without the managed layer would never answer an offer. A Pico 2 W flashed by 0.27.0 is offered a flash once more, which records it.
+- `robohub-esp32` joins the platforms that take updates over the link.

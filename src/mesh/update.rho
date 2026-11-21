@@ -93,8 +93,9 @@ fn mesh_ab_command(template: string, binary: string) string {
 }
 
 // mesh_update_supported: the board's platform takes images over the link, and
-// a board flashed with partitions (a Pico 2 W) was flashed so (MESH-0041).
-// @req MESH-0040, MESH-0041
+// a board whose slots come from its flash (a Pico 2 W, an ESP32) was flashed so,
+// with the managed layer (MESH-0041, MESH-0042).
+// @req MESH-0040, MESH-0041, MESH-0042
 fn mesh_update_supported(index: u32) bool {
     let board: string = node_value(index, "board", "")
     var rest: string = board_rows()
@@ -111,8 +112,10 @@ fn mesh_update_supported(index: u32) bool {
             if !update_platform_ok(field(line, 3)) {
                 return false
             }
-            let ab: bool = yaml.value(field(line, 12), "board.flash.ab_command") != ""
-            return update_flashed_ok(ab, node_value(index, "ab", ""))
+            let manifest: string = field(line, 12)
+            let ab: bool = update_board_ab(yaml.value(manifest, "board.flash.ab_command"),
+                yaml.value(manifest, "board.flash.ab"))
+            return update_flashed_ok(ab, node_value(index, "ab", ""), node_value(index, "managed", ""))
         }
     }
     return false
