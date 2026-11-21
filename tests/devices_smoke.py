@@ -226,6 +226,21 @@ def device_catalog(root: Path) -> Path:
     return robohub
 
 
+def ed25519_verifies(seed: bytes, signature: bytes, message: bytes, scratch: Path) -> bool:
+    """Whether the signature is the message's under the key made from this seed,
+    asked of openssl (which Mesh requires) rather than of a Python package."""
+    folder = Path(tempfile.mkdtemp(dir=scratch))
+    # The PKCS#8 form of an Ed25519 private key is a fixed prefix and the seed.
+    (folder / "key.der").write_bytes(bytes.fromhex("302e020100300506032b657004220420") + seed)
+    (folder / "message").write_bytes(message)
+    (folder / "signature").write_bytes(signature)
+    result = subprocess.run(["openssl", "pkeyutl", "-verify", "-rawin", "-keyform", "DER",
+                             "-inkey", str(folder / "key.der"), "-in", str(folder / "message"),
+                             "-sigfile", str(folder / "signature")], capture_output=True)
+    shutil.rmtree(folder, ignore_errors=True)
+    return result.returncode == 0
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -697,7 +712,6 @@ def main() -> int:
 
             # --- An update over the link ----------------------------------
             # @verifies MESH-0039, MESH-0040
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
             jobs = watched / "jobs"
             jobs.mkdir(exist_ok=True)
             image_path = root / "sensor-image"
@@ -733,11 +747,10 @@ def main() -> int:
             if Gateway.updates and key_file.exists():
                 offer, posted = Gateway.updates[0]
                 seed = bytes.fromhex(key_file.read_text().strip())
-                public = Ed25519PrivateKey.from_private_bytes(seed).public_key()
                 manifest = offer[1:58]
                 try:
-                    public.verify(offer[58:122], b"rh-update1" + manifest)
-                    ok_signed = (len(offer) == 122 and posted == image_bytes and
+                    ok_signed = (ed25519_verifies(seed, offer[58:122], b"rh-update1" + manifest, root) and
+                                 len(offer) == 122 and posted == image_bytes and
                                  manifest[5:13] == bytes.fromhex("fedcba9876543210") and
                                  int.from_bytes(manifest[19:23], "little") == len(image_bytes) and
                                  manifest[23:55] == __import__("hashlib").sha256(image_bytes).digest())

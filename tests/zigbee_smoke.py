@@ -412,6 +412,10 @@ def main() -> int:
               and posts[0][2].get("name", "").startswith("z2m-") and posts[0][4] == "",
               f"Mesh asked the keeper for a broker user confined to zigbee/Home/zb1, with its own credential ({posts})")
         data = home_dir / "zigbee" / "zb1"
+        # Zigbee2MQTT replaces the template's GENERATE with the PAN ids it makes a
+        # moment after it starts; on a slow machine the read would come first.
+        wait(lambda: (data / "configuration.yaml").exists()
+             and "GENERATE" not in (data / "configuration.yaml").read_text())
         config = (data / "configuration.yaml").read_text() if (data / "configuration.yaml").exists() else ""
         secret_text = (data / "secret.yaml").read_text() if (data / "secret.yaml").exists() else ""
         issued_user = f"mesh-{posts[0][2].get('name')}" if posts else ""
@@ -419,7 +423,8 @@ def main() -> int:
         check('base_topic: "zigbee/Home/zb1"' in config and f'user: "{issued_user}"' in config and 'port: "/dev/null"' in config
               and "adapter: ember" in config and "channel: 20" in config and "!secret password" in config
               and "!secret network_key" in config and "pan_id: 6754" in config,
-              "the configuration is the plugin's template filled for the coordinator")
+              "the configuration is the plugin's template filled for the coordinator"
+              + ("" if "pan_id: 6754" in config else "\n" + config[:1500]))
         check(issued_password not in config and issued_password in secret_text and BUS_PASSWORD not in config + secret_text,
               "the issued password is only in the secret file, and Mesh's own is nowhere")
         check(all(stat.S_IMODE(os.stat(p).st_mode) == 0o600 for p in (data / "configuration.yaml", data / "secret.yaml")) and
