@@ -24,4 +24,8 @@ jobs:
       components: rho-auth rho-log rho-sql rho-sql-sqlite rho-robohub
       build: .
       # The wizard smoke builds a real Pico 2W board, with rho-target's compiler.
-      machine_install: rho-target:arm-none-eabi-gcc
+      # Mesh's own system_deps (published so rho keeper reads them), and by name the
+      # tools its smoke tests need beyond them: the cross compiler, and the MQTT
+      # broker and clients the devices, zigbee and helpers smokes start.
+      machine: true
+      machine_install: rho-target:arm-none-eabi-gcc robohub-mesh:mosquitto robohub-mesh:mosquitto_passwd robohub-mesh:mosquitto_pub robohub-mesh:mosquitto_sub

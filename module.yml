@@ -17,7 +17,7 @@ module:
   route: /mesh
   port: 8478
   command: mesh
-  version: 0.29.2
+  version: 0.29.3
   author: Aurel Miron
   maintainer: Aurel Miron
   license: "MIT"
@@ -192,3 +192,31 @@ system_deps:
       install:
         apt: openssh-client
         brew: openssh
+    # The broker and its clients: Mesh itself reaches the keeper's broker and runs
+    # none of these, but its smoke tests start a broker of their own (devices,
+    # zigbee and helpers smokes) — so they are not required to run Mesh, and CI
+    # installs them by name (machine_install) to test it.
+    - name: mosquitto
+      description: the smoke tests' own MQTT broker
+      required: false
+      install:
+        apt: mosquitto
+        brew: mosquitto
+    - name: mosquitto_passwd
+      description: the smoke tests' broker users
+      required: false
+      install:
+        apt: mosquitto
+        brew: mosquitto
+    - name: mosquitto_pub
+      description: the smoke tests publish a device's topics with it
+      required: false
+      install:
+        apt: mosquitto-clients
+        brew: mosquitto
+    - name: mosquitto_sub
+      description: the smoke tests read what Mesh publishes with it
+      required: false
+      install:
+        apt: mosquitto-clients
+        brew: mosquitto

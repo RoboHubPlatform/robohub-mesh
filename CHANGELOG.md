@@ -757,3 +757,8 @@ Every node from robohub-node's template, and a gateway under WSL2 that says whet
 ## [0.29.2] - 2026-11-21
 
 `tests/settlement_on_target.py` reads the node's readings where an application does, through Mesh's sources and their values. The gateway's listing doesn't carry a module's prefixed fields. Run on a Pico 2 W with a GY-68: Mesh built and flashed the template with the BMP180 fitted, and the board reported 23.9 °C and 97 428 Pa through the gateway (robohub ADR-0026, amended).
+
+## [0.29.3] - 2026-11-21
+
+The MQTT broker and its clients are declared in `system_deps`: `mosquitto` and `mosquitto_passwd` (package `mosquitto`), `mosquitto_pub` and `mosquitto_sub` (package `mosquitto-clients`). They are not required, because Mesh reaches the keeper's broker and runs none of them; only its devices, zigbee and helpers smokes start a broker of their own. CI publishes Mesh's own system_deps (`machine: true`) and installs the four by name (`machine_install`), so those smokes run on a fresh runner instead of failing for want of a broker.
+
